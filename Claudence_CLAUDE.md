@@ -75,10 +75,18 @@ All four are **undocumented internal interfaces**. Each gets an adapter with exp
  "messagingSocketPath":"/tmp/cc-socks/42541.sock"}
 ```
 
+Fields present in real files but omitted above: `peerProtocol`, `peerFeatures`, `pidDomain`, `nameSince`, `statusUpdatedAt`, `bridgeSessionId`. Model what is useful, ignore the rest.
+
 Rules:
 
-- Filter to `kind == "interactive"`. Other kinds are infrastructure, not user sessions.
-- Liveness requires **both** `kill(pid, 0)` succeeding **and** `procStart` matching the live process. PID alone is not sufficient — PIDs are reused after reboot and would resurrect a dead session under a stranger's process.
+- Filter to `kind == "interactive"`. `kind: "bg"` is common and is a background job, not a user session; those records also carry a `jobId` field and use `nameSource: "auto"`.
+- The directory contains `<pid>.<64-hex>.key` siblings. Filter on the `.json` suffix so they never reach the decoder or inflate the malformed count.
+- Versions are not uniform across concurrent sessions: `2.1.252` and `2.1.257` were live at the same time. Schema detection is per record, never global.
+- Liveness requires **both** `kill(pid, 0)` succeeding (treat `EPERM` as alive, `ESRCH` as dead) **and** the live process's start time matching `procStart`. PID alone is not sufficient: PIDs are reused after reboot and would resurrect a dead session under a stranger's process. Read the live start time from `sysctl` `KERN_PROC_PID` as `kp_proc.p_starttime`.
+
+- **`procStart` is UTC**, in C-locale `ctime` layout: `EEE MMM d HH:mm:ss yyyy` with `en_US_POSIX`. Verified: pid 42541's file reads `Tue Sep  1 19:27:02 2026` while `ps -o lstart` on the same pid reads `Wed 2 Sep 02:27:02 2026` in Asia/Bangkok. A naive local-time parse rejects every session and produces a permanently empty application. Compare with about 2 seconds of tolerance, since `procStart` is second-resolution and `p_starttime` is microseconds. An unparseable value is treated as dead, which hides a live session rather than showing a stranger's process, and is counted so the failure is visible.
+
+- **`updatedAt` tracks status transitions, not activity.** It is consistently identical to `statusUpdatedAt`. A session busy for minutes carries an `updatedAt` many minutes old; a gap of 910 s was observed on a session that was actively working. Never treat it as a heartbeat, and never age-gate a `busy` status against it. The stale-`busy` case that gating would catch is already handled by the liveness filter, which drops the record once the process is gone.
 - Stale files persist when a session crashes. Reap them on every scan.
 - Watch the directory with FSEvents. Debounce 250 ms. Do not poll.
 
@@ -334,13 +342,15 @@ The six states from the original spec are kept only where the data supports them
 | State | Source | MVP |
 |---|---|---|
 | RUNNING | registry `status` (observed: `busy`) | yes |
-| IDLE | registry `status` plus `updatedAt` age | yes |
+| IDLE | registry `status` (observed: `idle`) | yes |
 | COMPLETED | registry file removed, process gone | yes |
 | WAITING | not yet derivable | no |
 | PERMISSION | not yet derivable | no |
 | ERROR | not yet derivable | no |
 
-The full set of registry `status` values must be enumerated during M1 by observation. Until a state is proven derivable it does not appear in the UI. Designing UI for states with no data source produces a display that silently lies.
+Observed so far: `busy` on interactive sessions, `idle` on background records. The adapter accumulates every distinct raw value it sees into `SessionRegistryAdapter.observedStatusValues`, so the full set grows as the application runs. `updatedAt` governs only the fallback for an unknown or missing status, never the mapping of a known one.
+
+The full set of registry `status` values must be enumerated by observation. Until a state is proven derivable it does not appear in the UI. Designing UI for states with no data source produces a display that silently lies.
 
 Indicators always pair a glyph with text. Color is never the sole carrier of meaning.
 

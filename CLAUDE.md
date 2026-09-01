@@ -38,6 +38,12 @@ Swift Testing           parser and privacy tests
 
 Distribution is single-machine personal use. No notarization, no Apple Developer account, no CI, no release pipeline.
 
+### Consequences of having no Xcode
+
+- `#Preview` does not compile. The macro's `PreviewsMacros` plugin ships inside Xcode, so SwiftUI previews use `PreviewProvider` structs with `.previewDisplayName` instead.
+- No Instruments. Performance claims come from `ps` and timed tests, not from a profiler.
+- Concurrent agents must build with their own `--scratch-path`; a shared `.build` directory serializes on a lock.
+
 ### Code signing matters from day one
 
 Claude Code's credentials live in the macOS Keychain (`service = "Claude Code-credentials"`), not in `~/.claude/.credentials.json`, which does not exist on this machine. A binary signed ad-hoc gets a new identity on every build, so macOS re-prompts for Keychain access after every rebuild. M0 creates one self-signed code signing certificate and every build uses it, making "Always Allow" stick.

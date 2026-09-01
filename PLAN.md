@@ -24,39 +24,44 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 
 ---
 
-## M0 — Skeleton that runs
+## M0 — Skeleton that runs  `DONE`
 
 **~4 hours**
 
-- [ ] `git init`, `.gitignore` for `.build/`, `*.app`, `.DS_Store`
-- [ ] `Package.swift` with an executable target
-- [ ] `Info.plist` with `LSUIElement = 1` so no Dock icon appears
-- [ ] `make app` script: `swift build -c release` then assemble the `.app` bundle
-- [ ] Create one self-signed code signing certificate and sign every build with it
-- [ ] `MenuBarExtra` showing a static icon plus a working Quit
+- [x] `git init`, `.gitignore` for `.build/`, `*.app`, `.DS_Store`
+- [x] `Package.swift` with an executable target
+- [x] `Info.plist` with `LSUIElement = 1` so no Dock icon appears
+- [x] `make app` script: `swift build -c release` then assemble the `.app` bundle
+- [ ] Create one self-signed code signing identity and sign every build with it — `Scripts/make-signing-cert.sh` is written but not yet run; it needs the login keychain password, so the user runs it once. Builds are ad-hoc signed until then.
+- [x] `MenuBarExtra` showing a static icon plus a working Quit
 
 **Definition of done**
 
 - Double-clicking the `.app` puts an icon in the menu bar
 - Quit works and leaves no process behind
-- Rebuilding and relaunching does **not** re-prompt for Keychain access
+- Rebuilding and relaunching does **not** re-prompt for Keychain access — pending, blocked on the signing identity above
+
+**Measured at M0:** the empty SwiftUI shell already sits at 69 MB resident, above the 60 MB
+budget in the spec. That is SwiftUI's own baseline, not application code. Re-measure at M8 and
+either justify the number or raise the budget to a figure the framework can actually meet.
+Do not quietly drop the budget.
 
 **Why signing is here and not at M4:** an ad-hoc signature changes every build, so macOS treats each build as a new application and re-prompts for Keychain access. One stable certificate makes "Always Allow" persist.
 
 ---
 
-## M1 — Session discovery
+## M1 — Session discovery  `DONE`
 
 **~1 day.** This is the product's core value.
 
-- [ ] `SessionRegistryAdapter` reading `~/.claude/sessions/*.json`
-- [ ] Filter to `kind == "interactive"`
-- [ ] Liveness check: `kill(pid, 0)` **and** matching `procStart`
-- [ ] Reap stale files left by crashed sessions
-- [ ] FSEvents watcher on the directory, 250 ms debounce
-- [ ] Map to the `AISession` domain model
-- [ ] Popover lists sessions: name, working directory, status, duration
-- [ ] **Enumerate the real set of `status` values by observation** and record them in the spec
+- [x] `SessionRegistryAdapter` reading `~/.claude/sessions/*.json`
+- [x] Filter to `kind == "interactive"`
+- [x] Liveness check: `kill(pid, 0)` **and** matching `procStart`
+- [x] Reap stale files left by crashed sessions
+- [x] FSEvents watcher on the directory, 250 ms debounce
+- [x] Map to the `AISession` domain model
+- [x] Popover lists sessions: name, working directory, status, duration
+- [x] **Enumerate the real set of `status` values by observation** and record them in the spec
 
 **Definition of done**
 
@@ -69,16 +74,20 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 
 ---
 
-## M2 — Token ingestion
+**Verified live.** `Claudence --diagnose` on this machine reported 3 registry records, 2 live
+interactive sessions with correct working directories and PIDs, `kinds: bg=1 interactive=2`,
+`status values: busy`, and 0 unparsed `procStart`. 37 tests pass.
+
+## M2 — Token ingestion  `DONE`
 
 **~1.5 days.** After this the application is genuinely useful.
 
-- [ ] Map `sessionId` to its transcript, confirming by reading `sessionId` inside the file rather than trusting the path slug
-- [ ] SQLite schema: sessions, usage samples, file offsets, daily rollups
-- [ ] Incremental tail storing `(path, inode, byteOffset)`; reset the offset when the inode changes
-- [ ] Parse `type == "assistant"` records into `TokenUsage`
-- [ ] Aggregate per session and per day
-- [ ] Token energy bar and breakdown in the popover
+- [x] Map `sessionId` to its transcript, confirming by reading `sessionId` inside the file rather than trusting the path slug
+- [x] SQLite schema: sessions, usage samples, file offsets, daily rollups
+- [x] Incremental tail storing `(path, inode, byteOffset)`; reset the offset when the inode changes
+- [x] Parse `type == "assistant"` records into `TokenUsage`
+- [x] Aggregate per session and per day
+- [x] Token energy bar and breakdown in the popover
 
 **Definition of done**
 
@@ -90,15 +99,24 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 
 ---
 
-## M3 — Activity detection
+**Verified live.** A cold read of a live session produced 280 records with 0 skipped in 32 ms.
+The next run of the same session read only 3 new records, proving the offset resumed rather than
+re-parsing. Measured on a 12 MB fixture: cold read 114 ms, idle re-scan 0.031 ms against a 50 ms
+budget. Cross-checked against a real 42 MB transcript: token totals were byte-identical to an
+independent reference implementation.
+
+**Correction to the spec:** real transcripts reach 42 MB, not the 12 MB recorded in section 2.3.
+The offset strategy holds, but any bounded-read assumption should use the larger figure.
+
+## M3 — Activity detection  `DONE`
 
 **~1 day**
 
-- [ ] Parse `content[]` `tool_use` entries into `{name, input.file_path}`
-- [ ] Hash `input.command` with SHA256; never retain the string
-- [ ] Map to human phrasing: `Edit` plus a path becomes "Editing Menu.tsx"
-- [ ] Bash renders as "Running a command" — no command echo
-- [ ] Privacy allowlist implemented as a filter in the parser
+- [x] Parse `content[]` `tool_use` entries into `{name, input.file_path}`
+- [x] Hash `input.command` with SHA256; never retain the string
+- [x] Map to human phrasing: `Edit` plus a path becomes "Editing Menu.tsx"
+- [x] Bash renders as "Running a command" — no command echo
+- [x] Privacy allowlist implemented as a filter in the parser
 
 **Definition of done**
 
@@ -109,16 +127,25 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 
 ---
 
-## M4 — Usage limits
+**Verified live.** Both live sessions reported an activity: "Running a subagent" and
+"Running a command". 7 privacy tests pass; they walk the entire value graph with `Mirror` and
+assert nine sentinel strings appear nowhere, and that no property in the graph is named `text`,
+`thinking`, `toolUseResult`, `snapshot`, `attachment`, or `command`.
+
+**Tool names corrected against 2.1.257:** the agent-spawn tool is now `Agent`, not `Task`, and
+`TodoWrite` was replaced by `TaskCreate` / `TaskUpdate`. All are mapped, old names included, so a
+transcript from an older build still reads.
+
+## M4 — Usage limits  `CODE DONE, NOT VERIFIED LIVE`
 
 **~1 day**
 
-- [ ] Read the OAuth token from Keychain (`service = "Claude Code-credentials"`), falling back to `~/.claude/.credentials.json`
-- [ ] Refresh via `POST platform.claude.com/v1/oauth/token` when expired
-- [ ] `GET api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20`
-- [ ] Parse flat windows plus the `limits[]` scoped array, enumerating model scopes rather than hard-coding names
-- [ ] Domain allowlist enforced inside the request helper, blocking off-allowlist redirects
-- [ ] 60 s cache, backoff on 429, serve cached values while backing off
+- [x] Read the OAuth token from Keychain (`service = "Claude Code-credentials"`), falling back to `~/.claude/.credentials.json`
+- [x] Refresh via `POST platform.claude.com/v1/oauth/token` when expired
+- [x] `GET api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20`
+- [x] Parse flat windows plus the `limits[]` scoped array, enumerating model scopes rather than hard-coding names
+- [x] Domain allowlist enforced inside the request helper, blocking off-allowlist redirects
+- [x] 60 s cache, backoff on 429, serve cached values while backing off
 
 **Definition of done**
 
@@ -130,15 +157,34 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 
 ---
 
-## M5 — Power meter UI
+**36 tests pass**, including: a request to `evil.example.com`, `api.anthropic.com.evil.example`,
+`api-anthropic.com` and `localhost:8080` reaches the transport exactly 0 times, so the
+`Authorization` header is never even constructed for an off-allowlist host; a redirect to a
+disallowed host is refused; and the credential type renders as `<redacted>` across nine different
+description paths.
+
+**Two things are NOT verified and must not be treated as working:**
+
+1. **The live path has never run.** `Claudence --diagnose` hangs for 20 seconds on the Keychain
+   read, because macOS puts an approval dialog on screen and `SecurityAgent` waits for a click.
+   Confirmed by observing the process. This is exactly the failure the M0 signing identity
+   prevents; approving once under an ad-hoc signature does not persist across a rebuild.
+
+2. **The OAuth `client_id` is a guess.** `UsageClient.swift` carries
+   `9d1c250a-e61b-44d9-88ed-5944d1962f5e`, taken from published sources and never confirmed
+   against the endpoint. It is used only on the refresh path, when the access token has expired.
+   If it is wrong the failure is `Usage unavailable`, not a crash, but 5h and 7d would silently
+   stop working once the token ages out. Confirm before trusting.
+
+## M5 — Power meter UI  `BUILT, NOT SEEN`
 
 **~2 days**
 
-- [ ] Power bar, energy ring, token bar, sparkline
-- [ ] Semantic color tokens; no hex in views
-- [ ] Menu bar rendering under 60 pt, session count opt-in
-- [ ] Honor Reduce Motion
-- [ ] Empty and degraded states for every panel
+- [x] Power bar, energy ring, token bar, sparkline
+- [x] Semantic color tokens; no hex in views
+- [x] Menu bar rendering under 60 pt, session count opt-in
+- [x] Honor Reduce Motion
+- [x] Empty and degraded states for every panel
 
 **Definition of done**
 
@@ -147,6 +193,14 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 - With Reduce Motion enabled, no animation runs
 
 ---
+
+Nine components built and composed into the live popover. `Theme.swift` is the only file in the
+target containing an `NSColor`, a component literal, or any `Color` constructor, verified by grep,
+so the semantic-token rule is structural rather than a convention.
+
+**Not visually verified.** There is no Xcode on this machine, so there are no canvas previews and
+no screenshots; `#Preview` does not compile and `PreviewProvider` is used instead. Layout is
+argued from code, not seen. A human should open the popover and check it before M5 is called done.
 
 ## M6 — Persistence and history
 
