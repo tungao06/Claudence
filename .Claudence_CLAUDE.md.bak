@@ -1,0 +1,1450 @@
+# CLAUDE.md — AI Coding Agent Monitor for macOS
+
+## Project Name
+
+**Claudence**
+> AI Coding Agent Monitor for macOS
+
+### Tagline
+**See your AI. Know your usage. Stay in control.**
+
+Claudence is a minimal macOS Menu Bar application for monitoring AI coding agents, starting with Claude Code.
+
+The product should feel like a **power / energy dashboard** rather than a traditional analytics dashboard.
+
+The core visual metaphor is:
+
+> **AI sessions are machines consuming energy. Tokens are energy. Usage limits are the battery.**
+
+The UI should make the user's current state understandable in **1–3 seconds**.
+
+---
+
+# 1. Product Vision
+
+Build a lightweight macOS Menu Bar application that lets developers instantly see:
+
+- How much Claude usage remains
+- Which Claude Code sessions are currently active
+- Which project/path each session belongs to
+- What each session is currently doing
+- How many tokens each session has consumed
+- Context usage
+- Token consumption rate
+- Estimated cost
+- Session duration
+- Important events requiring user attention
+
+The application must be:
+
+- Minimal
+- Fast
+- Native-feeling
+- Low CPU/RAM usage
+- Always available from the macOS Menu Bar
+- Easy to understand without reading documentation
+- Visually polished enough for a public GitHub project / portfolio
+
+Do NOT make it look like an enterprise admin dashboard.
+
+It should feel closer to:
+
+- iStat Menus
+- Raycast
+- Activity Monitor
+- Battery / energy UI
+- Modern developer tools
+
+---
+
+# 2. Core UX Principle
+
+## "Glance First, Details Second"
+
+The user should understand the following immediately:
+
+```text
+How much usage do I have left?
+What is Claude doing?
+Which project is using it?
+Is anything waiting for me?
+```
+
+Do not expose every metric at the same visual level.
+
+Use visual hierarchy:
+
+### Level 1 — Menu Bar
+
+Only show:
+
+```text
+◉ Claude   42%
+```
+
+or when multiple sessions are active:
+
+```text
+◉ 2   42%
+```
+
+or:
+
+```text
+◉ Claude   Idle
+```
+
+The Menu Bar must remain compact.
+
+---
+
+# 3. Main Visual Concept — Power / Energy
+
+The primary UI should NOT be a collection of rectangular cards.
+
+Use:
+
+## Power Tube
+
+Represent usage as a vertical or horizontal energy tube.
+
+Example:
+
+```text
+Claude Usage
+
+████████████████░░░░
+        72%
+
+        2h 14m
+      until reset
+```
+
+The tube should visually communicate:
+
+- Full = plenty of usage remaining
+- Medium = normal
+- Low = approaching limit
+- Critical = almost exhausted
+
+Use smooth gradients / subtle glow only where appropriate.
+
+Do not overuse colors.
+
+Preferred semantic states:
+
+```text
+Healthy
+Attention
+Warning
+Critical
+```
+
+The exact color palette should be defined through semantic tokens rather than hard-coded colors.
+
+---
+
+# 4. Main Dashboard
+
+When clicking the Menu Bar icon, open a compact popover.
+
+Suggested structure:
+
+```text
+┌───────────────────────────────────────┐
+│  CLAUDENCE                        ⚙   │
+│                                       │
+│        Claude Power                   │
+│                                       │
+│       ╭──────────────╮                │
+│       │ ████████████ │                │
+│       │ ████████████ │                │
+│       │ █████████░░░ │                │
+│       │ █████████░░░ │                │
+│       ╰──────────────╯                │
+│              72%                      │
+│                                       │
+│         Reset in 2h 14m               │
+│                                       │
+│  ───────────────────────────────────  │
+│                                       │
+│  ACTIVE SESSIONS                  2   │
+│                                       │
+│  ● DA-YO                             │
+│    ~/Projects/DA-YO                  │
+│    Editing Menu.tsx                  │
+│    ███████████░░░  42.8k             │
+│                                       │
+│  ● Portal                            │
+│    ~/Projects/portal                 │
+│    Running npm test                  │
+│    ██████░░░░░░░  18.2k              │
+│                                       │
+│  ───────────────────────────────────  │
+│                                       │
+│  Today                                │
+│  438k tokens              $3.42       │
+│                                       │
+│              Open Dashboard →         │
+└───────────────────────────────────────┘
+```
+
+Keep the popover compact.
+
+Avoid unnecessary borders, shadows, and decoration.
+
+---
+
+# 5. Dashboard Layout
+
+The full dashboard should use a visual hierarchy based on:
+
+```text
+GLOBAL USAGE
+      ↓
+ACTIVE SESSIONS
+      ↓
+SESSION DETAILS
+      ↓
+HISTORY / ANALYTICS
+```
+
+---
+
+# 6. Global Usage Visualization
+
+Provide multiple time windows if available from the underlying usage source.
+
+Example:
+
+```text
+5 HOUR WINDOW
+
+████████████████░░░░
+72% used
+
+Remaining
+28%
+
+Reset
+2h 14m
+```
+
+And:
+
+```text
+7 DAY WINDOW
+
+███████░░░░░░░░░░░
+34% used
+```
+
+The user should be able to switch:
+
+```text
+5h | 7d
+```
+
+Do not display fake quota information.
+
+If the data source cannot reliably provide a metric:
+
+```text
+Usage unavailable
+```
+
+instead of inventing a value.
+
+---
+
+# 7. Energy Ring
+
+For the full dashboard, optionally use an energy ring.
+
+Example:
+
+```text
+          ╭─────────╮
+       ╭──┘         └──╮
+      │      72%        │
+      │                 │
+       ╰──╮         ╭──╯
+          ╰─────────╯
+
+       Claude Usage
+```
+
+The ring should animate subtly when usage changes.
+
+Avoid aggressive animations.
+
+---
+
+# 8. Active Session Visualization
+
+Each active Claude Code session should appear as a compact "energy cell".
+
+Example:
+
+```text
+┌────────────────────────────────────────┐
+│ ● DA-YO                         ACTIVE │
+│                                        │
+│ ~/Projects/DA-YO                     │
+│                                        │
+│ Editing                                │
+│ src/components/Menu.tsx               │
+│                                        │
+│ Token Energy                           │
+│ █████████████░░░░░  42.8k             │
+│                                        │
+│ 12m 34s                     12.4k/min  │
+└────────────────────────────────────────┘
+```
+
+Do not show every field by default.
+
+Priority:
+
+1. Status
+2. Project
+3. Current activity
+4. Token usage
+5. Duration
+6. Token rate
+
+---
+
+# 9. Session Status
+
+Support these states:
+
+```text
+RUNNING
+IDLE
+WAITING
+PERMISSION
+ERROR
+COMPLETED
+```
+
+Example:
+
+```text
+● Working
+○ Idle
+◌ Waiting
+! Permission required
+× Error
+✓ Completed
+```
+
+Use animation only for active states.
+
+---
+
+# 10. "What is Claude Doing?"
+
+This is one of the most important features.
+
+The UI should translate low-level activity into human-readable descriptions.
+
+Examples:
+
+```text
+Reading package.json
+Editing Menu.tsx
+Running npm test
+Installing dependencies
+Searching codebase
+Running git status
+Waiting for input
+Waiting for permission
+```
+
+Do not simply display raw terminal output.
+
+Prefer:
+
+```text
+Running tests
+```
+
+over:
+
+```text
+npm run test -- --coverage
+```
+
+The raw command can be available as secondary detail.
+
+---
+
+# 11. Token Visualization
+
+Do not display tokens only as numbers.
+
+Use a compact energy bar:
+
+```text
+Token Energy
+
+██████████████░░░░
+42.8k tokens
+```
+
+And optionally:
+
+```text
+Input      21.4k
+Output      8.2k
+Cache      13.2k
+Total      42.8k
+```
+
+Use human-readable formatting:
+
+```text
+1,200 → 1.2k
+12,400 → 12.4k
+128,000 → 128k
+1,240,000 → 1.24M
+```
+
+---
+
+# 12. Token Burn Rate
+
+Add:
+
+```text
+12.4k tokens/min
+```
+
+This lets the user understand whether a session is consuming tokens unusually quickly.
+
+Visualize it as a small sparkline:
+
+```text
+Token Rate
+
+▁▂▃▅▆▅▇█▆▅
+12.4k/min
+```
+
+The sparkline should be extremely subtle.
+
+---
+
+# 13. Context Usage
+
+If context window information is available:
+
+```text
+Context
+
+██████████████░░░░
+142k / 200k
+
+71%
+```
+
+Use warning states:
+
+```text
+< 70%   Healthy
+70–85%  Attention
+85–95%  Warning
+> 95%   Critical
+```
+
+These thresholds should be configurable constants.
+
+Do not claim a context limit unless the model/source provides it.
+
+---
+
+# 14. Cost Tracking
+
+Provide estimated cost only when token/model pricing is known.
+
+Example:
+
+```text
+Today
+
+438k tokens
+$3.42 estimated
+```
+
+Session:
+
+```text
+DA-YO
+42.8k tokens
+$0.34 estimated
+```
+
+Clearly label this as:
+
+```text
+Estimated
+```
+
+Never present an estimate as an actual billing amount.
+
+---
+
+# 15. Session History
+
+Full dashboard:
+
+```text
+SESSION HISTORY
+
+Today
+
+09:42  DA-YO
+       42.8k tokens
+       12m
+
+11:18  Portal
+       18.2k tokens
+       4m
+
+14:32  Markitdown
+       73.4k tokens
+       31m
+```
+
+Allow filtering:
+
+```text
+Today | 7 Days | 30 Days
+```
+
+---
+
+# 16. Project Analytics
+
+Group sessions by project:
+
+```text
+PROJECTS
+
+DA-YO
+██████████████  438k
+
+Portal
+████████        241k
+
+Markitdown
+████            118k
+```
+
+Show:
+
+- Sessions
+- Total tokens
+- Estimated cost
+- Average session duration
+- Last activity
+
+---
+
+# 17. Daily Usage Graph
+
+Use a very simple graph.
+
+Example:
+
+```text
+Token Usage
+
+500k ┤             ╭╮
+400k ┤      ╭╮    ╭╯╰╮
+300k ┤   ╭──╯╰╮╭──╯
+200k ┤╭──╯    ╰╯
+100k ┤
+     └────────────────────
+      Mon Tue Wed Thu Fri
+```
+
+Avoid complex axes.
+
+The graph exists to answer:
+
+> "Am I using more Claude than usual?"
+
+---
+
+# 18. Attention System
+
+The application should notify the user only for meaningful events.
+
+Examples:
+
+### Permission
+
+```text
+Claude needs permission
+
+DA-YO wants to run:
+npm install
+
+[Open Session]
+```
+
+### Usage Warning
+
+```text
+Claude usage is at 90%
+
+You have approximately 10% remaining
+```
+
+### Session Completed
+
+```text
+Claude finished
+
+DA-YO
+42.8k tokens
+12m 34s
+```
+
+### Error
+
+```text
+Claude session failed
+
+Portal
+Command exited with code 1
+```
+
+Avoid notification spam.
+
+---
+
+# 19. Quick Actions
+
+Clicking a session should provide:
+
+```text
+Open Terminal
+Open Project
+Copy Path
+View Activity
+Stop Session
+```
+
+Advanced future feature:
+
+```text
+Send Message
+```
+
+Only implement this if Claude Code provides a safe and reliable integration mechanism.
+
+---
+
+# 20. Menu Bar States
+
+The Menu Bar icon should communicate state.
+
+### Idle
+
+```text
+◉ Claude
+```
+
+### Active
+
+```text
+◉ 2
+```
+
+### Warning
+
+```text
+◉ 92%
+```
+
+### Critical
+
+```text
+◉ 98%
+```
+
+### Permission
+
+```text
+◉ !
+```
+
+Do not use text that makes the Menu Bar excessively wide.
+
+---
+
+# 21. Data Architecture
+
+Separate the application into layers.
+
+```text
+Claude Code
+     │
+     ▼
+Provider Adapter
+     │
+     ▼
+Session Discovery
+     │
+     ├── Process Monitor
+     ├── Session Parser
+     ├── Activity Parser
+     ├── Token Parser
+     └── Usage Parser
+     │
+     ▼
+Normalized Domain Model
+     │
+     ▼
+Local Storage
+     │
+     ▼
+View Model
+     │
+     ├── Menu Bar
+     ├── Popover
+     ├── Dashboard
+     └── Notifications
+```
+
+Do NOT tightly couple UI code to Claude Code's raw files/processes.
+
+---
+
+# 22. Provider Abstraction
+
+Design the internal architecture so future providers can be added.
+
+```text
+AIProvider
+ ├── ClaudeCodeProvider
+ ├── CodexProvider
+ └── GeminiCLIProvider
+```
+
+Each provider should expose normalized data:
+
+```typescript
+interface AISession {
+  id: string
+  provider: AIProviderType
+
+  pid?: number
+
+  projectName: string
+  workingDirectory: string
+
+  status: SessionStatus
+
+  currentActivity?: string
+
+  startedAt: Date
+  lastActivityAt: Date
+
+  usage: TokenUsage
+
+  model?: string
+}
+
+interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
+
+  totalTokens: number
+}
+
+interface UsageWindow {
+  name: string
+  usedPercent?: number
+  remainingPercent?: number
+  resetAt?: Date
+}
+```
+
+---
+
+# 23. Technical Direction
+
+Preferred implementation:
+
+## Option A — Native macOS
+
+```text
+Swift
+SwiftUI
+MenuBarExtra
+SQLite
+Foundation
+OSLog
+Process
+FileManager
+File System Events
+```
+
+Prefer this option if native macOS performance and integration are priorities.
+
+---
+
+## Option B — Tauri
+
+```text
+Tauri
+Rust
+React
+TypeScript
+SQLite
+```
+
+This is acceptable if rapid UI development and TypeScript are more important.
+
+Do NOT use Electron unless there is a strong reason.
+
+---
+
+# 24. Performance Requirements
+
+The application is an always-running background utility.
+
+Target:
+
+```text
+CPU:
+Near-zero when idle
+
+Memory:
+As low as reasonably possible
+
+Startup:
+< 1 second target
+
+UI:
+No noticeable lag
+
+Polling:
+Avoid aggressive polling
+```
+
+Prefer event-driven monitoring where possible.
+
+Debounce filesystem changes.
+
+Do not repeatedly parse entire log directories.
+
+---
+
+# 25. Local-First Architecture
+
+The application should work without a backend.
+
+Use:
+
+```text
+Local process monitoring
+Local filesystem
+Local SQLite
+Local calculations
+```
+
+No cloud service is required for MVP.
+
+Privacy is a core selling point:
+
+> Your coding activity stays on your Mac.
+
+Do not upload session content to external servers.
+
+---
+
+# 26. Privacy
+
+Never collect or transmit:
+
+- Source code
+- Prompt content
+- Terminal output
+- File contents
+
+unless the user explicitly enables an optional feature that requires it.
+
+The application should only read the minimum metadata required to calculate:
+
+- Session
+- Path
+- Status
+- Activity
+- Token usage
+- Usage state
+
+Provide a Settings section explaining what data is accessed.
+
+---
+
+# 27. UI Design System
+
+The visual language should be:
+
+```text
+Minimal
+Monochrome-first
+Soft contrast
+Rounded
+Compact
+Technical
+Calm
+Premium
+```
+
+Avoid:
+
+```text
+Huge gradients
+Neon cyberpunk
+Excessive cards
+3D effects
+Heavy shadows
+Large typography
+Dashboard clutter
+```
+
+Use a single accent color for state emphasis.
+
+Use semantic states rather than decorative colors.
+
+---
+
+# 28. Animation
+
+Animation should communicate state, not decorate.
+
+Good:
+
+```text
+Energy bar slowly updating
+Active session indicator pulsing gently
+Usage ring animating when value changes
+```
+
+Bad:
+
+```text
+Constant particle effects
+Large transitions
+Bouncing cards
+Excessive glow
+```
+
+Animations should respect:
+
+```text
+Reduce Motion
+```
+
+macOS accessibility preferences.
+
+---
+
+# 29. Accessibility
+
+Support:
+
+- Dynamic Type where applicable
+- Keyboard navigation
+- VoiceOver labels
+- High contrast
+- Reduce Motion
+- Clear status text
+- Do not rely on color alone
+
+Example:
+
+Do not show only:
+
+```text
+🔴
+```
+
+Show:
+
+```text
+! Permission Required
+```
+
+---
+
+# 30. Settings
+
+Keep settings simple.
+
+### General
+
+```text
+Launch at Login        ON
+Show Menu Bar Usage    ON
+Notifications          ON
+```
+
+### Display
+
+```text
+Menu Bar Style
+○ Minimal
+○ Usage
+○ Sessions
+```
+
+### Monitoring
+
+```text
+Refresh Interval
+○ Automatic
+○ 1 second
+○ 5 seconds
+○ 10 seconds
+```
+
+Prefer Automatic/event-driven.
+
+### Privacy
+
+```text
+Local-only monitoring
+✓ Enabled
+```
+
+---
+
+# 31. MVP Scope
+
+Build these first:
+
+```text
+[ ] macOS Menu Bar app
+[ ] Claude Code process discovery
+[ ] Active session detection
+[ ] Project / working directory
+[ ] Session status
+[ ] Current activity
+[ ] Token usage
+[ ] Usage visualization
+[ ] Menu Bar indicator
+[ ] Compact popover
+[ ] Session detail view
+[ ] Local persistence
+[ ] Basic notifications
+[ ] Settings
+```
+
+Do NOT build these before MVP works:
+
+```text
+[ ] AI-generated summaries
+[ ] Cloud sync
+[ ] Team dashboard
+[ ] Remote monitoring
+[ ] Multi-device sync
+[ ] Send commands to Claude
+```
+
+---
+
+# 32. V2
+
+After MVP:
+
+```text
+[ ] Context usage
+[ ] Token burn rate
+[ ] Cost estimation
+[ ] Session timeline
+[ ] Daily graph
+[ ] Weekly graph
+[ ] Project analytics
+[ ] Session search
+[ ] Export CSV/JSON
+```
+
+---
+
+# 33. V3
+
+Future:
+
+```text
+[ ] Codex provider
+[ ] Gemini CLI provider
+[ ] AI coding productivity analytics
+[ ] Remote monitoring
+[ ] Optional sync
+[ ] Smart anomaly detection
+[ ] Usage prediction
+```
+
+---
+
+# 34. Usage Prediction
+
+A future feature can estimate:
+
+```text
+Current burn rate
+12.4k tokens/min
+
+Estimated remaining time
+~47 minutes
+```
+
+Or:
+
+```text
+At current usage,
+you may reach the limit
+in approximately 1h 12m.
+```
+
+Always label predictions as estimates.
+
+Never present predictions as guaranteed.
+
+---
+
+# 35. Recommended Main Dashboard
+
+The final dashboard should roughly follow this structure:
+
+```text
+┌──────────────────────────────────────────────┐
+│ CLAUDENCE                              ⚙    │
+│                                              │
+│              CLAUDE POWER                    │
+│                                              │
+│       ╭──────────────────────────╮           │
+│       │██████████████████░░░░░░░│           │
+│       ╰──────────────────────────╯           │
+│                    72%                       │
+│              Reset in 2h 14m                 │
+│                                              │
+│ ──────────────────────────────────────────── │
+│                                              │
+│ ACTIVE SESSIONS                         2   │
+│                                              │
+│ ● DA-YO                            ACTIVE   │
+│   ~/Projects/DA-YO                         │
+│   Editing Menu.tsx                         │
+│                                              │
+│   █████████████░░░░  42.8k                  │
+│   12m 34s                     12.4k/min      │
+│                                              │
+│ ● PORTAL                           RUNNING   │
+│   ~/Projects/portal                        │
+│   Running tests                             │
+│                                              │
+│   ██████░░░░░░░░░  18.2k                    │
+│   4m 12s                      5.2k/min       │
+│                                              │
+│ ──────────────────────────────────────────── │
+│                                              │
+│ TODAY                                        │
+│                                              │
+│ 438k tokens              $3.42 estimated    │
+│                                              │
+│ Token Usage                                  │
+│ ▁▂▃▅▃▆▇▅▆▇▃▅                                │
+│                                              │
+│                 Open Dashboard →             │
+└──────────────────────────────────────────────┘
+```
+
+---
+
+# 36. Important Product Rule
+
+Do not make the application feel like it is "watching the developer".
+
+It should feel like:
+
+> **A small power meter for your AI coding workflow.**
+
+The product should answer:
+
+```text
+How much power do I have?
+What is consuming it?
+What is Claude doing?
+Do I need to do anything?
+```
+
+in seconds.
+
+---
+
+# 37. Development Strategy
+
+Implement incrementally.
+
+## Phase 1
+
+Create the native Menu Bar shell.
+
+Requirements:
+
+- Launch
+- Menu Bar icon
+- Popover
+- Settings
+- Quit
+- Launch at login
+
+## Phase 2
+
+Implement Claude process discovery.
+
+Find active Claude Code processes and map:
+
+```text
+PID
+Working Directory
+Start Time
+Status
+```
+
+## Phase 3
+
+Implement session/activity detection.
+
+Map raw events into:
+
+```text
+Reading
+Writing
+Running
+Searching
+Waiting
+Permission
+Completed
+Error
+```
+
+## Phase 4
+
+Implement token parsing and aggregation.
+
+Calculate:
+
+```text
+Input
+Output
+Cache
+Total
+Burn rate
+```
+
+## Phase 5
+
+Implement usage visualization.
+
+Add:
+
+```text
+Power Bar
+Energy Ring
+Token Bar
+Sparkline
+```
+
+## Phase 6
+
+Add persistence and history.
+
+Use SQLite.
+
+## Phase 7
+
+Add notifications.
+
+## Phase 8
+
+Polish UX and accessibility.
+
+---
+
+# 38. Engineering Rules
+
+1. Do not hard-code paths unless Claude Code officially requires them.
+2. Detect paths dynamically.
+3. Do not assume a particular Claude Code version.
+4. Build adapters around external data sources.
+5. Gracefully handle missing or changed log formats.
+6. Never fabricate usage numbers.
+7. Clearly distinguish actual data from estimates.
+8. Keep UI independent from data collection.
+9. Keep all monitoring local.
+10. Handle permission failures gracefully.
+11. Do not crash if Claude Code is not installed.
+12. Do not crash if there are no active sessions.
+13. Do not block the main UI thread.
+14. Write unit tests for parsers and token calculations.
+15. Add integration tests for session discovery where practical.
+
+---
+
+# 39. Definition of Done — MVP
+
+The MVP is complete when:
+
+### Menu Bar
+
+```text
+Claude status is visible
+Usage is visible
+Active session count is visible
+```
+
+### Popover
+
+```text
+Global usage
+Active sessions
+Project paths
+Current activity
+Token usage
+Session duration
+```
+
+### Monitoring
+
+```text
+Claude process detection works
+Multiple sessions work
+Sessions start/stop correctly
+Idle sessions are handled
+```
+
+### Reliability
+
+```text
+Claude not installed → graceful state
+No sessions → Idle state
+Malformed log → ignored safely
+Missing data → unavailable state
+```
+
+### UX
+
+```text
+User understands state in <3 seconds
+No unnecessary UI clutter
+Native macOS feeling
+Low resource usage
+```
+
+---
+
+# 40. First Implementation Task
+
+Start by creating the project skeleton and implement ONLY:
+
+1. Native macOS Menu Bar app
+2. Claude icon/status
+3. Compact popover
+4. Mock usage power bar
+5. Mock active sessions
+6. Mock token bar
+7. Mock current activity
+8. Settings screen
+9. Clean architecture ready for real Claude Code data
+
+Use mock data first.
+
+Do NOT start by reverse-engineering Claude Code internals before the UI architecture exists.
+
+After the UI is stable, implement the real Claude Code provider.
+
+---
+
+# 41. Final Design Direction
+
+The app should look like this conceptually:
+
+```text
+              CLAUDE POWER
+
+        █████████████████░░░
+                  72%
+
+             2h 14m left
+
+
+        ACTIVE AI SESSIONS
+
+   ● DA-YO
+     Editing Menu.tsx
+     ████████████░░ 42.8k
+
+   ● Portal
+     Running tests
+     ██████░░░░░░░ 18.2k
+
+
+             TODAY
+
+        438k tokens
+          $3.42
+
+        ▁▂▃▅▃▆▇▅▆▇
+```
+
+The experience should be:
+
+**Power meter first → sessions second → analytics third.**
+
+Never the other way around.
+
+---
+
+# 42. Name
+
+Primary project name:
+
+## Claudence
+
+Meaning / positioning:
+
+**Claude + Presence**
+
+It communicates the idea that Claude is always present in your development workflow, while the app gives you visibility into that activity.
+
+Alternative names if Claudence is unavailable:
+
+1. **ClaudeBar**
+2. **ClaudePulse**
+3. **ClaudeMeter**
+4. **ClaudeFlow**
+5. **AIPulse**
+6. **AgentBar**
+7. **CodePulse**
+8. **AgentPulse**
+
+Recommended:
+
+> **Claudence** — AI Coding Agent Monitor for macOS
+
+The product can later evolve from Claude-only into:
+
+> **Claudence — AI Coding Agent Monitor**
+
+with Claude Code, Codex, Gemini CLI, and other agents as providers.

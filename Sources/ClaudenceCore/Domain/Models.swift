@@ -1,0 +1,210 @@
+import Foundation
+
+// MARK: - Provider
+
+public enum AIProviderType: String, Sendable, Codable, CaseIterable {
+    case claudeCode
+    case codex
+    case geminiCLI
+}
+
+// MARK: - Session status
+
+/// Only states with a proven data source are used by the UI.
+/// `waiting`, `permission` and `error` exist for the provider contract but must
+/// not be rendered until a source is proven to derive them. See spec section 6.
+public enum SessionStatus: String, Sendable, Codable {
+    case running
+    case idle
+    case completed
+    case waiting
+    case permission
+    case error
+
+    /// Whether this state is currently derivable from a real data source.
+    public var isDerivable: Bool {
+        switch self {
+        case .running, .idle, .completed: return true
+        case .waiting, .permission, .error: return false
+        }
+    }
+}
+
+// MARK: - Token usage
+
+/// The single definition of token accounting for the whole application.
+/// Nothing computes its own totals. See spec section 5.
+public struct TokenUsage: Sendable, Codable, Equatable {
+    public var freshInput: Int
+    public var cacheCreation: Int
+    public var cacheRead: Int
+    public var output: Int
+    public var thinking: Int
+
+    public init(
+        freshInput: Int = 0,
+        cacheCreation: Int = 0,
+        cacheRead: Int = 0,
+        output: Int = 0,
+        thinking: Int = 0
+    ) {
+        self.freshInput = freshInput
+        self.cacheCreation = cacheCreation
+        self.cacheRead = cacheRead
+        self.output = output
+        self.thinking = thinking
+    }
+
+    public var billableInput: Int { freshInput + cacheCreation + cacheRead }
+    public var total: Int { billableInput + output }
+
+    public static let zero = TokenUsage()
+
+    public static func + (lhs: TokenUsage, rhs: TokenUsage) -> TokenUsage {
+        TokenUsage(
+            freshInput: lhs.freshInput + rhs.freshInput,
+            cacheCreation: lhs.cacheCreation + rhs.cacheCreation,
+            cacheRead: lhs.cacheRead + rhs.cacheRead,
+            output: lhs.output + rhs.output,
+            thinking: lhs.thinking + rhs.thinking
+        )
+    }
+
+    public static func += (lhs: inout TokenUsage, rhs: TokenUsage) {
+        lhs = lhs + rhs
+    }
+}
+
+// MARK: - Activity
+
+/// What a session is currently doing, derived from tool name plus file path only.
+/// Never carries a command string. See spec section 3.1.
+public struct Activity: Sendable, Codable, Equatable {
+    public var verb: String
+    public var subject: String?
+
+    public init(verb: String, subject: String? = nil) {
+        self.verb = verb
+        self.subject = subject
+    }
+
+    public var display: String {
+        guard let subject, !subject.isEmpty else { return verb }
+        return "\(verb) \(subject)"
+    }
+}
+
+// MARK: - Session
+
+public struct AISession: Sendable, Identifiable, Equatable {
+    public let id: String
+    public let provider: AIProviderType
+    public let pid: Int32
+    /// Paired with `pid` for liveness. PID alone is reused after reboot.
+    public let procStart: String
+    public let projectName: String
+    public let workingDirectory: String
+    public var status: SessionStatus
+    public var currentActivity: Activity?
+    public let startedAt: Date
+    public var lastActivityAt: Date
+    public var usage: TokenUsage
+    public var model: String?
+    public let claudeCodeVersion: String?
+
+    public init(
+        id: String,
+        provider: AIProviderType = .claudeCode,
+        pid: Int32,
+        procStart: String,
+        projectName: String,
+        workingDirectory: String,
+        status: SessionStatus,
+        currentActivity: Activity? = nil,
+        startedAt: Date,
+        lastActivityAt: Date,
+        usage: TokenUsage = .zero,
+        model: String? = nil,
+        claudeCodeVersion: String? = nil
+    ) {
+        self.id = id
+        self.provider = provider
+        self.pid = pid
+        self.procStart = procStart
+        self.projectName = projectName
+        self.workingDirectory = workingDirectory
+        self.status = status
+        self.currentActivity = currentActivity
+        self.startedAt = startedAt
+        self.lastActivityAt = lastActivityAt
+        self.usage = usage
+        self.model = model
+        self.claudeCodeVersion = claudeCodeVersion
+    }
+
+    public var duration: TimeInterval { Date().timeIntervalSince(startedAt) }
+
+    /// Abbreviated working directory, `~` for home.
+    public var displayPath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard workingDirectory.hasPrefix(home) else { return workingDirectory }
+        return "~" + workingDirectory.dropFirst(home.count)
+    }
+}
+
+// MARK: - Usage windows
+
+public struct UsageWindow: Sendable, Codable, Equatable, Identifiable {
+    /// `five_hour`, `seven_day`, or `seven_day_<model_slug>`.
+    public let name: String
+    public let usedPercent: Double?
+    public let resetsAt: Date?
+
+    public var id: String { name }
+
+    public init(name: String, usedPercent: Double? = nil, resetsAt: Date? = nil) {
+        self.name = name
+        self.usedPercent = usedPercent
+        self.resetsAt = resetsAt
+    }
+
+    public var remainingPercent: Double? {
+        usedPercent.map { max(0, 100 - $0) }
+    }
+
+    public var displayName: String {
+        switch name {
+        case "five_hour": return "5 Hour"
+        case "seven_day": return "7 Day"
+        default:
+            guard name.hasPrefix("seven_day_") else { return name }
+            let slug = name.dropFirst("seven_day_".count)
+            return slug.split(separator: "_").map(\.capitalized).joined(separator: " ")
+        }
+    }
+}
+
+/// Usage is either measured or explicitly unavailable. There is no third state
+/// and no fallback value. See spec section 9.4.
+public enum UsageState: Sendable, Equatable {
+    case unavailable(reason: String)
+    case available(windows: [UsageWindow], fetchedAt: Date)
+
+    public var windows: [UsageWindow] {
+        if case .available(let w, _) = self { return w }
+        return []
+    }
+
+    public func window(named name: String) -> UsageWindow? {
+        windows.first { $0.name == name }
+    }
+}
+
+// MARK: - Severity
+
+public enum Severity: String, Sendable, CaseIterable {
+    case healthy
+    case attention
+    case warning
+    case critical
+}
