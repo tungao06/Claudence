@@ -67,7 +67,7 @@ struct SessionRow: View {
             isExpanded.toggle()
         } label: {
             HStack(spacing: Theme.Space.s) {
-                StatusIndicator(session.status, showsText: false)
+                StatusIndicator(session.status, showsText: false, activityToken: session.lastActivityAt)
                 Text(session.projectName)
                     .font(Theme.Typography.title)
                     .foregroundStyle(Theme.textPrimary)

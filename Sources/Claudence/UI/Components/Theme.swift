@@ -221,7 +221,20 @@ enum Theme {
     enum Motion {
         static var valueChange: Animation { .easeOut(duration: 0.35) }
         static var disclosure: Animation { .easeInOut(duration: 0.18) }
-        static var pulse: Animation { .easeInOut(duration: 1.1).repeatForever(autoreverses: true) }
+        /// A single dip, NOT `.repeatForever`.
+        ///
+        /// `MenuBarExtra(style: .window)` keeps its popover content mounted
+        /// after dismissal, so a repeating animation drives a layout and
+        /// display-list pass at the screen refresh rate for the life of the
+        /// process. Measured with the popover never opened: 6.9% of a core,
+        /// against a 0.5% budget. Two attempts to gate the repeat on an AppKit
+        /// "is this presented" signal both failed the same way — the signal
+        /// turns true on its own during a frame update and the cost returns —
+        /// so the repeat is gone rather than conditional.
+        ///
+        /// A pulse now fires once per observed change, which is also closer to
+        /// what the motion is supposed to say: something just happened.
+        static var pulse: Animation { .easeInOut(duration: 0.55) }
         /// How far an active glyph dims at the bottom of its pulse. Gentle by
         /// design: motion should register peripherally, not demand attention.
         static let pulseMinOpacity: Double = 0.35

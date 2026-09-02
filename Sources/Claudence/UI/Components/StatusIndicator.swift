@@ -12,37 +12,29 @@ struct StatusIndicator: View {
     let status: SessionStatus
     let showsText: Bool
     let glyphSize: CGFloat
+    /// Changes when the session did something. Each change fires one dip.
+    /// Nil means the caller has nothing to report, and the glyph never moves.
+    let activityToken: AnyHashable?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.popoverIsPresented) private var isPresented
     @State private var isPulsing = false
 
     init(
         _ status: SessionStatus,
         showsText: Bool = true,
-        glyphSize: CGFloat = Theme.Bar.statusGlyph
+        glyphSize: CGFloat = Theme.Bar.statusGlyph,
+        activityToken: AnyHashable? = nil
     ) {
         self.status = status
         self.showsText = showsText
         self.glyphSize = glyphSize
+        self.activityToken = activityToken
     }
 
-    /// Only an active state pulses, never under Reduce Motion, and never while
-    /// the popover is not in front of the user. Motion here means "this is
-    /// happening right now", nothing else.
-    ///
-    /// The visibility term is the idle-CPU fix. `MenuBarExtra(style: .window)`
-    /// keeps its content mounted after the popover is dismissed, so a
-    /// `.repeatForever` animation goes on driving a layout and display-list pass
-    /// at the screen's refresh rate for the life of the process. Measured on the
-    /// release build with the popover never opened: 6.9% of a core, against a
-    /// 0.5% budget, essentially all of it under
-    /// `NSDisplayCycleFlush -> NSHostingView.layout -> ViewGraph.render`.
-    ///
-    /// `popoverIsPresented` defaults to false, so a view that cannot prove it is
-    /// visible stays still. See `PopoverPresentation.swift`.
-    private var shouldPulse: Bool {
-        status == .running && !reduceMotion && isPresented
+    /// Only an active state pulses, and never under Reduce Motion. Motion here
+    /// means "this just happened", nothing else.
+    private var mayPulse: Bool {
+        status == .running && !reduceMotion && activityToken != nil
     }
 
     var body: some View {
@@ -51,7 +43,7 @@ struct StatusIndicator: View {
                 .font(.system(size: glyphSize, weight: .semibold))
                 .foregroundStyle(Theme.color(for: status))
                 .opacity(isPulsing ? Theme.Motion.pulseMinOpacity : 1)
-                .animation(shouldPulse ? Theme.Motion.pulse : nil, value: isPulsing)
+                .animation(Theme.animation(Theme.Motion.pulse, reduceMotion: reduceMotion), value: isPulsing)
             if showsText {
                 Text(Theme.name(for: status))
                     .font(Theme.Typography.label)
@@ -59,10 +51,21 @@ struct StatusIndicator: View {
                     .lineLimit(1)
             }
         }
-        // Recomputed whenever Reduce Motion changes, so switching it on mid-run
-        // stops the pulse immediately and snaps the glyph back to full opacity.
-        .task(id: shouldPulse) {
-            isPulsing = shouldPulse
+        // One dip per observed change, then still. Nothing repeats, so an idle
+        // popover — mounted but invisible, which is its normal state — costs
+        // nothing. See Theme.Motion.pulse for the measurement that forced this.
+        .task(id: activityToken) {
+            guard mayPulse else {
+                isPulsing = false
+                return
+            }
+            isPulsing = true
+            try? await Task.sleep(for: .milliseconds(550))
+            isPulsing = false
+        }
+        // Turning Reduce Motion on mid-run snaps the glyph back to full opacity.
+        .task(id: reduceMotion) {
+            if reduceMotion { isPulsing = false }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spokenLabel)

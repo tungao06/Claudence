@@ -266,25 +266,34 @@ Profiled on the release build with the popover never opened and zero filesystem 
 window: **6.9% of a core**, essentially all of it under
 `NSDisplayCycleFlush -> NSHostingView.layout -> ViewGraph.render`, ending in `-[CALayer setOpacity:]`.
 
-**Two fixes were considered; the safer one shipped.**
+**Three fixes were tried. Only the third works.**
 
-Unmounting the popover subtree when it is not presented is the more general fix, since nothing off
-screen can then animate whichever component grows an animation next. It was built and then rejected:
-the AppKit signals available for "is this popover presented" flip on spuriously. `onAppear` fires at
-launch and cannot tell "presented" from "built". `NSWindow.isVisible` turns true on its own during a
-frame update, which made the popover mount itself and burn 7% again for the rest of the session.
-A false negative on that signal means an empty popover, which is a worse defect than the one being
-fixed.
+1. *Unmount the popover subtree when not presented*, keyed on `NSWindow.isVisible`. Rejected: the
+   signal turns true on its own during a frame update, the popover mounted itself, and the cost
+   returned for the rest of the session.
+2. *Keep the tree mounted, publish presentation through the environment, let animated components
+   suppress themselves*, keyed on `isKeyWindow || occlusionState.contains(.visible)`. This is the
+   version that was committed first, and measurement killed it: 3.0% over 31 s, then 6.2% over 92 s.
+   The number climbing with the window length is the signature of the flag latching true and staying
+   there. Occlusion reports a dismissed menu bar window as visible.
+3. **Shipped: remove the repeat.** `Theme.Motion.pulse` is a single 0.55 s dip, and `StatusIndicator`
+   fires it once per change of an `activityToken` (`session.lastActivityAt`). An idle popover costs
+   nothing by construction rather than by a flag being correct, and the motion now says "something
+   just happened", which is closer to what the spec asks motion to mean.
 
-What shipped instead publishes presentation into the environment as `popoverIsPresented` and lets
-components suppress their own motion. The default is `false`, so anything that cannot prove it is
-visible stays still. A wrong answer now costs a missing pulse rather than an empty popover, and the
-supporting fixes stand on their own:
+The environment key from attempt 2 is kept, unused by `StatusIndicator`, because it documents the
+hazard for whatever animates next. It is not load-bearing.
+
+Two supporting changes stand on their own regardless:
 
 - `MonitorViewModel` splits `menuBarState` and `usageState` out of `snapshot`, so the label — the
   only thing on screen while the popover is closed — is not invalidated by session token churn.
 - Assignments are guarded on inequality, because `@Observable` invalidates on assignment rather
   than on change.
+
+**The monitoring engine was never the problem.** `Claudence --diagnose --counters 60` on this
+machine: 0 FSEvents callbacks, 0 discoveries, 0 transcript reads, 0.00% CPU over a full minute.
+Every candidate involving the filesystem was wrong, and the instrumentation is what proved it.
 
 **Definition of done:** idle CPU under 0.5% measured by CPU delta over at least 5 minutes with live
 sessions present.

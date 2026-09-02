@@ -96,6 +96,13 @@ Bars use `total`. Breakdowns always show cache separately — cache reads cost r
 - **Absent Claude Code, zero sessions, denied Keychain access, and no network are ordinary states** with defined UI, not errors.
 - **UI never touches a file path, a process, or the network.** New facts enter through the domain model first.
 - Event-driven only: FSEvents with 250 ms debounce, offset-based tailing. No polling, no main-thread I/O.
+- **No repeating animation anywhere in the popover, conditional or not.** `MenuBarExtra(style: .window)` builds its content at launch and keeps it mounted after dismissal, so a `.repeatForever` drives a layout and display-list pass at the screen refresh rate for the life of the process. One such animation measured 6.9% of a core with the popover never opened, against a 0.5% budget. Gating the repeat on a "is the popover presented" signal was tried twice and failed twice — both `NSWindow.isVisible` and `isKeyWindow || occlusionState.contains(.visible)` turn true on their own during a frame update, and the cost comes straight back. Animate once per observed change instead, so an idle view costs nothing by construction rather than by a flag being right.
+- **Measure idle CPU as a delta**, never with `ps -o %cpu`, which reports a lifetime average and hid this defect completely:
+  ```
+  PID=$(pgrep -f "Claudence.app/Contents/MacOS/Claudence" | head -1)
+  date +%s; ps -o time= -p $PID    # wait 5+ minutes, then repeat
+  # idle % = (cpu2 - cpu1) / (wall2 - wall1) * 100
+  ```
 - Performance budget: idle CPU under 0.5%, resident memory under 60 MB, cold start under 1 s, 12 MB transcript re-scan under 50 ms.
 - Semantic color tokens (`healthy`, `attention`, `warning`, `critical`) only; no hex in views. Never color alone — every indicator pairs a glyph with text.
 
