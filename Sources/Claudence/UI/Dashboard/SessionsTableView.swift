@@ -66,8 +66,12 @@ struct SessionsTableView: View {
     private static let absent = "\u{2014}"
 
     var body: some View {
+        // "Live", not "Active": this card lists every session with a live
+        // process, and each row's own status pill says which of them is
+        // working. Active is the running subset and is counted on the tile
+        // above, from the same definition.
         DashboardCard(
-            title: "Active sessions",
+            title: "Live sessions",
             subtitle: subtitle,
             headerLayout: .inline,
             horizontalPadding: DashboardMetrics.chartCardPaddingHorizontal,
@@ -76,7 +80,7 @@ struct SessionsTableView: View {
             if sessions.isEmpty {
                 // Zero sessions is an ordinary state, not an error.
                 UnavailableView(
-                    "No active sessions",
+                    "No live sessions",
                     reason: "Claude Code is not running, or no session is interactive"
                 )
             } else {

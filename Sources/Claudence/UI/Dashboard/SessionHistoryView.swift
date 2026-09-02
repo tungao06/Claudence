@@ -31,7 +31,14 @@ enum HistoryRange: String, CaseIterable, Identifiable, Sendable {
 
     private static let day: TimeInterval = 86_400
 
-    /// Earliest start time included in this range.
+    /// Earliest *activity* time included in this range.
+    ///
+    /// Activity, not start. `Today` is `startOfDay`, and a session that opened
+    /// last night and was still working this morning is one of today's: the
+    /// same definition `AnalyticsService.sessionsToday()` and the daily rollup
+    /// use. Filtering on `startedAt` made this table read `0 sessions` under a
+    /// tile, on the same window and off the same database, that had counted
+    /// that session as today's.
     func cutoff(from now: Date, calendar: Calendar = .current) -> Date {
         switch self {
         case .today: return calendar.startOfDay(for: now)
@@ -63,10 +70,14 @@ struct SessionHistoryView: View {
     /// spoken summary and the table, which meant the sort ran three times for
     /// one frame, on every frame. It is a parameter now, so a longer history
     /// costs what it should.
+    /// Filtered on last activity and sorted on start: the range asks which day
+    /// the work happened on, and the column the reader is looking at is
+    /// `Started`, so a row that survives the filter still lands where its own
+    /// visible timestamp says it should.
     private var visibleRows: [HistoryRow] {
         let cutoff = range.cutoff(from: now)
         return rows
-            .filter { $0.startedAt >= cutoff }
+            .filter { $0.lastActivityAt >= cutoff }
             .sorted { $0.startedAt > $1.startedAt }
     }
 

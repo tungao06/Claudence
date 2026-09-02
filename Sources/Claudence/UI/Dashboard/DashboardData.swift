@@ -80,22 +80,34 @@ struct HistoryRow: Identifiable, Sendable, Equatable {
     let id: String
     let project: String
     let startedAt: Date
+    /// When this session last did anything. **This is the field the Today,
+    /// 7 days and 30 days ranges filter on**, and not `startedAt`: a session
+    /// belongs to the day the work happened, which is the definition
+    /// `AnalyticsService.sessionsToday()` and the daily rollup already use.
+    /// Filtering on the start date put "0 sessions" under a table whose own
+    /// window had counted one.
+    let lastActivityAt: Date
     let duration: TimeInterval
     let usage: TokenUsage
     /// Nil when the transcript never recorded a model for this session.
     let model: String?
 
+    /// - Parameter lastActivityAt: nil derives it from `startedAt + duration`,
+    ///   which is the identity the adapter builds `duration` from in the first
+    ///   place. Only the previews and tests leave it out.
     init(
         id: String,
         project: String,
         startedAt: Date,
         duration: TimeInterval,
         usage: TokenUsage,
-        model: String? = nil
+        model: String? = nil,
+        lastActivityAt: Date? = nil
     ) {
         self.id = id
         self.project = project
         self.startedAt = startedAt
+        self.lastActivityAt = lastActivityAt ?? startedAt.addingTimeInterval(max(0, duration))
         self.duration = duration
         self.usage = usage
         self.model = model
@@ -161,20 +173,18 @@ struct DashboardData: Sendable, Equatable {
     /// Nil when today's totals could not be read. Zero is a real answer and is
     /// not the same thing.
     let todayUsage: TokenUsage?
-    /// Estimated only. Nil when any model involved has no price.
+    /// Estimated only, and over today's sessions: the range the tile names.
+    /// Nil when any model involved has no price.
+    ///
+    /// Not the same range as `projects`, which is every session ever stored.
+    /// Both were drawn unlabelled on one window, a $3.42 tile beside project
+    /// rows summing to $5.43, and the two now name their ranges on screen: the
+    /// tile is titled `Est. cost today` and the projects card is subtitled
+    /// `all time`.
     let todayCost: Double?
     /// How many of today's sessions had no price table entry. Shown in words
     /// beside the estimate so it can never read as a billing amount.
     let unpricedSessionCount: Int
-    /// Sessions that ran at any point today, live or finished.
-    ///
-    /// The design's Active-sessions tile reads `2 / 4 today`, and the second
-    /// figure is that count. It comes from the store, not from the registry:
-    /// the registry lists only what is alive right now, so counting it would
-    /// print a denominator smaller than the numerator beside it. Nil when the
-    /// store could not answer, and the tile then prints the live count with no
-    /// denominator rather than a wrong one. See spec section 9.4.
-    let todaySessionCount: Int?
 
     /// Today's tokens against yesterday's, as a fraction: 0.18 is 18% more than
     /// yesterday. Nil covers both honest absences, and the tile renders neither
@@ -212,7 +222,6 @@ struct DashboardData: Sendable, Equatable {
         todayUsage: TokenUsage? = nil,
         todayCost: Double? = nil,
         unpricedSessionCount: Int = 0,
-        todaySessionCount: Int? = nil,
         todayVersusYesterday: Double? = nil,
         priceTableStaleDays: Int? = nil
     ) {
@@ -232,7 +241,6 @@ struct DashboardData: Sendable, Equatable {
         self.todayUsage = todayUsage
         self.todayCost = todayCost
         self.unpricedSessionCount = unpricedSessionCount
-        self.todaySessionCount = todaySessionCount
         self.todayVersusYesterday = todayVersusYesterday
         self.priceTableStaleDays = priceTableStaleDays
     }
@@ -314,9 +322,23 @@ extension DashboardData {
         }
     }
 
+    /// Sessions doing work now. `MonitorSnapshot.activeCount(of:)` is the one
+    /// definition of the word and nothing here re-states it: this window and
+    /// the menu bar both counted "active" for themselves and disagreed.
+    var activeSessionCount: Int {
+        MonitorSnapshot.activeCount(of: sessions)
+    }
+
+    /// Every session with a live process, busy or waiting. This is what the
+    /// sessions card lists and what the Active-sessions tile divides into, so
+    /// the tile's numerator is a subset of its denominator by construction.
+    var liveSessionCount: Int {
+        sessions.count
+    }
+
     /// Distinct projects among the live sessions. Two sessions in one checkout
     /// are one project, which is the number the tile is claiming.
-    var activeProjectCount: Int {
+    var liveProjectCount: Int {
         Set(sessions.map(\.projectName)).count
     }
 

@@ -969,7 +969,7 @@ enum Theme {
         static var panelValue: Font { .system(size: 16, weight: .semibold, design: .monospaced) }
         /// A session row's token total. HTML mono 13 px / 600.
         static var rowValue: Font { .system(size: 13, weight: .semibold, design: .monospaced) }
-        /// A count pill: the `2` beside ACTIVE SESSIONS. HTML mono 12 px / 600.
+        /// A count pill: the `2` beside LIVE SESSIONS. HTML mono 12 px / 600.
         static var countPill: Font { .system(size: 12, weight: .semibold, design: .monospaced) }
         /// A secondary window's name, and a settings row's label.
         /// HTML 13 px / 600 sans.
@@ -1258,7 +1258,7 @@ enum Theme {
         /// only invite one of them to drift.
         static let pillPaddingHorizontal: CGFloat = 9
         static let pillPaddingVertical: CGFloat = 3
-        /// The count pill beside ACTIVE SESSIONS. HTML `padding: 2px 9px`.
+        /// The count pill beside LIVE SESSIONS. HTML `padding: 2px 9px`.
         static let countPillPaddingHorizontal: CGFloat = 9
         static let countPillPaddingVertical: CGFloat = 2
 

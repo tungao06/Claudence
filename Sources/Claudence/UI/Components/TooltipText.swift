@@ -44,7 +44,8 @@ enum TooltipText {
 
     // MARK: - TIPS (17 entries)
     //
-    // Sixteen are the design's verbatim; `ctx` is corrected. See `disputed`.
+    // Fourteen are the design's verbatim; `ctx`, `active` and `cost` are
+    // corrected. See `disputed`.
     //
     // Three of the seventeen are not reachable from any view, and that is
     // deliberate rather than an oversight: `fresh`, `cw` and `out` describe the
@@ -85,12 +86,12 @@ enum TooltipText {
             body: "All tokens across every session today, measured from the transcript files. Measured, not estimated."
         ),
         "cost": Entry(
-            title: "Estimated cost",
-            body: "Estimate from a per-model price table. It is an estimate, never the amount actually billed. A model missing from the table reads Cost unavailable."
+            title: "Estimated cost today",
+            body: "Estimate from a per-model price table, over the sessions that did work today. It is an estimate, never the amount actually billed. A model missing from the table reads Cost unavailable. The Projects table below covers all time, not today, so the two totals are not meant to match."
         ),
         "active": Entry(
             title: "Active sessions",
-            body: "Interactive sessions with a live process. Liveness is confirmed by pid plus process start time, never by counting processes named claude."
+            body: "Sessions doing work right now, out of the sessions with a live process. A session waiting on you is live but not active. Liveness is confirmed by pid plus process start time, never by counting processes named claude."
         ),
         "status": Entry(
             title: "Session status",
@@ -217,11 +218,11 @@ enum TooltipText {
 
     // MARK: - Disputed
     //
-    // The design's original wording for the two strings that were wrong about
+    // The design's original wording for the four strings that were wrong about
     // this application, kept beside the correction now shipping in its place.
     // Nothing reads this table; it exists so the edit is auditable.
 
-    /// What the design says, for the two strings this file corrects.
+    /// What the design says, for the four strings this file corrects.
     ///
     /// - `Records`: says subagent records live "in the parent transcript". They
     ///   do not. `SubagentLocator` finds them in
@@ -235,10 +236,25 @@ enum TooltipText {
     ///   application's own `ContextWindowTable`, which is why `PLAN-UI.md`
     ///   decision 1 requires the figure to be labelled Estimated. The sentence
     ///   claims a provenance the number does not have.
+    /// - `active`: described every session with a live process, which is the
+    ///   tile's denominator and not the number it prints. The tile reads
+    ///   `1 / 2 live`, and the sentence explained only the 2. `MonitorSnapshot`
+    ///   holds the one definition of the word: a session doing work now.
+    /// - `cost`: named no range, and neither did the Projects table under it,
+    ///   which covers all time. The two figures were drawn on one window with
+    ///   nothing to say why they differ.
     static let disputed: [String: Entry] = [
         "Records": Entry(
             title: "Transcript records",
             body: "Assistant records attributed to this subagent in the parent transcript. Each one carries its own usage block."
+        ),
+        "active": Entry(
+            title: "Active sessions",
+            body: "Interactive sessions with a live process. Liveness is confirmed by pid plus process start time, never by counting processes named claude."
+        ),
+        "cost": Entry(
+            title: "Estimated cost",
+            body: "Estimate from a per-model price table. It is an estimate, never the amount actually billed. A model missing from the table reads Cost unavailable."
         ),
         "ctx": Entry(
             title: "Context window",

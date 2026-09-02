@@ -141,7 +141,12 @@ final class MonitorViewModel {
 
     // MARK: - Derived view state
 
+    /// Every session with a live process, busy or waiting. The popover lists
+    /// all of them, which is why its band is titled LIVE SESSIONS.
     var sessions: [AISession] { snapshot.sessions }
+    /// Sessions doing work now, and the only number this application prints
+    /// under the word "active". `MonitorSnapshot.activeCount` holds the
+    /// definition; nothing here filters on `.running` a second time.
     var activeCount: Int { snapshot.activeCount }
     /// Today's tokens, or nil when the store could not answer. Nil is not a
     /// zero and the popover must not render it as one.

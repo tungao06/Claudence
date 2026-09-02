@@ -71,7 +71,12 @@ extension MonitorViewModel {
             todayUsage: analytics.todayTotal(),
             todayCost: todayCost?.estimatedDollars,
             unpricedSessionCount: todayCost?.unpricedSessions ?? 0,
-            todaySessionCount: analytics.sessionsActiveToday(),
+            // `sessionsActiveToday()` was passed here and printed as the
+            // Active-sessions tile's denominator, against a numerator counted
+            // off the live registry. Two different sets, so the tile could and
+            // did print `2 / 1 today`. The tile divides the live set by itself
+            // now; the sessions-that-ran-today count is the history table's
+            // Today range, which reads the same rows.
             todayVersusYesterday: analytics.dayOverDay()?.fractionalChange,
             priceTableStaleDays: Self.priceTableStaleDays(analytics.priceProvenance, now: now)
         )
@@ -214,7 +219,12 @@ extension MonitorViewModel {
                     // session on the same screen, differing by the subagent
                     // share, which is 41% on this repository.
                     usage: session.combinedUsage,
-                    model: session.model
+                    model: session.model,
+                    // Carried rather than derived from the duration, because it
+                    // is what the table's Today, 7 days and 30 days ranges
+                    // filter on: a session belongs to the day it did work, not
+                    // to the day it opened.
+                    lastActivityAt: session.lastActivityAt
                 )
             }
     }

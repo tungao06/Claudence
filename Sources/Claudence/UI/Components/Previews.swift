@@ -973,14 +973,14 @@ struct SessionRowExtremesPreview: PreviewProvider {
 
 struct SessionRowZeroSessionsPreview: PreviewProvider {
     static var previews: some View {
-        PreviewFrame(title: "Active sessions") {
+        PreviewFrame(title: "Live sessions") {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
                 ForEach(SessionFixture.all) { session in
                     SessionRow(session: session, tokenScaleMaximum: UsageFixture.smallScale)
                 }
                 if SessionFixture.all.isEmpty {
                     UnavailableView(
-                        "No active sessions",
+                        "No live sessions",
                         reason: "Claude Code is not running, or no session is interactive"
                     )
                 }

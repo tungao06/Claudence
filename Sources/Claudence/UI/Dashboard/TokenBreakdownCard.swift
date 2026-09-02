@@ -223,13 +223,17 @@ struct TokenBreakdownCard: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// `Format.share`, not `Format.percent`: the same rule the session detail's
+    /// breakdown already follows. `percent` rounds, so a category holding 2 k of
+    /// a 197.7 M day was spoken as "0% of the total" directly after its non-zero
+    /// count. `share` says `<1%` there and keeps `0%` for a true zero.
     private func spokenRow(
         _ category: Theme.TokenCategory,
         amount: Int,
         share: Double?
     ) -> String {
         var text = "\(category.label), \(Format.tokens(amount)) tokens"
-        if let share { text += ", \(Format.percent(share * 100)) of the total" }
+        if let share { text += ", \(Format.share(share)) of the total" }
         return text + "."
     }
 }

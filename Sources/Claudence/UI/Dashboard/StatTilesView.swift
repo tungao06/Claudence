@@ -145,6 +145,24 @@ struct StatTilesView: View {
         return "rolling \(DashboardMetrics.burnWindowMinutes) min · \(sessions)"
     }
 
+    /// Active over live, both counted off the same array.
+    ///
+    /// The design's shape here is `2 / 4 today`, and the denominator used to be
+    /// `sessionsActiveToday()`: a count of stored rows whose last activity fell
+    /// today, against a numerator that was every session in the live registry.
+    /// The two sets are not nested, so an idle session still alive under
+    /// yesterday's timestamp was in the numerator and not the denominator and
+    /// the tile printed `2 / 1 today`, which is not a quantity. Ordering the two
+    /// reads does not fix it; only counting both halves off one set does.
+    ///
+    /// So the fraction is now active over live, where active is
+    /// `status == .running` and live is every session with a process. The
+    /// numerator is a subset of the denominator by construction, the word
+    /// "active" means the same thing here as it does in the menu bar's spoken
+    /// label, and the denominator says which set it is rather than leaving
+    /// "today" to be inferred. The sessions-that-ran-today figure has not gone
+    /// anywhere: the history table's Today range is the same count, from a
+    /// superset of the same rows.
     private var activeTile: some View {
         tile(
             label: "Active sessions",
@@ -152,26 +170,19 @@ struct StatTilesView: View {
             tooltipKey: "active",
             spoken: spokenActive
         ) {
-            // The design's ` / 4 today` only appears when something upstream
-            // could actually count the day. It is nil today, and a denominator
-            // invented from the live set would be smaller than the truth.
-            value("\(data.sessions.count)", unit: todayDenominator)
+            value("\(data.activeSessionCount)", unit: " / \(data.liveSessionCount) live")
             caption(
-                data.activeProjectCount == 1
+                data.liveProjectCount == 1
                     ? "1 project"
-                    : "\(data.activeProjectCount) projects",
+                    : "\(data.liveProjectCount) projects",
                 ink: Self.mintTint.ink
             )
         }
     }
 
-    private var todayDenominator: String? {
-        data.todaySessionCount.map { " / \($0) today" }
-    }
-
     private var costTile: some View {
         tile(
-            label: "Est. cost",
+            label: "Est. cost today",
             tint: Self.amberTint,
             tooltipKey: "cost",
             spoken: spokenCost
@@ -312,16 +323,17 @@ struct StatTilesView: View {
             + "\(burnDenominator)."
     }
 
+    /// The same two counts and the same two words the tile prints. A spoken
+    /// label that said "two sessions active" over a tile reading `1 / 2 live`
+    /// is the defect this file is being edited for, one surface further down.
     private var spokenActive: String {
-        let sessions = data.sessions.count == 1 ? "1 session" : "\(data.sessions.count) sessions"
-        let projects = data.activeProjectCount == 1
+        let live = data.liveSessionCount == 1
+            ? "1 live session"
+            : "\(data.liveSessionCount) live sessions"
+        let projects = data.liveProjectCount == 1
             ? "1 project"
-            : "\(data.activeProjectCount) projects"
-        var text = "\(sessions) active, across \(projects)."
-        if let today = data.todaySessionCount {
-            text += " \(today) ran today."
-        }
-        return text
+            : "\(data.liveProjectCount) projects"
+        return "\(data.activeSessionCount) of \(live) active, across \(projects)."
     }
 
     private var spokenCost: String {

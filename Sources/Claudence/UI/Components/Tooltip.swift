@@ -389,15 +389,20 @@ enum Tooltip {
     /// Both figures are the caller's measurements. When the total is zero the
     /// suffix is dropped: a share of nothing is undefined, and "0 of 0 (0%)"
     /// would read as a measurement rather than as an absence.
+    ///
+    /// The share goes through `Format.share`, which is where the `<1%` rule
+    /// lives. Rounding it here printed `2.0 K of 197.7 M (0%)`: a count and a
+    /// percentage of the same quantity, in one parenthesis, contradicting each
+    /// other. `share` prints `0%` only for a true zero, and this tooltip cannot
+    /// reach that case anyway.
     static func breakdownEntry(label: String, value: Int, total: Int) -> TooltipText.Entry? {
         guard let entry = TooltipText.breakdown(label) else { return nil }
         guard total > 0 else { return entry }
-        let percent = Int((Double(value) / Double(total) * 100).rounded())
         let suffix = separator
             + Format.tokens(value)
             + " of "
             + Format.tokens(total)
-            + " (\(percent)%)"
+            + " (\(Format.share(Double(value) / Double(total))))"
         return TooltipText.Entry(title: entry.title, body: entry.body + suffix)
     }
 }

@@ -395,10 +395,15 @@ struct DashboardView: View {
 
     // MARK: - 3. Analytics
 
+    /// The subtitle names the range, and it has to: these rows cover every
+    /// session ever stored, while the cost tile three cards up covers today.
+    /// Both drew a dollar figure with neither one saying so, and a $3.42 tile
+    /// over project rows summing to $5.43 reads as an arithmetic error rather
+    /// than as two different questions.
     private var projectsCard: some View {
         DashboardCard(
             title: "Projects",
-            subtitle: "where the energy went",
+            subtitle: "all time · where the energy went",
             headerLayout: .inline,
             horizontalPadding: DashboardMetrics.chartCardPaddingHorizontal,
             contentGap: Theme.Space.l

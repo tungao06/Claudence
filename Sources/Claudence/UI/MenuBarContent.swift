@@ -326,9 +326,20 @@ struct MenuBarContent: View {
 
     // MARK: - Sessions
 
+    /// The band's title is `LIVE SESSIONS`, not `ACTIVE SESSIONS`, because the
+    /// pill beside it counts every session with a live process and the list
+    /// under it draws every one of them, idle ones included.
+    ///
+    /// It said ACTIVE and printed that count, while the menu bar's own spoken
+    /// label counted `status == .running` under the same word: one busy session
+    /// and one waiting produced a spoken "1 active session" and a pill reading
+    /// 2, on the same app, a click apart. The word active now means one thing
+    /// everywhere -- `MonitorSnapshot.activeCount`, a session doing work now --
+    /// and the surfaces that show the whole live set say live. Each row's own
+    /// status pill still says which of the two it is.
     private var sessionsHeader: some View {
         HStack {
-            Text("ACTIVE SESSIONS")
+            Text("LIVE SESSIONS")
                 .font(Theme.Typography.section)
                 .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textSecondary)
@@ -344,7 +355,16 @@ struct MenuBarContent: View {
         .padding(.top, Theme.Popover.sessionsHeaderTop)
         .padding(.bottom, Theme.Popover.sessionsHeaderBottom)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Active sessions, \(model.sessions.count)")
+        .accessibilityLabel(spokenSessionsHeader)
+    }
+
+    /// Both counts, spoken, because the header shows one and the rows under it
+    /// carry the other. `1 of 2` is the reading; `2 live sessions` alone left a
+    /// screen reader unable to tell a busy machine from a waiting one.
+    private var spokenSessionsHeader: String {
+        let live = model.sessions.count
+        let sessions = live == 1 ? "1 live session" : "\(live) live sessions"
+        return "\(sessions), \(model.activeCount) active"
     }
 
     @ViewBuilder
@@ -352,7 +372,7 @@ struct MenuBarContent: View {
         Group {
             if model.sessions.isEmpty {
                 // Zero sessions is an ordinary state, not an error.
-                UnavailableView("No active sessions", compact: true)
+                UnavailableView("No live sessions", compact: true)
             } else {
                 VStack(alignment: .leading, spacing: Theme.Popover.listGap) {
                     ForEach(model.sessions) { session in

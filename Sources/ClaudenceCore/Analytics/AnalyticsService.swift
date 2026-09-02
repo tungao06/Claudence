@@ -361,41 +361,67 @@ public struct AnalyticsService: Sendable {
             .reduce(TokenUsage.zero) { $0 + $1.usage }
     }
 
-    /// Estimated cost of today's sessions, with its unpriced portion, or nil
-    /// when the store could not answer.
-    public func todayCost() -> CostEstimate? {
-        let day = ClaudenceStore.dayString(for: now(), calendar: calendar)
-        let start = calendar.startOfDay(for: now())
-
+    /// **The one definition of "today".** A session belongs to today when it
+    /// *did work* today, which is `lastActivityAt >= startOfDay`, never when it
+    /// happened to start today.
+    ///
+    /// This is the same argument the daily rollup settled on 2026-09-03: a
+    /// session that opened at 21:25 and was still typing at 00:52 spent those
+    /// tokens today, and keying it on its start date files a whole night's work
+    /// under yesterday. `allSessions(since:)` filters on last activity, so the
+    /// definition is the query.
+    ///
+    /// Every surface that prints the word "today" about sessions goes through
+    /// here or through the same field: `todayCost()` and `sessionsActiveToday()`
+    /// below, and `SessionHistoryView`'s Today range, which filters
+    /// `HistoryRow.lastActivityAt`. Before this was shared, the history table
+    /// read "0 sessions" while the tile two cards above it read "/ 1 today",
+    /// from the same store, on the same window.
+    ///
+    /// Nil when the store could not answer. Zero is a different claim and is
+    /// returned as one.
+    private func sessionsToday() -> [AISession]? {
         let before = store.unansweredQueries
-        let sessions = store.allSessions(since: start)
+        let sessions = store.allSessions(since: calendar.startOfDay(for: now()))
         guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+        return sessions
+    }
 
-        return estimator.estimate(
-            sessions: sessions.filter {
-                ClaudenceStore.dayString(for: $0.startedAt, calendar: calendar) == day
-            }
-        )
+    /// Estimated cost of the sessions that worked today, with its unpriced
+    /// portion, or nil when the store could not answer.
+    ///
+    /// "Today" is `sessionsToday()`, so this counts the overnight session that
+    /// carried into today. It used to re-filter that set on `startedAt`, which
+    /// dropped exactly that session and printed `$0.00` on a morning whose
+    /// token total, keyed on when the tokens were spent, was not zero.
+    ///
+    /// What it prices is each such session's whole total, not the slice of it
+    /// spent since midnight: a price needs a model, and the per-day split lives
+    /// in `daily_rollups`, which records tokens and no model. So the figure is
+    /// the cost of today's sessions, and the tile says exactly that rather than
+    /// claiming to be the money spent between midnight and now.
+    public func todayCost() -> CostEstimate? {
+        guard let sessions = sessionsToday() else { return nil }
+        return estimator.estimate(sessions: sessions)
     }
 
     /// How many sessions were active at any point today, or nil when the store
     /// could not answer.
     ///
-    /// This is the denominator the dashboard's Active-sessions tile prints as
-    /// `2 / 4 today`, and it is deliberately not a count of sessions that
-    /// *started* today: a session opened last night and still running is part of
-    /// today, and bucketing it by start date would print a denominator smaller
-    /// than the live count sitting next to it. `allSessions(since:)` filters on
-    /// last activity, which is the definition that makes the pair legible.
+    /// This was the denominator of the dashboard's Active-sessions tile, printed
+    /// as `2 / 4 today`, and it is no longer: the numerator came from the live
+    /// registry and this came from the store, so an idle session still alive
+    /// under yesterday's timestamp was in the first set and not the second, and
+    /// the tile rendered `2 / 1 today`. A fraction whose two halves are counted
+    /// off different sets cannot be made safe by ordering the reads, so the tile
+    /// now divides the live set by itself: active sessions over live sessions,
+    /// where the numerator is a subset of the denominator by construction.
     ///
-    /// Nil rather than zero when the store failed: an empty answer from a
-    /// working store is "no sessions", and the tile prints the numerator with no
-    /// denominator rather than claiming a day with none.
+    /// The count itself is still the store-side answer to "how many sessions
+    /// worked today", and the session history table's Today range prints the
+    /// same figure from a superset of the same rows.
     public func sessionsActiveToday() -> Int? {
-        let before = store.unansweredQueries
-        let sessions = store.allSessions(since: calendar.startOfDay(for: now()))
-        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
-        return sessions.count
+        sessionsToday()?.count
     }
 
     /// Sessions that did something at or after `since`, newest activity first,

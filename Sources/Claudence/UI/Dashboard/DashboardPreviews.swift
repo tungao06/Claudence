@@ -426,8 +426,7 @@ private enum DashboardFixture {
         history: DashboardHistory.mixed,
         todayUsage: DashboardUsage.medium,
         todayCost: 3.42,
-        unpricedSessionCount: 0,
-        todaySessionCount: 4
+        unpricedSessionCount: 0
     )
 
     /// Two windows at 1%, for the minimum-fill floor and the shape it draws.
