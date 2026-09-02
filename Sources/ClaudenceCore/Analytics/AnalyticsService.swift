@@ -149,10 +149,10 @@ public struct AnalyticsService: Sendable {
         }
         guard let earliest = dates.first else { return [] }
 
-        let before = store.health
+        let before = store.unansweredQueries
         let totals = store.dailyTotals(days: days)
         let sessions = store.allSessions(since: earliest)
-        let answered = Self.answered(before: before, after: store.health)
+        let answered = Self.answered(before: before, after: store.unansweredQueries)
 
         var usageByDay: [String: TokenUsage] = [:]
         for row in totals { usageByDay[row.day, default: .zero] += row.usage }
@@ -225,10 +225,10 @@ public struct AnalyticsService: Sendable {
         let starts = Self.hourStarts(in: range, calendar: calendar)
         guard !starts.isEmpty else { return [] }
 
-        let before = store.health
+        let before = store.unansweredQueries
         let rows = store.usageSamples(in: range)
         let sessions = store.allSessions(since: range.lowerBound)
-        guard Self.answered(before: before, after: store.health) else {
+        guard Self.answered(before: before, after: store.unansweredQueries) else {
             return starts.map {
                 HourPoint(hour: Self.hourString(for: $0, calendar: calendar), date: $0, usage: nil)
             }
@@ -407,21 +407,39 @@ public struct AnalyticsService: Sendable {
 
     // MARK: Today
 
-    /// Tokens recorded for today's local day, zero when there are none.
-    public func todayTotal() -> TokenUsage {
+    /// Tokens recorded for today's local day, zero when there are none, or nil
+    /// when the store could not answer.
+    ///
+    /// These two were the only reads here with no guard, and they printed
+    /// `Tokens today 0` and `$0.00 est.` off a failed query, as measurements,
+    /// which is the one thing this project does not do.
+    public func todayTotal() -> TokenUsage? {
         let day = ClaudenceStore.dayString(for: now(), calendar: calendar)
-        return store.dailyTotals(days: 1)
+
+        let before = store.unansweredQueries
+        let totals = store.dailyTotals(days: 1)
+        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+
+        return totals
             .filter { $0.day == day }
             .reduce(TokenUsage.zero) { $0 + $1.usage }
     }
 
-    /// Estimated cost of today's sessions, with its unpriced portion.
-    public func todayCost() -> CostEstimate {
+    /// Estimated cost of today's sessions, with its unpriced portion, or nil
+    /// when the store could not answer.
+    public func todayCost() -> CostEstimate? {
         let day = ClaudenceStore.dayString(for: now(), calendar: calendar)
         let start = calendar.startOfDay(for: now())
+
+        let before = store.unansweredQueries
         let sessions = store.allSessions(since: start)
-            .filter { ClaudenceStore.dayString(for: $0.startedAt, calendar: calendar) == day }
-        return estimator.estimate(sessions: sessions)
+        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+
+        return estimator.estimate(
+            sessions: sessions.filter {
+                ClaudenceStore.dayString(for: $0.startedAt, calendar: calendar) == day
+            }
+        )
     }
 
     /// How many sessions were active at any point today, or nil when the store
@@ -438,9 +456,9 @@ public struct AnalyticsService: Sendable {
     /// working store is "no sessions", and the tile prints the numerator with no
     /// denominator rather than claiming a day with none.
     public func sessionsActiveToday() -> Int? {
-        let before = store.health
+        let before = store.unansweredQueries
         let sessions = store.allSessions(since: calendar.startOfDay(for: now()))
-        guard Self.answered(before: before, after: store.health) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
         return sessions.count
     }
 
@@ -452,9 +470,9 @@ public struct AnalyticsService: Sendable {
     /// inert: every range held the same handful of rows, because a session that
     /// ended left the registry and therefore left the table.
     public func recentSessions(since: Date) -> [AISession]? {
-        let before = store.health
+        let before = store.unansweredQueries
         let sessions = store.allSessions(since: since)
-        guard Self.answered(before: before, after: store.health) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
         return sessions
     }
 
@@ -480,9 +498,9 @@ public struct AnalyticsService: Sendable {
         let todayKey = ClaudenceStore.dayString(for: today, calendar: calendar)
         let yesterdayKey = ClaudenceStore.dayString(for: yesterday, calendar: calendar)
 
-        let before = store.health
+        let before = store.unansweredQueries
         let totals = store.dailyTotals(days: 2)
-        guard Self.answered(before: before, after: store.health) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
 
         var byDay: [String: TokenUsage] = [:]
         for row in totals { byDay[row.day, default: .zero] += row.usage }
@@ -521,9 +539,9 @@ public struct AnalyticsService: Sendable {
         let until = now()
         let since = until.addingTimeInterval(-max(0, window))
 
-        let before = store.health
+        let before = store.unansweredQueries
         let sessions = store.allSessions(since: since)
-        guard Self.answered(before: before, after: store.health) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
 
         var measured = TokenUsage.zero
         for session in sessions { measured += session.combinedUsage }
@@ -555,17 +573,24 @@ public struct AnalyticsService: Sendable {
 
     // MARK: Private
 
-    /// Whether a read actually produced an answer.
+    /// Whether the reads bracketed by two tallies actually produced answers.
     ///
     /// An empty result from a working store is data ("no sessions"); an empty
-    /// result from a broken one is not. A store that was already degraded before
-    /// the read still answers — it is running in memory, which is a real, if
-    /// short-lived, database. A store that *became* degraded during the read
-    /// swallowed a failure, and a store that is unavailable never ran the query
-    /// at all: both mean the answer is missing, not zero.
-    private static func answered(before: StoreHealth, after: StoreHealth) -> Bool {
-        if case .unavailable = after { return false }
-        if case .healthy = before, case .degraded = after { return false }
-        return true
+    /// result from a broken one is not. A store that was already degraded
+    /// before the read still answers, because it is running in memory, which is
+    /// a real if short-lived database. What matters is the outcome of these
+    /// queries and not the condition the store was in when they started.
+    /// `ClaudenceStore.unansweredQueries` counts a query that failed and a
+    /// query that never ran, so an unchanged tally is exactly the claim needed.
+    ///
+    /// This compared `health` either side of the read until 2026-09-03, which
+    /// is a transition and not an outcome. `note(failure:)` latched health at
+    /// `.degraded` on the first failure, so every failure after it produced no
+    /// transition to see, this returned true, and each read fell back to
+    /// trusting its own default. Latching is fixed too, but a transition is the
+    /// wrong signal even when health is free to move: two reads inside one
+    /// method can fail one after another with health degraded throughout.
+    private static func answered(before: UInt64, after: UInt64) -> Bool {
+        before == after
     }
 }

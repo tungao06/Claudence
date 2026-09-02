@@ -85,12 +85,31 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     private let database: SQLiteDatabase?
     private let healthLock = NSLock()
     private var _health: StoreHealth
+    private var _unansweredQueries: UInt64 = 0
+    /// What health means for this store when nothing is failing. A store that
+    /// fell back to memory at launch is degraded for as long as it lives, so
+    /// recovery returns here rather than to `.healthy`.
+    private let baselineHealth: StoreHealth
     private let calendar: Calendar
 
     public var health: StoreHealth {
         healthLock.lock()
         defer { healthLock.unlock() }
         return _health
+    }
+
+    /// How many calls have failed or never ran, since the store was opened.
+    /// Monotonic, and the store's record of *outcome* rather than of state.
+    ///
+    /// `health` says what condition the store is in; this says whether a
+    /// particular call produced an answer. A caller that reads it either side
+    /// of its queries learns whether those queries answered, which comparing
+    /// health cannot tell it once health has settled on `.degraded` or
+    /// `.unavailable` and has nowhere left to move.
+    public var unansweredQueries: UInt64 {
+        healthLock.lock()
+        defer { healthLock.unlock() }
+        return _unansweredQueries
     }
 
     /// The connection, for tests and for diagnostics. `nil` when unavailable.
@@ -149,6 +168,8 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                 self._health = .unavailable(reason: "cannot open in-memory database: \(error)")
             }
         }
+
+        self.baselineHealth = self._health
     }
 
     // MARK: - Sessions
@@ -833,19 +854,29 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         }
     }
 
-    /// Runs `body`, converting any failure into a health downgrade.
+    /// Runs `body`, converting any failure into a health downgrade and a count.
     ///
     /// Nothing in the store throws to its caller: the domain contract is
     /// non-throwing, and a persistence failure must not become a UI failure.
+    /// The count is what makes the swallowed failure visible anyway, to a
+    /// caller that wants to know whether its own read answered.
     @discardableResult
     private func perform<T>(
         _ label: String,
         default fallback: T,
         _ body: (SQLiteDatabase) throws -> T
     ) -> T {
-        guard let database else { return fallback }
+        guard let database else {
+            // The query never ran. Counted the same as a failure, because from
+            // the caller's side the outcome is identical: the fallback below is
+            // this type's own default, not a measurement.
+            noteUnanswered()
+            return fallback
+        }
         do {
-            return try body(database)
+            let value = try body(database)
+            noteRecovery()
+            return value
         } catch {
             note(failure: error, while: label)
             return fallback
@@ -856,18 +887,38 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         perform(label, default: (), body)
     }
 
+    /// Records a failure, every time and not only the first.
+    ///
+    /// This was a `switch` that moved `_health` to `.degraded` once and took a
+    /// `break` branch for the life of the process. Latched that way, a later
+    /// failure left no trace at all, and a caller comparing health either side
+    /// of a read concluded the read had been answered.
     private func note(failure error: Error, while label: String) {
         healthLock.lock()
         defer { healthLock.unlock() }
-        let reason = "\(label) failed: \(error)"
-        switch _health {
-        case .healthy:
-            // The file opened but a statement failed. Report it without tearing
-            // the connection down: a single bad write is not proof the file is
-            // gone, and the next write may well succeed.
-            _health = .degraded(reason: reason)
-        case .degraded, .unavailable:
-            break
-        }
+        _unansweredQueries &+= 1
+        // The file opened but a statement failed. Report it without tearing the
+        // connection down: a single bad write is not proof the file is gone,
+        // and the next write may well succeed.
+        _health = .degraded(reason: "\(label) failed: \(error)")
+    }
+
+    private func noteUnanswered() {
+        healthLock.lock()
+        defer { healthLock.unlock() }
+        _unansweredQueries &+= 1
+    }
+
+    /// Returns health to what the store opened with.
+    ///
+    /// Recovery, not promotion. A store that fell back to memory at launch is
+    /// still in memory and stays `.degraded` however well it answers; what
+    /// clears here is only the extra degradation a failed statement added on
+    /// top of that. The count is never decremented: a failure that happened is
+    /// a fact, and only the condition of the store is allowed to improve.
+    private func noteRecovery() {
+        healthLock.lock()
+        defer { healthLock.unlock() }
+        if _health != baselineHealth { _health = baselineHealth }
     }
 }

@@ -64,9 +64,13 @@ extension MonitorViewModel {
                 : "No usage sampled in this window",
             projects: summaries.map(Self.projectRow),
             history: Self.history(live: sessions, stored: stored ?? []),
+            // Nil when the store could not answer, so the tile renders
+            // `Usage unavailable`. This passed a non-nil value on every path
+            // until 2026-09-03, which made `todayUsage`'s optionality
+            // unreachable and printed a failed read as a zero.
             todayUsage: analytics.todayTotal(),
-            todayCost: todayCost.estimatedDollars,
-            unpricedSessionCount: todayCost.unpricedSessions,
+            todayCost: todayCost?.estimatedDollars,
+            unpricedSessionCount: todayCost?.unpricedSessions ?? 0,
             todaySessionCount: analytics.sessionsActiveToday(),
             todayVersusYesterday: analytics.dayOverDay()?.fractionalChange,
             priceTableStaleDays: Self.priceTableStaleDays(analytics.priceProvenance, now: now)

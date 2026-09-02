@@ -368,13 +368,38 @@ func todayTotalCountsOnlyToday() throws {
         project: "Old", startedAt: threeDaysAgo, usage: TokenUsage(output: 999)))
 
     let service = AnalyticsService(store: store, calendar: utc, now: { now })
-    let today = service.todayTotal()
+    let today = try #require(service.todayTotal())
     #expect(today == TokenUsage(freshInput: 10, cacheRead: 90, output: 5))
     // Never recomputed here: the contract's own definitions.
     #expect(today.billableInput == 100)
     #expect(today.total == 105)
 
-    let cost = service.todayCost()
+    let cost = try #require(service.todayCost())
     #expect(cost.totalSessions == 2)
     #expect(cost.isComplete)
+}
+
+@Test("today reads stay unavailable after a prior store failure, never zero")
+func todayReadsSurviveALatchedFailure() throws {
+    let temp = TempAnalyticsDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: utc)
+    let now = Date()
+    store.upsert(session: makeAnalyticsSession(startedAt: now, usage: TokenUsage(output: 5)))
+
+    let service = AnalyticsService(store: store, calendar: utc, now: { now })
+    #expect(service.todayTotal()?.total == 5)
+
+    // Every statement throws from here on, so the first failing read is the
+    // "prior failure": it degrades the store, and health has nowhere left to
+    // move for the reads that follow.
+    try #require(store.connection).close()
+    _ = service.dailySeries(days: 1)
+
+    #expect(service.todayTotal() == nil)
+    #expect(service.todayCost() == nil)
+    // The siblings, which the latch also broke once it had swallowed the first
+    // transition.
+    #expect(service.sessionsActiveToday() == nil)
+    #expect(service.dayOverDay() == nil)
+    #expect(service.dailySeries(days: 1).allSatisfy { !$0.isAvailable })
 }

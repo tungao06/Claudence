@@ -966,3 +966,44 @@ func closedConnectionThrows() throws {
         try database.execute("SELECT 1")
     }
 }
+
+@Test("every failure is counted and health recovers once the store answers again")
+func failuresAreCountedAndHealthRecovers() throws {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+    #expect(store.health == .healthy)
+
+    let database = try #require(store.connection)
+    // Renamed rather than dropped, so the failure can be undone and the
+    // recovery half of this test has something to observe.
+    try database.execute("ALTER TABLE sessions RENAME TO sessions_hidden")
+
+    let baseline = store.unansweredQueries
+    _ = store.allSessions()
+    #expect(store.unansweredQueries == baseline + 1)
+    #expect(store.health.isPersistent == false)
+
+    // The second failure. Health had already latched to degraded, so this one
+    // used to leave no trace whatsoever.
+    _ = store.allSessions()
+    #expect(store.unansweredQueries == baseline + 2)
+
+    try database.execute("ALTER TABLE sessions_hidden RENAME TO sessions")
+    _ = store.allSessions()
+    #expect(store.health == .healthy)
+    #expect(store.unansweredQueries == baseline + 2)
+}
+
+@Test("a store that fell back to memory stays degraded when its queries succeed")
+func inMemoryFallbackDoesNotRecoverToHealthy() {
+    let impossible = URL(fileURLWithPath: "/dev/null/claudence/claudence.db")
+    let store = ClaudenceStore(url: impossible)
+    #expect(store.health.isPersistent == false)
+
+    // Recovery returns health to what the store opened with, and this one
+    // opened in memory. It answers, but it is still not persisting.
+    store.upsert(session: makeSession(id: "in-memory"))
+    #expect(store.session(id: "in-memory") != nil)
+    #expect(store.health.isPersistent == false)
+    #expect(store.unansweredQueries == 0)
+}
