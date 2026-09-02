@@ -36,6 +36,7 @@ private func makeAnalyticsSession(
     startedAt: Date,
     lastActivityAt: Date? = nil,
     usage: TokenUsage = .zero,
+    subagentUsage: TokenUsage = .zero,
     model: String? = "claude-opus-5"
 ) -> AISession {
     AISession(
@@ -49,6 +50,7 @@ private func makeAnalyticsSession(
         startedAt: startedAt,
         lastActivityAt: lastActivityAt ?? startedAt,
         usage: usage,
+        subagentUsage: subagentUsage,
         model: model,
         claudeCodeVersion: "2.0.1"
     )
@@ -280,6 +282,42 @@ func projectBreakdownGroupsAndSorts() throws {
     #expect(abs(breakdown[0].averageSessionDuration - 900) < 1)
     let lastActivity = try #require(breakdown[0].lastActivity)
     #expect(abs(lastActivity.timeIntervalSince(now) + 600) < 1)
+}
+
+/// The defect this pins: the tokens column excluded subagents while the cost
+/// column on the same row included them, so a project heavy on subagents was
+/// understated by a factor that changed per row and sorted below projects it
+/// dwarfed. Measured 3.2x on the live database on 2026-09-03.
+@Test("projectBreakdown counts subagent tokens, and sorts on the combined figure")
+func projectBreakdownIncludesSubagents() throws {
+    let temp = TempAnalyticsDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: utc)
+    let now = Date()
+
+    // Heavy: a small parent that spawned most of its work.
+    store.upsert(session: makeAnalyticsSession(
+        project: "Heavy", startedAt: now.addingTimeInterval(-3_600),
+        usage: TokenUsage(freshInput: 150_000),
+        subagentUsage: TokenUsage(freshInput: 334_000),
+        model: "claude-opus-5"))
+    // Plain: a larger parent with no subagents. Smaller than Heavy combined,
+    // larger than Heavy's parent alone -- exactly the case that sorted wrong.
+    store.upsert(session: makeAnalyticsSession(
+        project: "Plain", startedAt: now.addingTimeInterval(-1_800),
+        usage: TokenUsage(freshInput: 200_000),
+        model: "claude-opus-5"))
+
+    let service = AnalyticsService(store: store, calendar: utc, now: { now })
+    let breakdown = service.projectBreakdown()
+
+    #expect(breakdown.map(\.projectName) == ["Heavy", "Plain"])
+    #expect(breakdown[0].usage.total == 484_000)
+    #expect(breakdown[1].usage.total == 200_000)
+
+    // And the cost describes the same tokens the count does. Opus 5 fresh
+    // input at $5 per million: 484k -> $2.42, not 150k -> $0.75.
+    let heavy = try #require(breakdown[0].cost.estimatedDollars)
+    #expect(abs(heavy - 2.42) < 0.000_001)
 }
 
 @Test("projectBreakdown honours `since` on the session start")

@@ -383,6 +383,27 @@ history down by every session's subagent spend".
 - [ ] `usage += session.combinedUsage`
 - [ ] Test: a project whose sessions have subagents reports the combined figure, and sorts on it
 
+### 9.1b Context usage shows "unavailable" while the number is in hand  `REQUESTED 2026-09-03`
+
+**~0.5 day**
+
+The context well has two inputs: the last request's `billableInput`, which is the size of the
+context that request carried, and the model's limit from `ContextWindowTable`. Today it draws a
+meter only when both exist, and otherwise says `Context window unavailable` — even when the
+first input is present and only the limit is missing. On this machine that is the maintainer's
+own sessions: `claude-opus-5[1m]` is not in the table, so every one of them reads unavailable
+while the request size sits in memory.
+
+The maintainer's rule for it: if there is a ceiling, draw the bar against it; if there is not,
+still say how much context is in use, with no bar and no percentage, and never a guessed limit.
+
+- [ ] A third state for `ContextWell`: amount known, limit unknown. Renders the figure
+      (`261k in the last request`) and says the limit is not in the table, with no meter
+- [ ] `[1m]`-suffixed model ids resolve to a 1,000,000 limit. The suffix is the published name
+      of the 1M-context variant, so this is a read of the model id rather than a guess
+- [ ] The reason text distinguishes "no request read yet" (nothing to show) from "limit unknown"
+      (something to show), which are currently one sentence
+
 ### 9.2 The hourly chart counts tokens twice after a cumulative regression  `CONFIRMED`
 
 **~0.5 day**

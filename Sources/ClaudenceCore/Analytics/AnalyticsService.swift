@@ -323,10 +323,22 @@ public struct AnalyticsService: Sendable {
     /// - Parameter since: keeps sessions that *started* at or after this instant,
     ///   matching `ClaudenceStore.projectTotals(since:)`. Nil covers everything.
     ///
-    /// Built from the session rows rather than `projectTotals`, because the
-    /// summary needs each session's model, start and last activity for cost,
-    /// duration and recency, and mixing two aggregates would let the token total
-    /// and the cost describe different sets of sessions.
+    /// Built from the session rows, because the summary needs each session's
+    /// model, start and last activity for cost, duration and recency, and
+    /// mixing two aggregates would let the token total and the cost describe
+    /// different sets of sessions.
+    ///
+    /// **Combined usage, not parent-only.** This summed `session.usage` until
+    /// 2026-09-03, while the cost on the same row went through
+    /// `CostEstimator`, which prices `combinedUsage`. The tokens cell therefore
+    /// excluded subagents and the cost cell beside it included them. Measured
+    /// on the live database: `claudence-99` rendered 149.8 M tokens against a
+    /// true 484.0 M, understated 3.2x, and was drawn second in a table it
+    /// should have led. Every other aggregate in the codebase -- the rollups,
+    /// the sessions table, the recent-share figure, the usage samples -- uses
+    /// the combined figure, and subagent share on this machine ranges from 0%
+    /// to 82% by project, so the error was not a constant factor but a
+    /// different one on every row.
     public func projectBreakdown(since: Date? = nil) -> [ProjectSummary] {
         // `allSessions(since:)` filters on last activity, which is never earlier
         // than the start, so this is a superset of the sessions wanted here.
@@ -341,7 +353,7 @@ public struct AnalyticsService: Sendable {
             var durations = 0.0
             var lastActivity: Date?
             for session in sessions {
-                usage += session.usage
+                usage += session.combinedUsage
                 durations += max(0, session.lastActivityAt.timeIntervalSince(session.startedAt))
                 if lastActivity == nil || session.lastActivityAt > lastActivity! {
                     lastActivity = session.lastActivityAt
