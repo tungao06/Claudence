@@ -413,7 +413,7 @@ deliberately left alone: the 1M-context variant bills at a different rate, so bo
 model's prices would fabricate money. Cost for such a session stays unavailable, which is a gap
 Stage 4 should close with the published 1M rates rather than by aliasing.
 
-### 9.2 The hourly chart counts tokens twice after a cumulative regression  `CONFIRMED`
+### 9.2 The hourly chart counts tokens twice after a cumulative regression  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -430,9 +430,9 @@ session     drawn by the chart     actually spent      overcount
 The comment at `AnalyticsService.swift:301` describes the failure as tokens being lost. It is the
 opposite: they are drawn twice.
 
-- [ ] Carry a per-session high-water mark rather than comparing against the previous sample, so a
+- [x] Carry a per-session high-water mark rather than comparing against the previous sample, so a
       reset contributes zero and the recovery is not re-counted
-- [ ] Test built from the real regression: session `6ff2ff43` falling 189,121,530 to 51,512,855
+- [x] Test built from the real regression: session `6ff2ff43` falling 189,121,530 to 51,512,855
 
 The daily chart is unaffected — it reads `daily_rollups`, not samples.
 
@@ -484,7 +484,7 @@ until a filesystem event or the usage refresh wakes it. The fix must ride the ex
 refresh rather than introduce a tick, because a tick collides with the no-polling and idle-CPU
 rules.
 
-### 9.5 A degraded store renders zero as a measurement  `CONFIRMED`
+### 9.5 A degraded store renders zero as a measurement  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -502,10 +502,29 @@ never recovers, and once it is latched a newly failing query produces no transit
 `answered(before:after:)` returns true, and every other analytics read starts trusting its own
 default as well.
 
-- [ ] Guard both reads, and let them return nil
-- [ ] Record every failure rather than only the first, and let health recover
-- [ ] Make `answered` depend on the outcome of the query rather than on a health transition
-- [ ] Test: a store failure after a prior failure renders `Usage unavailable`, never zero
+- [x] Guard both reads, and let them return nil
+- [x] Record every failure rather than only the first, and let health recover
+- [x] Make `answered` depend on the outcome of the query rather than on a health transition
+- [x] Test: a store failure after a prior failure renders `Usage unavailable`, never zero
+
+The store now counts query outcomes: `unansweredQueries` rises when a statement throws and when
+there is no database at all, and `answered(before:after:)` is equality over that count. It
+survives a latched health value and it survives two reads failing inside one method, which a
+transition misses even with the latch fixed. Health recovers to the value captured at init rather
+than to `.healthy`, so a store that fell back to memory stays degraded however well it answers.
+
+### 9.5b The same latch inside the engine  `FOUND 2026-09-03 while fixing 9.5`
+
+Found by the 9.5 work rather than by the audits. `MonitorEngine.swift:305` repeats the health
+transition check inline, so once health has latched, a failed `store.session(id:)` read reads as
+"nothing stored": the session is marked seeded, the accumulator pins at zero against a cursor
+already at byte N, and the undercount reaches `daily_rollups` on the next upsert. That is the
+durable-corruption class CLAUDE.md records as having shipped once and been found by an audit
+rather than a test, not a display defect, so it is fixed inside stage 1.
+
+- [ ] The engine reads the same query-outcome signal as the analytics layer
+- [ ] A read that did not answer never seeds a zero total over a stored one
+- [ ] Test: a failed read after a prior failure leaves the stored total and the rollup untouched
 
 ### 9.6 `Today` reads zero after local midnight  `CONFIRMED`
 
@@ -565,19 +584,31 @@ Smaller, all of them cases where the screen states something untrue.
 - [ ] Label both cost ranges, or make them the same range
 - [ ] Route the card's percentage through `Format.share`
 
-### 9.8 Settings that do not reach every surface  `CONFIRMED`
+### 9.8 Settings that do not reach every surface  `DONE 2026-09-03`
 
 **~0.5 day**
 
 A control that lies is worse than an absent one, which puts this in stage 1 rather than later.
 
-- [ ] `showSubagents` is read at one site only. `ClaudenceApp.swift:315` passes `showsSubagents:
+- [x] `showSubagents` is read at one site only. `ClaudenceApp.swift:315` passes `showsSubagents:
       true` as a literal, so the switch works in the popover and is ignored in the dashboard sheet.
-- [ ] `compactRows` is read at one site only; the dashboard's sessions card has no compact concept.
+- [x] `compactRows` is read at one site only; the dashboard's sessions card has no compact concept.
       Wire it, or rename the setting to say it is the menu bar only.
-- [ ] `liveIndicators` has two delivery paths that can diverge: the environment, read by eight
+- [x] `liveIndicators` has two delivery paths that can diverge: the environment, read by eight
       components, and an explicit parameter passed into `SessionRow`, which already reads the
       environment. Merge onto the environment.
+
+`compactRows` was wired rather than renamed: the setting's own words are "hide duration, rate and
+sparkline", and all three exist on a dashboard row, so a dense form exists to switch to. The
+divergence was worse than the item described. `SessionsTableView.statusPill` built a
+`StatusIndicator` with no `isLive` argument at all, so the dashboard's status glyph kept pulsing
+with the switch off; the parameter had to be deleted from `StatusIndicator` as well as from
+`SessionRow`.
+
+Recorded because it will keep costing: none of this is unit-testable. Every affected symbol lives
+in the `Claudence` executable target, which the test target does not depend on, so the verification
+was call-site reading. `RenderShots` is the only mechanical check the UI has, and stage 2.5 should
+lean on it rather than adding a test target late.
 
 ---
 
