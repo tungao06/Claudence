@@ -348,3 +348,187 @@ func displayPath() {
     )
     #expect(session.displayPath == "~/project/demo")
 }
+
+// MARK: - Seeding against a store that does not answer
+
+/// A real store with its session read made to fail on demand, and health
+/// pinned at `.degraded` the way an earlier unrelated failure leaves it.
+///
+/// The read has to fail while the writes still work. The defect under test is
+/// a collapsed total written back over a good row, and a store broken end to
+/// end has nothing to overwrite and so shows nothing.
+private final class ReadFailingStore: ClaudenceStoring, @unchecked Sendable {
+    let inner: ClaudenceStore
+    private let lock = NSLock()
+    private var _failSessionReads: Bool
+    private var _unanswered: UInt64 = 0
+
+    init(inner: ClaudenceStore, failSessionReads: Bool) {
+        self.inner = inner
+        self._failSessionReads = failSessionReads
+    }
+
+    var failSessionReads: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _failSessionReads
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _failSessionReads = newValue
+        }
+    }
+
+    /// Already degraded when this pass begins, and with nowhere left to move.
+    /// That is the condition a transition check cannot see through.
+    var health: StoreHealth { .degraded(reason: "an earlier unrelated failure") }
+
+    var unansweredQueries: UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return inner.unansweredQueries &+ _unanswered
+    }
+
+    func session(id: String) -> AISession? {
+        lock.lock()
+        let failing = _failSessionReads
+        if failing { _unanswered &+= 1 }
+        lock.unlock()
+        // A failed read and an absent row return the same nil. The count is
+        // the only thing that separates them, exactly as in the real store.
+        guard !failing else { return nil }
+        return inner.session(id: id)
+    }
+
+    func upsert(session: AISession) { inner.upsert(session: session) }
+    func markEnded(sessionID: String, at date: Date) {
+        inner.markEnded(sessionID: sessionID, at: date)
+    }
+    func recordUsageSample(sessionID: String, usage: TokenUsage, at date: Date) {
+        inner.recordUsageSample(sessionID: sessionID, usage: usage, at: date)
+    }
+    func dailyTotals(days: Int) -> [(day: String, usage: TokenUsage)] {
+        inner.dailyTotals(days: days)
+    }
+    func projectTotals(since: Date?) -> [(project: String, usage: TokenUsage, sessionCount: Int)] {
+        inner.projectTotals(since: since)
+    }
+    func cursor(forSession sessionID: String) -> ReadCursor? {
+        inner.cursor(forSession: sessionID)
+    }
+    func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) {
+        inner.saveCursor(cursor, forSession: sessionID)
+    }
+}
+
+@Test("a seed read that does not answer never collapses a stored total")
+func failedSeedReadDoesNotCollapseStoredTotal() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClaudenceEngineTests", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let inner = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+
+    // The real shape: a cursor already megabytes into the transcript, and the
+    // total that cursor corresponds to. The pair is only correct together.
+    let today = Date()
+    let discovered = makeSession(id: "s1", startedAt: today)
+    var stored = discovered
+    stored.usage = TokenUsage(
+        freshInput: 400_000, cacheCreation: 50_000, cacheRead: 100_000, output: 50_000
+    )
+    inner.upsert(session: stored)
+    inner.saveCursor(
+        ReadCursor(path: "/tmp/s1.jsonl", inode: 99, byteOffset: 8_388_608),
+        forSession: "s1"
+    )
+
+    let storedTotal = try #require(inner.session(id: "s1")).usage.total
+    let rollupBefore = inner.dailyTotals(days: 1).first?.usage.total
+    #expect(storedTotal == 600_000)
+    #expect(rollupBefore == 600_000)
+
+    let store = ReadFailingStore(inner: inner, failSessionReads: true)
+    let transcripts = FakeTranscripts()
+    transcripts.queue(
+        TranscriptDelta(usage: TokenUsage(freshInput: 1_000), recordsParsed: 4),
+        for: "s1"
+    )
+    let engine = MonitorEngine(
+        discovery: FakeDiscovery(sessions: [discovered]),
+        transcripts: transcripts,
+        store: store
+    )
+
+    await engine.refreshSessions()
+
+    // The whole pass is skipped: no transcript read, so the cursor does not
+    // advance, and no write, so neither the row nor the rollup moves.
+    #expect(transcripts.calls.isEmpty)
+    #expect(try #require(inner.session(id: "s1")).usage.total == storedTotal)
+    #expect(inner.dailyTotals(days: 1).first?.usage.total == rollupBefore)
+
+    // The retry, once the store answers again, resumes from where the cursor
+    // already is: the stored total plus the delta, never the delta alone.
+    store.failSessionReads = false
+    await engine.refreshSessions()
+
+    let session = try #require(await engine.current().sessions.first)
+    #expect(session.usage.total == storedTotal + 1_000)
+    #expect(try #require(inner.session(id: "s1")).usage.total == storedTotal + 1_000)
+    #expect(inner.dailyTotals(days: 1).first?.usage.total == 601_000)
+}
+
+/// A store with no database behind it: every call is a no-op, every query is
+/// counted as unanswered, and health says `.unavailable` permanently. This is
+/// what `ClaudenceStore` becomes when even the in-memory fallback fails.
+private final class UnavailableStore: ClaudenceStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _unanswered: UInt64 = 0
+
+    var health: StoreHealth { .unavailable(reason: "no database") }
+
+    var unansweredQueries: UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return _unanswered
+    }
+
+    private func countUnanswered() {
+        lock.lock(); defer { lock.unlock() }
+        _unanswered &+= 1
+    }
+
+    func session(id: String) -> AISession? { countUnanswered(); return nil }
+    func upsert(session: AISession) { countUnanswered() }
+    func markEnded(sessionID: String, at date: Date) { countUnanswered() }
+    func recordUsageSample(sessionID: String, usage: TokenUsage, at date: Date) { countUnanswered() }
+    func dailyTotals(days: Int) -> [(day: String, usage: TokenUsage)] { countUnanswered(); return [] }
+    func projectTotals(since: Date?) -> [(project: String, usage: TokenUsage, sessionCount: Int)] {
+        countUnanswered()
+        return []
+    }
+    func cursor(forSession sessionID: String) -> ReadCursor? { countUnanswered(); return nil }
+    func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) { countUnanswered() }
+}
+
+@Test("a permanently unavailable store is no store, not a read worth retrying")
+func unavailableStoreStillProducesSessions() async throws {
+    let transcripts = FakeTranscripts()
+    transcripts.queue(
+        TranscriptDelta(usage: TokenUsage(freshInput: 2_000), recordsParsed: 2),
+        for: "s1"
+    )
+    let engine = MonitorEngine(
+        discovery: FakeDiscovery(sessions: [makeSession(id: "s1")]),
+        transcripts: transcripts,
+        store: UnavailableStore()
+    )
+
+    await engine.refreshSessions()
+
+    // Nothing was ever persisted, so there is no stored total to lose and no
+    // rollup to rewrite. Skipping here would show an empty popover on a
+    // machine whose only fault is that it cannot open a database.
+    let session = try #require(await engine.current().sessions.first)
+    #expect(session.usage.total == 2_000)
+    #expect(transcripts.calls == ["s1"])
+}

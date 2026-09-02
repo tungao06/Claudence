@@ -27,6 +27,11 @@ public final class EngineCounters: @unchecked Sendable {
         public var transcriptReads = 0
         public var transcriptReadsWithData = 0
         public var usageFetches = 0
+        /// Sessions left untouched for a pass because the store did not answer
+        /// the read that seeds their accumulated total. Expected to be zero; a
+        /// non-zero value is a store fault made visible rather than a silent
+        /// skip.
+        public var skippedUnseededSessions = 0
 
         public init() {}
     }
@@ -63,6 +68,7 @@ public final class EngineCounters: @unchecked Sendable {
         }
     }
     func countUsageFetch() { bump { $0.usageFetches += 1 } }
+    func countSkippedUnseededSession() { bump { $0.skippedUnseededSessions += 1 } }
 
     private func bump(_ mutate: (inout Reading) -> Void) {
         lock.lock(); defer { lock.unlock() }
@@ -87,6 +93,7 @@ extension EngineCounters.Reading {
         result.transcriptReads = transcriptReads - earlier.transcriptReads
         result.transcriptReadsWithData = transcriptReadsWithData - earlier.transcriptReadsWithData
         result.usageFetches = usageFetches - earlier.usageFetches
+        result.skippedUnseededSessions = skippedUnseededSessions - earlier.skippedUnseededSessions
         return result
     }
 
@@ -105,6 +112,7 @@ extension EngineCounters.Reading {
             ("snapshot publishes", snapshotPublishes),
             ("suppressed publishes", suppressedPublishes),
             ("usage fetches", usageFetches),
+            ("skipped unseeded", skippedUnseededSessions),
         ]
         return rows.map { name, count in
             let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)

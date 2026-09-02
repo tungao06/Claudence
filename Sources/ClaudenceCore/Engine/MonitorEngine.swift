@@ -120,7 +120,24 @@ public actor MonitorEngine {
         var producedTokens = false
 
         for var session in discovered {
-            seedIfNeeded(session)
+            // A seed that did not answer means the stored total is unknown,
+            // and the transcript read below is what would advance the cursor
+            // past records the accumulator has no baseline for. The cursor and
+            // the total only stay correct together, so the whole session is
+            // skipped and retried on the next pass rather than being read,
+            // undercounted, and written back over a good row.
+            //
+            // The last published view is carried forward so the session keeps
+            // its place: dropping it here would show a disappearing row and
+            // would make `reapVanished` treat a store hiccup as a session that
+            // ended, discarding the very accumulator being protected.
+            guard seedIfNeeded(session) else {
+                EngineCounters.shared.countSkippedUnseededSession()
+                if let previous = snapshot.sessions.first(where: { $0.id == session.id }) {
+                    live.append(previous)
+                }
+                continue
+            }
 
             let delta = transcripts.readIncremental(
                 sessionID: session.id,
@@ -291,28 +308,51 @@ public actor MonitorEngine {
     ///
     /// Seeding once per process is enough: after the first pass the in-memory
     /// accumulator is the authority and the store is downstream of it.
-    private func seedIfNeeded(_ session: AISession) {
-        guard !seeded.contains(session.id) else { return }
+    ///
+    /// - Returns: whether the session may be processed this pass. False means
+    ///   the store did not answer, so nothing is known about the stored total
+    ///   and the caller must leave the session alone until the next pass.
+    private func seedIfNeeded(_ session: AISession) -> Bool {
+        guard !seeded.contains(session.id) else { return true }
         guard let store else {
             seeded.insert(session.id)
-            return
+            return true
+        }
+        // An unavailable store has no database behind it at all: it never
+        // answers and never persists, and that is permanent for the life of
+        // the process. There is therefore no stored total to lose and no
+        // rollup to rewrite, so it is treated as no store rather than as a
+        // read to retry, which would otherwise skip every session forever and
+        // show an empty popover on a machine whose only fault is that it
+        // cannot open a database file.
+        if case .unavailable = store.health {
+            seeded.insert(session.id)
+            return true
         }
         // Marked seeded only once the store is known to have answered. A failed
         // read and an absent row both return nil, and treating a failure as
         // "nothing stored" would pin the accumulator at zero for the life of
         // the process while the cursor is already at byte N: a permanent
         // undercount that then propagates into the rollup on the next upsert.
-        let before = store.health
+        //
+        // The signal is the store's own count of queries that did not answer,
+        // the same one `AnalyticsService` reads. This compared `health` either
+        // side of the read until 2026-09-03, which is a transition and not an
+        // outcome: health latched at `.degraded` on the first failure, so every
+        // failure after it produced nothing to observe and the read was taken
+        // as "nothing stored". Latching is fixed in the store, but a transition
+        // stays the wrong question even when health is free to move.
+        let before = store.unansweredQueries
         let stored = store.session(id: session.id)
-        if case .unavailable = store.health { return }
-        if case .healthy = before, case .degraded = store.health { return }
+        guard store.unansweredQueries == before else { return false }
         seeded.insert(session.id)
-        guard let stored else { return }
+        guard let stored else { return true }
         accumulated[session.id] = stored.usage
         // A session read back from the store carries no per-record detail: the
         // schema keeps tokens, not tool names or paths. Those accumulators stay
         // empty and rebuild from the records read after the resume point, which
         // is honest about what this process has actually observed.
+        return true
     }
 
     /// A session that disappeared from discovery has ended. Its accumulator is
@@ -382,10 +422,16 @@ public actor MonitorEngine {
 /// The engine's view of persistence. The store module implements this; keeping
 /// it here means the engine compiles without knowing which database is behind it.
 public protocol ClaudenceStoring: CursorStoring {
-    /// Whether the store is answering. Needed because a failed read and an
-    /// absent row are both nil, and the engine must not mistake one for the
-    /// other when seeding a session's accumulated total.
+    /// The store's condition. Read only to recognise `.unavailable`, which is
+    /// permanent and means there is no database at all, so there is nothing to
+    /// resume from and nothing to corrupt.
     var health: StoreHealth { get }
+    /// Monotonic count of queries that failed or never ran. A caller that reads
+    /// it either side of its own query learns whether that query answered,
+    /// which health cannot say once it has settled and has nowhere left to
+    /// move. A failed read and an absent row are the same nil, and the engine
+    /// must not mistake one for the other when seeding a session's total.
+    var unansweredQueries: UInt64 { get }
     /// The last persisted view of a session, used to seed the engine's
     /// accumulators so a resumed read cursor does not restart its total.
     func session(id: String) -> AISession?
