@@ -75,6 +75,34 @@ public struct TranscriptReader: TranscriptReading {
         return builder.delta
     }
 
+    /// Reads an already-known transcript path incrementally.
+    ///
+    /// Subagent transcripts are located by directory listing rather than by
+    /// session id, so they arrive as a path. `cursorKey` namespaces the stored
+    /// offset; a subagent's key must not collide with its parent's session id.
+    public func readIncremental(atPath path: String, cursorKey: String) -> TranscriptDelta {
+        let cursor = cursorStore.cursor(forSession: cursorKey)
+        guard let status = FileStatus(path: path) else { return .empty }
+
+        let resumable = cursor.map {
+            $0.path == path && $0.inode == status.inode && $0.byteOffset <= status.size
+        } ?? false
+        let start: UInt64 = resumable ? (cursor?.byteOffset ?? 0) : 0
+
+        if start >= status.size {
+            persist(ReadCursor(path: path, inode: status.inode, byteOffset: start),
+                    forSession: cursorKey, existing: cursor)
+            return .empty
+        }
+
+        let builder = DeltaBuilder()
+        let consumed = scan(url: URL(fileURLWithPath: path), from: start, into: builder)
+
+        persist(ReadCursor(path: path, inode: status.inode, byteOffset: consumed),
+                forSession: cursorKey, existing: cursor)
+        return builder.delta
+    }
+
     // MARK: - Path resolution
 
     /// A cursor whose file still exists is trusted, which keeps the steady

@@ -15,7 +15,10 @@ enum Diagnose {
         }
         let store = ClaudenceStore()
         let registry = SessionRegistryAdapter()
-        let reader = TranscriptReader(cursorStore: store)
+        // A memory cursor, not the persistent one: a diagnostic should read
+        // every transcript in full so the numbers it prints are comparable to
+        // each other. The live app resumes from the stored offset instead.
+        let reader = TranscriptReader(cursorStore: TranscriptMemoryCursorStore())
 
         print("Claudence diagnose")
         print("claude home:  \(Constants.claudeHome.path)")
@@ -58,6 +61,34 @@ enum Diagnose {
                   + "  cache-read \(Format.tokens(delta.usage.cacheRead))"
                   + "  output \(Format.tokens(delta.usage.output))")
             print("  total:      \(Format.tokens(delta.usage.total))")
+
+            // The parent transcript contains none of its subagents' records.
+            let locator = SubagentLocator()
+            let subs = locator.subagents(
+                forSession: session.id,
+                workingDirectory: session.workingDirectory
+            )
+            if subs.isEmpty {
+                print("  subagents:  none")
+            } else {
+                var subTotal = TokenUsage.zero
+                print("  subagents:  \(subs.count)")
+                for descriptor in subs {
+                    let subDelta = reader.readIncremental(
+                        atPath: descriptor.transcriptPath,
+                        cursorKey: descriptor.id
+                    )
+                    subTotal += subDelta.usage
+                    let type = descriptor.agentType ?? "unknown"
+                    let task = descriptor.taskDescription ?? ""
+                    print("    \(Format.tokens(subDelta.usage.total).padding(toLength: 8, withPad: " ", startingAt: 0))"
+                          + "\(type.padding(toLength: 17, withPad: " ", startingAt: 0)) \(task)")
+                }
+                let combined = delta.usage.total + subTotal.total
+                let share = combined > 0 ? Int(100.0 * Double(subTotal.total) / Double(combined)) : 0
+                print("  subagent tokens: \(Format.tokens(subTotal.total)) (\(share)% of this session's true total)")
+                print("  COMBINED:   \(Format.tokens(combined))")
+            }
             if let activity = delta.latestActivity {
                 print("  activity:   \(activity.display)")
             }

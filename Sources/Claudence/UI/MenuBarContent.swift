@@ -6,6 +6,9 @@ import ClaudenceCore
 struct MenuBarContent: View {
     let model: MonitorViewModel
 
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.l) {
             header
@@ -43,6 +46,16 @@ struct MenuBarContent: View {
             .buttonStyle(.plain)
             .foregroundStyle(Theme.textTertiary)
             .accessibilityLabel("Refresh usage")
+
+            Button {
+                openSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.textTertiary)
+            .accessibilityLabel("Open settings")
         }
     }
 
@@ -132,14 +145,34 @@ struct MenuBarContent: View {
 
     private var footer: some View {
         HStack {
-            Spacer()
-            Button("Quit Claudence") {
+            Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.plain)
             .font(Theme.Typography.caption)
             .foregroundStyle(Theme.textTertiary)
             .keyboardShortcut("q")
+            .accessibilityLabel("Quit Claudence")
+
+            Spacer()
+
+            // The popover is deliberately compact; anything that needs room
+            // lives in the dashboard. See spec section 1.4 for the ordering
+            // this footer is the exit from.
+            Button {
+                model.refreshDashboard()
+                openWindow(id: DashboardWindow.id)
+            } label: {
+                HStack(spacing: Theme.Space.xxs) {
+                    Text("Open Dashboard")
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+            }
+            .buttonStyle(.plain)
+            .font(Theme.Typography.caption)
+            .foregroundStyle(Theme.accent)
+            .accessibilityLabel("Open the Claudence dashboard")
         }
     }
 }

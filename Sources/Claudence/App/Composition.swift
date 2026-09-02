@@ -19,11 +19,15 @@ enum Composition {
         // live sessions; it only loses history and offset resumption.
         let store = ClaudenceStore()
 
+        let reader = TranscriptReader(cursorStore: store)
         let engine = MonitorEngine(
             discovery: SessionRegistryAdapter(),
-            transcripts: TranscriptReader(cursorStore: store),
+            transcripts: reader,
             usageProvider: UsageClient(),
-            store: store
+            store: store,
+            // The parent transcript holds none of its subagents' records, and
+            // on this machine they account for roughly half the tokens spent.
+            subagents: SubagentTracker(reader: reader)
         )
 
         let analytics = AnalyticsService(store: store)

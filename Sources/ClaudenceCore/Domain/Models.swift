@@ -108,7 +108,14 @@ public struct AISession: Sendable, Identifiable, Equatable {
     public var currentActivity: Activity?
     public let startedAt: Date
     public var lastActivityAt: Date
+    /// Tokens from this session's own transcript.
     public var usage: TokenUsage
+    /// Tokens spent by subagents this session spawned. They have no process of
+    /// their own and are billed to the parent, so `combinedUsage` is the honest
+    /// figure to show as "this session's tokens". Kept separate so the split
+    /// can be displayed and so nothing double-counts.
+    public var subagentUsage: TokenUsage
+    public var subagentCount: Int
     public var model: String?
     public let claudeCodeVersion: String?
 
@@ -124,6 +131,8 @@ public struct AISession: Sendable, Identifiable, Equatable {
         startedAt: Date,
         lastActivityAt: Date,
         usage: TokenUsage = .zero,
+        subagentUsage: TokenUsage = .zero,
+        subagentCount: Int = 0,
         model: String? = nil,
         claudeCodeVersion: String? = nil
     ) {
@@ -138,9 +147,15 @@ public struct AISession: Sendable, Identifiable, Equatable {
         self.startedAt = startedAt
         self.lastActivityAt = lastActivityAt
         self.usage = usage
+        self.subagentUsage = subagentUsage
+        self.subagentCount = subagentCount
         self.model = model
         self.claudeCodeVersion = claudeCodeVersion
     }
+
+    /// What this session actually cost: its own transcript plus every subagent
+    /// it spawned. Every total shown to the user uses this.
+    public var combinedUsage: TokenUsage { usage + subagentUsage }
 
     public var duration: TimeInterval { Date().timeIntervalSince(startedAt) }
 

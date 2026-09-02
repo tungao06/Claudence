@@ -8,10 +8,15 @@ public actor MonitorEngine {
     private let transcripts: any TranscriptReading
     private let usageProvider: (any UsageProviding)?
     private let store: (any ClaudenceStoring)?
+    /// Optional because the engine is testable with fakes that have no
+    /// filesystem behind them. Absent, subagent tokens are simply not counted
+    /// and `subagentCount` stays zero — never silently folded into the parent.
+    private let subagents: SubagentTracker?
 
     private var snapshot = MonitorSnapshot.empty
     private var burnTrackers: [String: BurnRateTracker] = [:]
     private var accumulated: [String: TokenUsage] = [:]
+    private var subagentsBySession: [String: [AISubagent]] = [:]
     private var lastUsageFetch: Date?
     private var observers: [UUID: @Sendable (MonitorSnapshot) -> Void] = [:]
     private var lastUpserted: [String: AISession] = [:]
@@ -26,12 +31,14 @@ public actor MonitorEngine {
         discovery: any SessionDiscovering,
         transcripts: any TranscriptReading,
         usageProvider: (any UsageProviding)? = nil,
-        store: (any ClaudenceStoring)? = nil
+        store: (any ClaudenceStoring)? = nil,
+        subagents: SubagentTracker? = nil
     ) {
         self.discovery = discovery
         self.transcripts = transcripts
         self.usageProvider = usageProvider
         self.store = store
+        self.subagents = subagents
     }
 
     // MARK: - Observation
@@ -54,7 +61,7 @@ public actor MonitorEngine {
 
     /// Cheap pass: discovery plus incremental transcript reads. Safe to call on
     /// every filesystem event because both sources are event-sized, not full scans.
-    public func refreshSessions() {
+    public func refreshSessions() async {
         EngineCounters.shared.countSessionRefresh()
         let discovered = discovery.discover()
         let now = Date()
@@ -109,7 +116,7 @@ public actor MonitorEngine {
             live.append(session)
         }
 
-        reapVanished(liveIDs: Set(live.map(\.id)), at: now)
+        await reapVanished(liveIDs: Set(live.map(\.id)), at: now)
 
         let next = MonitorSnapshot(
             sessions: live.sorted { $0.lastActivityAt > $1.lastActivityAt },
@@ -141,6 +148,11 @@ public actor MonitorEngine {
         )
     }
 
+    /// Subagents of a session, newest activity first. Empty is ordinary.
+    public func subagents(forSession id: String) -> [AISubagent] {
+        subagentsBySession[id] ?? []
+    }
+
     public func burnRate(forSession id: String) -> BurnRate {
         burnTrackers[id]?.rate() ?? .zero
     }
@@ -167,7 +179,7 @@ public actor MonitorEngine {
     /// every filesystem event is the kind of cost that has no visible effect.
     private func todayTotal(live: [AISession], producedTokens: Bool, now: Date) -> TokenUsage {
         guard let store else {
-            return live.reduce(TokenUsage.zero) { $0 + $1.usage }
+            return live.reduce(TokenUsage.zero) { $0 + $1.combinedUsage }
         }
         if !producedTokens, let cached = todayCache,
            now.timeIntervalSince(cached.at) < MonitorEngine.todayTotalTTL {
