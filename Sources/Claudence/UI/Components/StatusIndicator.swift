@@ -21,31 +21,35 @@ struct StatusIndicator: View {
     /// so `isPulsing` never returned to false and the glyph sat permanently
     /// dimmed. See `SessionRow.activityToken`.
     let activityToken: AnyHashable?
-    /// The user's `Live indicators` setting. Off means the glyph never moves,
-    /// whatever the session is doing.
-    let isLive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The user's `Live indicators` setting. Off means the glyph never moves,
+    /// whatever the session is doing.
+    ///
+    /// Read from the environment rather than taken as a parameter. There used
+    /// to be both: the popover threaded the preference down through
+    /// `SessionRow` while the dashboard's own status pill omitted the argument
+    /// and got the default, so the same switch stilled one surface and not the
+    /// other. One delivery path cannot disagree with itself.
+    @Environment(\.liveIndicators) private var liveIndicators
     @State private var isPulsing = false
 
     init(
         _ status: SessionStatus,
         showsText: Bool = true,
         glyphSize: CGFloat = Theme.Bar.statusGlyph,
-        activityToken: AnyHashable? = nil,
-        isLive: Bool = true
+        activityToken: AnyHashable? = nil
     ) {
         self.status = status
         self.showsText = showsText
         self.glyphSize = glyphSize
         self.activityToken = activityToken
-        self.isLive = isLive
     }
 
     /// Only an active state pulses, and never under Reduce Motion. Motion here
     /// means "this just happened", nothing else.
     private var mayPulse: Bool {
-        status == .running && isLive && !reduceMotion && activityToken != nil
+        status == .running && liveIndicators && !reduceMotion && activityToken != nil
     }
 
     var body: some View {

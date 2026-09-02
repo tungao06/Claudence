@@ -59,11 +59,14 @@ struct SessionRow: View {
     /// Opens the detail overlay. Nil keeps the row's original in-place
     /// disclosure instead.
     let onOpen: (() -> Void)?
-    /// The user's `Live indicators` setting. Off stills the status glyph.
-    let isLive: Bool
 
     @State private var isExpanded: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The user's `Live indicators` setting, which stills the status glyph as
+    /// well as the value animations. It arrives by environment only: this row
+    /// also took it as an `isLive` parameter and forwarded that to
+    /// `StatusIndicator` while reading the environment for its own bar, so one
+    /// switch had two delivery paths into one view and nothing kept them equal.
     @Environment(\.liveIndicators) private var liveIndicators
 
     init(
@@ -74,7 +77,6 @@ struct SessionRow: View {
         burnHistory: [Double] = [],
         startsExpanded: Bool = false,
         isCompact: Bool = false,
-        isLive: Bool = true,
         onOpen: (() -> Void)? = nil
     ) {
         self.session = session
@@ -83,7 +85,6 @@ struct SessionRow: View {
         self.burnRatePerMinute = burnRatePerMinute
         self.burnHistory = burnHistory
         self.isCompact = isCompact
-        self.isLive = isLive
         self.onOpen = onOpen
         _isExpanded = State(initialValue: startsExpanded)
     }
@@ -152,8 +153,7 @@ struct SessionRow: View {
                 StatusIndicator(
                     session.status,
                     showsText: false,
-                    activityToken: activityToken,
-                    isLive: isLive
+                    activityToken: activityToken
                 )
                 Text(session.projectName)
                     .font(Theme.Typography.title)

@@ -58,7 +58,7 @@ struct ClaudenceApp: App {
         .menuBarExtraStyle(.window)
 
         Window("Claudence Dashboard", id: DashboardWindow.id) {
-            DashboardHost(model: services.model)
+            DashboardHost(model: services.model, preferences: services.preferences)
                 .environment(\.liveIndicators, services.preferences.liveIndicators)
         }
         // The design lays the dashboard out at 1120 wide: four stat tiles in a
@@ -291,17 +291,30 @@ private func refresh(_ model: MonitorViewModel) {
 
 /// Rebuilds the dashboard aggregates when the window appears. They read the
 /// database, so they are never derived from a snapshot.
+///
+/// It is also the window's one bridge to `Preferences`. `Show subagents` and
+/// `Compact rows` name things the dashboard draws, so the switches have to
+/// reach it; the sheet used to pass `showsSubagents: true` as a literal and the
+/// sessions card had no compact form at all, which made both controls read as
+/// menu-bar-only without saying so.
 private struct DashboardHost: View {
     let model: MonitorViewModel
+    let preferences: Preferences
     @State private var selectedSession: AISession?
 
     var body: some View {
+        // Read here rather than inside the sheet's builder. The builder is an
+        // escaping closure evaluated outside this body's observation scope, so
+        // a preference read only in there registers no dependency and a switch
+        // flipped while a detail is open would not reach the open sheet.
+        let showsSubagents = preferences.showSubagents
         // Both handlers are what the design's own chrome promises: a refresh
         // button in the header, and a card subtitle that says a row can be
         // clicked. Passed from here rather than defaulted inside the view,
         // because only the host can reach the model that answers them.
-        DashboardView(
+        return DashboardView(
             data: model.dashboard,
+            isCompact: preferences.compactRows,
             onRefresh: { refresh(model) },
             onSelectSession: { session in selectedSession = session }
         )
@@ -315,7 +328,7 @@ private struct DashboardHost: View {
                 burnRatePerMinute: rate.tokensPerMinute > 0 ? rate.tokensPerMinute : nil,
                 burnHistory: rate.samples,
                 windowShare: model.recentShare(for: session),
-                showsSubagents: true,
+                showsSubagents: showsSubagents,
                 onClose: { selectedSession = nil }
             )
             .detailSheetChrome()

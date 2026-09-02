@@ -345,7 +345,6 @@ struct MenuBarContent: View {
                             burnRatePerMinute: rate.tokensPerMinute > 0 ? rate.tokensPerMinute : nil,
                             burnHistory: rate.samples,
                             isCompact: preferences.compactRows,
-                            isLive: preferences.liveIndicators,
                             onOpen: { detailSessionID = session.id }
                         )
                     }

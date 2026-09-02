@@ -10,6 +10,12 @@ import SwiftUI
 /// slide, and the sentence under the switch described something the switch did
 /// not do.
 ///
+/// That `isLive` parameter is gone. It survived the move for a while alongside
+/// this key, which left one setting with two delivery paths: `SessionRow` took
+/// the flag *and* read the environment, and `SessionsTableView` passed no flag
+/// at all, so the dashboard's status pill kept pulsing with the switch off. The
+/// environment is now the only route, and there is nothing left to disagree.
+///
 /// An environment value rather than another parameter on six views: the bars are
 /// leaves, several of them are three levels down from anything that knows what a
 /// preference is, and threading a flag through every intermediate view to reach

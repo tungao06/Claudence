@@ -40,6 +40,11 @@ struct DashboardView: View {
     let data: DashboardData
     /// Reference time for every relative label on the window.
     let now: Date
+    /// The user's `Compact rows` setting, which reaches the sessions card and
+    /// nothing else on this window. Taken as a parameter for the same reason
+    /// `SessionRow` takes one: the flag has a single owner and a preview can
+    /// drive it. Default off, which is the window's normal state.
+    let isCompact: Bool
     /// The header's refresh control. Nil hides the button rather than drawing a
     /// control that does nothing: the dashboard cannot reach the store itself,
     /// so the action has to arrive from the composition root.
@@ -60,11 +65,13 @@ struct DashboardView: View {
     init(
         data: DashboardData,
         now: Date = Date(),
+        isCompact: Bool = false,
         onRefresh: (() -> Void)? = nil,
         onSelectSession: ((AISession) -> Void)? = nil
     ) {
         self.data = data
         self.now = now
+        self.isCompact = isCompact
         self.onRefresh = onRefresh
         self.onSelectSession = onSelectSession
     }
@@ -372,6 +379,7 @@ struct DashboardView: View {
                 tokenScaleMaximum: data.tokenScaleMaximum,
                 burnRates: data.burnRates,
                 now: now,
+                isCompact: isCompact,
                 onSelect: { session in
                     if let onSelectSession {
                         onSelectSession(session)

@@ -30,6 +30,18 @@ struct SessionsTableView: View {
     let burnRates: [String: BurnSample]
     /// Reference time for the "ended 34m ago" line on a finished session.
     let now: Date
+    /// The user's `Compact rows` setting, whose explanation promises to "hide
+    /// duration, rate and sparkline until a row is opened".
+    ///
+    /// All three of those are here, so the setting applies and the card is no
+    /// longer a surface the switch silently skips. Rate and sparkline are the
+    /// whole fourth column and it goes; duration is the `12m run` half of a
+    /// finished row's activity line and that goes with it. What stays is what
+    /// the card exists for: which session, what it is doing, how much energy it
+    /// has spent. The row still opens, and the detail sheet still carries every
+    /// figure the compact row dropped, which is the "until a row is opened"
+    /// half of the promise.
+    let isCompact: Bool
     /// Opens a row. Nil makes rows inert and drops the promise of a detail from
     /// the card's subtitle, so the copy can never outrun the behaviour.
     let onSelect: ((AISession) -> Void)?
@@ -39,12 +51,14 @@ struct SessionsTableView: View {
         tokenScaleMaximum: Int?,
         burnRates: [String: BurnSample],
         now: Date,
+        isCompact: Bool = false,
         onSelect: ((AISession) -> Void)? = nil
     ) {
         self.sessions = sessions
         self.tokenScaleMaximum = tokenScaleMaximum
         self.burnRates = burnRates
         self.now = now
+        self.isCompact = isCompact
         self.onSelect = onSelect
     }
 
@@ -120,8 +134,10 @@ struct SessionsTableView: View {
                 .minimumScaleFactor(0.7)
                 .frame(width: DashboardMetrics.sessionTotalColumn, alignment: .trailing)
                 .tooltip(tip: "energy")
-            burnColumn(session)
-                .frame(width: DashboardMetrics.sessionBurnColumn, alignment: .trailing)
+            if !isCompact {
+                burnColumn(session)
+                    .frame(width: DashboardMetrics.sessionBurnColumn, alignment: .trailing)
+            }
         }
         .padding(.vertical, DashboardMetrics.sessionRowPaddingVertical)
         .padding(.horizontal, DashboardMetrics.sessionRowPaddingHorizontal)
@@ -235,8 +251,12 @@ struct SessionsTableView: View {
     private func activityText(_ session: AISession, isCompleted: Bool) -> String {
         guard !isCompleted else {
             let ended = max(0, now.timeIntervalSince(session.lastActivityAt))
+            let endedText = "ended \(Format.duration(ended)) ago"
+            // How long ago it stopped is when, not how long, so it survives a
+            // compact row. The run length is the duration the setting names.
+            guard !isCompact else { return endedText }
             let ran = max(0, session.lastActivityAt.timeIntervalSince(session.startedAt))
-            return "ended \(Format.duration(ended)) ago · \(Format.duration(ran)) run"
+            return endedText + " · \(Format.duration(ran)) run"
         }
         return session.currentActivity?.display ?? "No activity recorded"
     }
@@ -336,11 +356,16 @@ struct SessionsTableView: View {
             let share = min(1, Double(session.combinedUsage.total) / Double(scale))
             parts.append("\(Format.percent(share * 100)) of the busiest session.")
         }
-        let burn = burnRates[session.id] ?? .unavailable
-        if let rate = burn.tokensPerMinute {
-            parts.append("\(Format.tokens(Int(rate.rounded()))) tokens per minute.")
-        } else {
-            parts.append("Burn rate unavailable.")
+        // A compact row does not draw the rate, so it does not speak one
+        // either. VoiceOver hears the row that is there, not the row that would
+        // be there with the setting off.
+        if !isCompact {
+            let burn = burnRates[session.id] ?? .unavailable
+            if let rate = burn.tokensPerMinute {
+                parts.append("\(Format.tokens(Int(rate.rounded()))) tokens per minute.")
+            } else {
+                parts.append("Burn rate unavailable.")
+            }
         }
         if session.subagentCount > 0 {
             parts.append(

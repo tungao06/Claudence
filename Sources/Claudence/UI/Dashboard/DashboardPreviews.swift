@@ -646,6 +646,39 @@ struct DashboardHeaderControlsPreview: PreviewProvider {
     }
 }
 
+/// `Compact rows` turned on, which this window used to ignore entirely.
+///
+/// Against `DashboardHealthyPreview`, the sessions card loses its rate column
+/// and a finished row loses its run length. Nothing else on the window moves:
+/// the setting names rows, and the meter, chart, tiles and tables are not rows.
+struct DashboardCompactRowsPreview: PreviewProvider {
+    static var previews: some View {
+        DashboardPreviewFrame {
+            DashboardView(
+                data: DashboardFixture.healthy,
+                now: DashboardClock.now,
+                isCompact: true
+            )
+        }
+        .previewDisplayName("Dashboard / compact rows")
+    }
+}
+
+/// `Live indicators` turned off, delivered the only way it is delivered now.
+///
+/// Nothing here passes a flag: the environment reaches the status glyph inside
+/// every session row and the animation helper behind every bar and arc, and a
+/// component that took a parameter instead could be given a different answer.
+struct DashboardLiveIndicatorsOffPreview: PreviewProvider {
+    static var previews: some View {
+        DashboardPreviewFrame {
+            DashboardView(data: DashboardFixture.healthy, now: DashboardClock.now)
+                .environment(\.liveIndicators, false)
+        }
+        .previewDisplayName("Dashboard / live indicators off")
+    }
+}
+
 /// The narrowest supported window. Tables truncate; no column changes meaning.
 struct DashboardMinimumWidthPreview: PreviewProvider {
     static var previews: some View {
