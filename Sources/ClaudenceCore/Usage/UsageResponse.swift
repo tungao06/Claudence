@@ -14,13 +14,18 @@ struct DynamicKey: CodingKey {
 // MARK: - Raw pieces
 
 /// A window as it appears on the wire: a percentage plus a reset instant.
-/// `resets_at` is Unix epoch **seconds**; an ISO-8601 string is tolerated so a
-/// server-side change does not turn into a crash or a wrong date.
+///
+/// Verified against a live `GET /api/oauth/usage` response: the percentage
+/// arrives as `utilization`, and `resets_at` is an ISO-8601 string with
+/// fractional seconds and an explicit offset (`2026-09-01T22:49:59.870286+00:00`),
+/// NOT epoch seconds. Epoch seconds is the shape the status-line stdin payload
+/// uses; the two sources disagree, so both are accepted here.
 struct RawWindow: Decodable, Equatable {
     let usedPercent: Double?
     let resetsAt: Date?
 
     private enum Keys: String, CodingKey {
+        case utilization
         case used_percentage
         case usedPercentage
         case percent
@@ -37,7 +42,7 @@ struct RawWindow: Decodable, Equatable {
         let container = try decoder.container(keyedBy: Keys.self)
 
         var percent: Double?
-        for key in [Keys.used_percentage, .usedPercentage, .percent] where percent == nil {
+        for key in [Keys.utilization, .used_percentage, .usedPercentage, .percent] where percent == nil {
             if let value = try? container.decodeIfPresent(Double.self, forKey: key) {
                 percent = value
             }
@@ -72,9 +77,18 @@ struct RawWindow: Decodable, Equatable {
             if let seconds = Double(text), seconds > 0 {
                 return Date(timeIntervalSince1970: seconds)
             }
-            return ISO8601DateFormatter().date(from: text)
+            return RawWindow.parseISO8601(text)
         }
         return nil
+    }
+
+    /// The live response carries six fractional digits, which the default
+    /// formatter rejects. Fractional seconds are tried first, then plain.
+    static func parseISO8601(_ text: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: text) { return date }
+        return ISO8601DateFormatter().date(from: text)
     }
 }
 
@@ -163,8 +177,13 @@ struct ScopedLimit: Decodable {
 /// The usage document: an arbitrary set of flat windows plus `limits[]`.
 ///
 /// The flat section is enumerated rather than pinned to `five_hour` and
-/// `seven_day`, because deployments already ship extra flat windows such as
-/// `seven_day_opus`.
+/// `seven_day`, because the live response also carries `seven_day_opus`,
+/// `seven_day_sonnet`, `seven_day_cowork`, `seven_day_oauth_apps` and
+/// `seven_day_omelette`. Enumeration is bounded by `isWindowKey` rather than
+/// open, because the same document carries `spend`, `extra_usage` and a set of
+/// codenamed feature flags (`nimbus_quill`, `amber_ladder`, `tangelo` and
+/// friends) that also carry a `percent` or a `utilization` and would otherwise
+/// be rendered as usage windows.
 struct UsagePayload: Decodable {
     struct FlatEntry {
         let name: String
@@ -183,13 +202,20 @@ struct UsagePayload: Decodable {
         let container = try decoder.container(keyedBy: DynamicKey.self)
 
         var flat: [FlatEntry] = []
-        for key in container.allKeys where key.stringValue != "limits" {
+        for key in container.allKeys where UsagePayload.isWindowKey(key.stringValue) {
             if let window = try? container.decode(RawWindow.self, forKey: key) {
                 flat.append(FlatEntry(name: key.stringValue, window: window))
             }
         }
         self.flat = flat
         self.limits = (try? container.decode([ScopedLimit].self, forKey: DynamicKey("limits"))) ?? []
+    }
+
+    /// A rate-limit window is `five_hour`, `seven_day`, or a `seven_day_`
+    /// prefixed model scope. Everything else in the document is something other
+    /// than a usage window, whatever fields it happens to share.
+    static func isWindowKey(_ name: String) -> Bool {
+        name == "five_hour" || name == "seven_day" || name.hasPrefix("seven_day_")
     }
 
     var isEmpty: Bool { flat.isEmpty && limits.isEmpty }

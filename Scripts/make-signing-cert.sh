@@ -34,11 +34,16 @@ openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout "$TMP/key.pem" -out "$TMP/cert.pem" \
     -days 3650 -config "$TMP/openssl.cnf"
 
+# macOS cannot read a PKCS#12 written with OpenSSL 3's defaults: the import
+# fails with "MAC verification failed during PKCS12 import". Force the legacy
+# SHA1/3DES algorithms, and use a real passphrase -- an empty one fails too.
+PASS="claudence-local"
 openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
-    -out "$TMP/identity.p12" -passout pass:
+    -out "$TMP/identity.p12" -passout "pass:$PASS" \
+    -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg SHA1
 
 security import "$TMP/identity.p12" -k ~/Library/Keychains/login.keychain-db \
-    -T /usr/bin/codesign -P ""
+    -T /usr/bin/codesign -P "$PASS"
 
 echo
 echo "created '$NAME'. now run:"

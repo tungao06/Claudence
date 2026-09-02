@@ -92,3 +92,73 @@ enum Diagnose {
         }
     }
 }
+
+/// `Claudence --diagnose --raw-usage` prints the shape of the usage response so
+/// the parser can be matched to what the account actually returns. Usage
+/// figures are not secrets; the token is never printed, and only structure plus
+/// numeric values are shown.
+enum DiagnoseRawUsage {
+    static func run() {
+        let semaphore = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var text = "(no result)"
+        Task.detached {
+            text = await fetchShape()
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 30)
+        print(text)
+    }
+
+    private static func fetchShape() async -> String {
+        let store = CredentialStore()
+        let credentials: OAuthCredentials
+        do {
+            credentials = try store.load()
+        } catch {
+            return "credentials unavailable: \(error)"
+        }
+
+        var request = URLRequest(url: Constants.Usage.endpoint)
+        request.setValue("Bearer \(credentials.accessToken.value)", forHTTPHeaderField: "Authorization")
+        request.setValue(Constants.Usage.betaHeader, forHTTPHeaderField: "anthropic-beta")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = Constants.Usage.requestTimeout
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return "HTTP \(status): body is not a JSON object"
+            }
+            return "HTTP \(status)\n" + describe(object, indent: 0)
+        } catch {
+            return "request failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Prints keys and value shapes. Strings are shown only when short, so a
+    /// long opaque field cannot spill anything unexpected into the terminal.
+    private static func describe(_ value: Any, indent: Int) -> String {
+        let pad = String(repeating: "  ", count: indent)
+        switch value {
+        case let dictionary as [String: Any]:
+            return dictionary.keys.sorted().map { key in
+                "\(pad)\(key): " + describe(dictionary[key]!, indent: indent + 1)
+                    .trimmingCharacters(in: .whitespaces)
+            }.joined(separator: "\n")
+        case let array as [Any]:
+            guard !array.isEmpty else { return "[]" }
+            return "[\(array.count)]\n" + array.enumerated().map { index, element in
+                "\(pad)  [\(index)]\n" + describe(element, indent: indent + 2)
+            }.joined(separator: "\n")
+        case let number as NSNumber:
+            return number.stringValue
+        case let string as String:
+            return string.count <= 40 ? "\"\(string)\"" : "<string \(string.count) chars>"
+        case is NSNull:
+            return "null"
+        default:
+            return "\(value)"
+        }
+    }
+}

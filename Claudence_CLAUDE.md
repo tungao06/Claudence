@@ -151,15 +151,29 @@ GET https://api.anthropic.com/api/oauth/usage
   Accept: application/json
 ```
 
-Response carries flat windows plus a scoped-limit array:
+Response shape, captured from a live `HTTP 200` on this account:
 
 ```
-five_hour  { used_percentage, resets_at }
-seven_day  { used_percentage, resets_at }
-limits[]   { kind: "weekly_scoped", scope.model.{display_name,id}, percent, resets_at }
+five_hour   { utilization: 100, resets_at: "2026-09-01T22:49:59.870286+00:00",
+              limit_dollars: null, used_dollars: null, remaining_dollars: null }
+seven_day   { utilization: 10,  resets_at: "2026-09-06T22:59:59.870313+00:00" }
+seven_day_opus / _sonnet / _cowork / _oauth_apps / _omelette   -> null on this account
+limits[]    { kind: "session" | "weekly_all" | "weekly_scoped",
+              group, percent, severity, is_active, resets_at,
+              scope: { model: { display_name, id } } | null }
+spend       { percent, severity, limit, used, cap, ... }
+extra_usage { utilization, monthly_limit, ... }
+amber_ladder, cinder_cove, iguana_necktie, juniper_tide,
+nimbus_quill, omelette_promotional, tangelo                    -> feature flags
 ```
 
-Enumerate the scoped entries rather than hard-coding model names, so a new model appears without a code change.
+Three corrections that only surfaced by running against the real endpoint:
+
+1. **The percentage field is `utilization`, not `used_percentage`.** Parsing only `used_percentage` and `percent` silently drops both `five_hour` and `seven_day`, leaving a UI that shows a scoped model window and nothing else.
+
+2. **`resets_at` is an ISO-8601 string with six fractional digits and an explicit offset**, not epoch seconds. Epoch seconds is the shape the status-line stdin payload uses; the two sources disagree, so accept both. A default `ISO8601DateFormatter` rejects the fractional seconds and yields no reset time.
+
+3. **The flat section cannot be enumerated openly.** `spend`, `extra_usage` and `nimbus_quill` all carry a `percent` or a `utilization` and are not usage windows. Bound the enumeration to `five_hour`, `seven_day`, and the `seven_day_` prefix. Within that bound, still enumerate rather than hard-code, so a new model scope appears without a code change.
 
 Token refresh: `POST https://platform.claude.com/v1/oauth/token` with `refreshToken`.
 
