@@ -17,6 +17,10 @@ extension Theme.Layout {
     static let settingsSectionGap: CGFloat = 22
     /// Indent under a control, so its explanation lines up with the label.
     static let settingsExplanationIndent: CGFloat = 20
+    /// How far a permanently unavailable row is dimmed. Design section 7 draws
+    /// the disabled notification row at half strength; the inline sentence
+    /// beside it, not the dimming, is what actually explains the state.
+    static let settingsDisabledOpacity: Double = 0.5
 }
 
 // MARK: - Section chrome
@@ -57,6 +61,103 @@ struct SettingsExplanation: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, indented ? Theme.Layout.settingsExplanationIndent : 0)
             .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Control rows
+
+/// A switch with its label and the sentence underneath it.
+///
+/// The sentence is attached to the control as an accessibility hint and hidden
+/// from VoiceOver where it is printed, so it is heard once and read once.
+struct SettingsToggle: View {
+    let title: String
+    let explanation: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Toggle(isOn: $isOn) {
+                Text(title)
+                    .font(Theme.Typography.body)
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .toggleStyle(.switch)
+            .accessibilityLabel(title)
+            .accessibilityHint(explanation)
+
+            SettingsExplanation(text: explanation)
+        }
+    }
+}
+
+/// A switch for something Claudence cannot do.
+///
+/// Not a toggle bound to a dead preference: there is no preference behind it at
+/// all, and there is no binding a click could write to. `CLAUDE.md` forbids
+/// shipping UI for a state with no data source, and the honest rendering of a
+/// state with no source is to show that the option exists, show that it is off,
+/// and say why in a sentence rather than leaving the reader to infer it from a
+/// grey pixel.
+struct SettingsUnavailableToggle: View {
+    let title: String
+    let reason: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Toggle(isOn: .constant(false)) {
+                Text(title)
+                    .font(Theme.Typography.body)
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .toggleStyle(.switch)
+            .disabled(true)
+
+            SettingsExplanation(text: reason)
+        }
+        .opacity(Theme.Layout.settingsDisabledOpacity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue("Unavailable")
+        .accessibilityHint(reason)
+    }
+}
+
+/// A segmented choice with its label and the sentence underneath it.
+///
+/// `explanation` is fixed rather than derived from the selection: these controls
+/// answer "what does this setting do", and a sentence that changed on every tap
+/// would make the reader re-read it to find out whether anything else had.
+struct SettingsPicker<Value: Hashable & Identifiable>: View {
+    let title: String
+    let options: [Value]
+    let optionTitle: (Value) -> String
+    let explanation: String
+    @Binding var selection: Value
+    var isEnabled: Bool = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text(title)
+                .font(Theme.Typography.body)
+                .foregroundStyle(Theme.textPrimary)
+
+            Picker(selection: $selection) {
+                ForEach(options) { option in
+                    Text(optionTitle(option)).tag(option)
+                }
+            } label: {
+                Text(title)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(!isEnabled)
+            .accessibilityLabel(title)
+            .accessibilityValue(optionTitle(selection))
+            .accessibilityHint(explanation)
+
+            SettingsExplanation(text: explanation, indented: false)
+        }
     }
 }
 
@@ -106,15 +207,26 @@ enum AppVersion {
 
 // MARK: - Settings
 
-/// The settings window. Three sections in fixed order: what the app does, what
-/// it reads, and what it is.
+/// The settings window.
+///
+/// Sections run in the order a reader needs them: when the app starts and what
+/// it lists, then how it looks, then when it interrupts, then what it reads and
+/// what it is. Design section 5.14 groups these slightly differently (it files
+/// launch-at-login under the menu bar heading); the labels, options, defaults
+/// and help sentences are the design's, the grouping is the one that reads.
 struct SettingsView: View {
     @Bindable var preferences: Preferences
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Layout.settingsSectionGap) {
+                SettingsHeader()
+                Divider().overlay(Theme.separator)
                 GeneralSettings(preferences: preferences)
+                Divider().overlay(Theme.separator)
+                AppearanceSettings(preferences: preferences)
+                Divider().overlay(Theme.separator)
+                NotificationSettings(preferences: preferences)
                 Divider().overlay(Theme.separator)
                 PrivacySettings()
                 Divider().overlay(Theme.separator)
@@ -129,6 +241,26 @@ struct SettingsView: View {
             maxHeight: Theme.Layout.settingsMaxHeight
         )
         .background(Theme.surface)
+    }
+}
+
+// MARK: - Header
+
+/// Title and the one-line promise, verbatim from design section 5.14. The
+/// promise is checkable: the privacy section below says exactly which two
+/// requests leave the machine, and neither carries anything set here.
+struct SettingsHeader: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text("Claudence Settings")
+                .font(Theme.Typography.title)
+                .foregroundStyle(Theme.textPrimary)
+                .accessibilityAddTraits(.isHeader)
+            Text("Local only \u{00B7} nothing here leaves your Mac")
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

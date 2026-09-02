@@ -25,7 +25,8 @@ public enum Schema {
     public static var current: Int32 { migrations.last?.version ?? 0 }
 
     static let migrations: [Migration] = [
-        Migration(version: 1, statements: migration1)
+        Migration(version: 1, statements: migration1),
+        Migration(version: 2, statements: migration2),
     ]
 
     // MARK: - v1
@@ -112,6 +113,73 @@ public enum Schema {
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_daily_rollups_day ON daily_rollups (day)",
+    ]
+
+    // MARK: - v2
+
+    private static let migration2: [String] = [
+        // Accumulated tokens per subagent.
+        //
+        // `read_cursors` already survives a restart, so a subagent transcript
+        // resumes at the byte offset it reached last run. Without a persisted
+        // total to resume from, everything written before that offset is never
+        // read again and the figure collapses to whatever arrived since launch.
+        // The cursor and the total have to be durable together or neither is
+        // useful.
+        //
+        // Token counts are the five components only, matching `sessions`:
+        // `total` and `billableInput` stay derived by `TokenUsage` so there is
+        // one definition of them.
+        //
+        // `task_description` comes from the `meta.json` Claude Code writes
+        // beside the transcript. It is a task label, not message content, and
+        // is the same field `AISubagent` already carries.
+        //
+        // No secondary index: every query is by `parent_session_id`, which is
+        // the leading column of the primary key, so SQLite's automatic index on
+        // that key already serves it. A second index would only cost writes.
+        """
+        CREATE TABLE IF NOT EXISTS subagent_totals (
+            parent_session_id TEXT NOT NULL,
+            subagent_id TEXT NOT NULL,
+            agent_type TEXT,
+            task_description TEXT,
+            spawn_depth INTEGER NOT NULL DEFAULT 1,
+            model TEXT,
+            last_activity_at REAL,
+            records_parsed INTEGER NOT NULL DEFAULT 0,
+            fresh_input INTEGER NOT NULL DEFAULT 0,
+            cache_creation INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            output INTEGER NOT NULL DEFAULT 0,
+            thinking INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (parent_session_id, subagent_id)
+        )
+        """,
+
+        // A session's subagent spend, kept on the session row beside its own.
+        //
+        // The rollups are derived from this row, and until now the row held
+        // parent-transcript tokens only. Measured on this machine, subagents
+        // are around 41% of what a session actually spends, so every daily
+        // figure under-reported by roughly that much.
+        //
+        // The two totals stay separate columns rather than one combined
+        // figure: the engine seeds its parent accumulator from `usage` and the
+        // subagent tracker seeds from `subagent_totals`, and each has to line
+        // up with its own read cursor. Collapsing them would leave neither
+        // side able to resume. `combinedUsage` is derived from the pair, the
+        // same way `total` is derived from the components.
+        //
+        // ADD COLUMN with a NOT NULL default rewrites nothing: SQLite records
+        // the default in the schema and existing rows read back as zero, which
+        // is exactly right for a row written before subagents were counted.
+        "ALTER TABLE sessions ADD COLUMN subagent_fresh_input INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN subagent_cache_creation INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN subagent_cache_read INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN subagent_output INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN subagent_thinking INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE sessions ADD COLUMN subagent_count INTEGER NOT NULL DEFAULT 0",
     ]
 
     // MARK: - Migration

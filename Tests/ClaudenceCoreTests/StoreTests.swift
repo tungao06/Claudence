@@ -32,6 +32,8 @@ private func makeSession(
     startedAt: Date = Date(),
     lastActivityAt: Date? = nil,
     usage: TokenUsage = .zero,
+    subagentUsage: TokenUsage = .zero,
+    subagentCount: Int = 0,
     model: String? = "claude-opus-4",
     version: String? = "2.0.1"
 ) -> AISession {
@@ -46,6 +48,8 @@ private func makeSession(
         startedAt: startedAt,
         lastActivityAt: lastActivityAt ?? startedAt,
         usage: usage,
+        subagentUsage: subagentUsage,
+        subagentCount: subagentCount,
         model: model,
         claudeCodeVersion: version
     )
@@ -76,10 +80,60 @@ func migrationIsIdempotent() throws {
     let tables = try reopened.query(
         "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
     ) { $0.string(0) }
-    for expected in ["daily_rollups", "read_cursors", "sessions", "usage_samples"] {
+    for expected in ["daily_rollups", "read_cursors", "sessions", "subagent_totals", "usage_samples"] {
         #expect(tables.contains(expected), "missing table \(expected)")
     }
     reopened.close()
+}
+
+@Test("migrating a version 1 database to version 2 keeps its rows and adds the subagent storage")
+func migrationFromVersionOnePreservesData() throws {
+    let temp = TempDatabase()
+
+    // A real version 1 file, built by running only migration 1. Nothing here is
+    // fabricated: the statements come from the ladder itself.
+    let v1 = try #require(Schema.migrations.first { $0.version == 1 })
+    let seeded = try SQLiteDatabase(url: temp.url)
+    for statement in v1.statements { try seeded.execute(statement) }
+    try seeded.execute("PRAGMA user_version = 1")
+    try seeded.execute(
+        """
+        INSERT INTO sessions (id, project_name, working_directory, provider, pid, proc_start,
+                              started_at, last_activity_at, model, claude_code_version,
+                              fresh_input, cache_creation, cache_read, output, thinking)
+        VALUES ('legacy', 'Claudence', '/Users/test/Claudence', 'claudeCode', 77, 'ps-77',
+                1772000000, 1772000600, 'claude-opus-4-1', '2.0.14', 11, 22, 33, 44, 55)
+        """
+    )
+    try seeded.execute(
+        "INSERT INTO read_cursors (session_id, path, inode, byte_offset) VALUES ('legacy', '/tmp/a.jsonl', 5, 900)"
+    )
+    #expect(try Schema.userVersion(seeded) == 1)
+    seeded.close()
+
+    let migrated = try SQLiteDatabase(url: temp.url)
+    #expect(try Schema.migrate(migrated) == 2)
+    #expect(Schema.current == 2)
+    let tables = try migrated.query(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+    ) { $0.string(0) }
+    #expect(tables.contains("subagent_totals"))
+    migrated.close()
+
+    // The version 1 row survived, and the columns added to it default to zero,
+    // which is the honest value for a session recorded before subagents were
+    // counted.
+    let store = ClaudenceStore(url: temp.url)
+    #expect(store.health == .healthy)
+    let legacy = try #require(store.session(id: "legacy"))
+    #expect(legacy.projectName == "Claudence")
+    #expect(legacy.pid == 77)
+    #expect(legacy.usage == TokenUsage(freshInput: 11, cacheCreation: 22, cacheRead: 33, output: 44, thinking: 55))
+    #expect(legacy.subagentUsage == .zero)
+    #expect(legacy.subagentCount == 0)
+    #expect(legacy.combinedUsage == legacy.usage)
+    #expect(store.cursor(forSession: "legacy")?.byteOffset == 900)
+    #expect(store.subagentTotals(forSession: "legacy").isEmpty)
 }
 
 @Test("a store opened on a temp path reports healthy and persists across reopen")
@@ -276,6 +330,126 @@ func storeConformsToCursorStoring() {
     #expect(seam.cursor(forSession: "seam") == cursor)
 }
 
+// MARK: - Subagent totals
+
+@Test("a subagent total round trips with every field, nil columns included")
+func subagentTotalRoundTrip() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+    let active = Date(timeIntervalSince1970: 1_772_300_000)
+
+    let labelled = SubagentTotal(
+        parentSessionID: "parent",
+        subagentID: "agent-a",
+        agentType: "Explore",
+        taskDescription: "map the store layer",
+        usage: TokenUsage(freshInput: 12, cacheCreation: 340, cacheRead: 5_600, output: 78, thinking: 9),
+        recordsParsed: 41,
+        lastActivityAt: active,
+        spawnDepth: 2,
+        model: "claude-sonnet-5"
+    )
+    // Every optional column absent: a subagent whose meta.json was unreadable
+    // still counts its tokens.
+    let bare = SubagentTotal(
+        parentSessionID: "parent",
+        subagentID: "agent-b",
+        usage: TokenUsage(output: 1)
+    )
+
+    store.upsertSubagentTotal(labelled)
+    store.upsertSubagentTotal(bare)
+
+    let loaded = store.subagentTotals(forSession: "parent")
+    #expect(loaded.count == 2)
+    #expect(loaded.map(\.subagentID) == ["agent-a", "agent-b"])
+
+    let first = try! #require(loaded.first { $0.subagentID == "agent-a" })
+    #expect(first == labelled)
+    #expect(first.agentType == "Explore")
+    #expect(first.taskDescription == "map the store layer")
+    #expect(first.spawnDepth == 2)
+    #expect(first.model == "claude-sonnet-5")
+    #expect(first.recordsParsed == 41)
+    #expect(abs(try! #require(first.lastActivityAt).timeIntervalSince(active)) < 0.001)
+    #expect(first.usage.billableInput == 12 + 340 + 5_600)
+    #expect(first.usage.total == 12 + 340 + 5_600 + 78)
+
+    let second = try! #require(loaded.first { $0.subagentID == "agent-b" })
+    #expect(second == bare)
+    #expect(second.agentType == nil)
+    #expect(second.taskDescription == nil)
+    #expect(second.model == nil)
+    #expect(second.lastActivityAt == nil)
+    #expect(second.spawnDepth == 1)
+
+    // Nothing derived is stored.
+    let columns = try! store.connection!.query("PRAGMA table_info(subagent_totals)") { $0.string(1) }
+    #expect(!columns.contains("total"))
+    #expect(!columns.contains("billable_input"))
+}
+
+@Test("upserting a subagent total replaces it rather than accumulating rows")
+func subagentTotalUpsertReplaces() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+
+    store.upsertSubagentTotal(SubagentTotal(
+        parentSessionID: "p", subagentID: "agent-a",
+        agentType: "Explore", usage: TokenUsage(freshInput: 10), recordsParsed: 1
+    ))
+    store.upsertSubagentTotal(SubagentTotal(
+        parentSessionID: "p", subagentID: "agent-a",
+        usage: TokenUsage(freshInput: 90), recordsParsed: 4
+    ))
+
+    let loaded = store.subagentTotals(forSession: "p")
+    #expect(loaded.count == 1)
+    #expect(loaded.first?.usage.freshInput == 90)
+    #expect(loaded.first?.recordsParsed == 4)
+    // A later pass with no meta.json keeps the label already on disk.
+    #expect(loaded.first?.agentType == "Explore")
+}
+
+@Test("deleting subagent totals by session removes only that session's rows")
+func subagentTotalsDeleteBySession() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+
+    store.upsertSubagentTotal(SubagentTotal(parentSessionID: "keep", subagentID: "agent-a",
+                                            usage: TokenUsage(output: 1)))
+    store.upsertSubagentTotal(SubagentTotal(parentSessionID: "drop", subagentID: "agent-a",
+                                            usage: TokenUsage(output: 2)))
+    store.upsertSubagentTotal(SubagentTotal(parentSessionID: "drop", subagentID: "agent-b",
+                                            usage: TokenUsage(output: 3)))
+
+    store.deleteSubagentTotals(forSession: "drop")
+
+    #expect(store.subagentTotals(forSession: "drop").isEmpty)
+    #expect(store.subagentTotals(forSession: "keep").map(\.usage.output) == [1])
+    // The same subagent id under two parents is two rows, not one.
+    let count = try! store.connection!.scalarInt64("SELECT COUNT(*) FROM subagent_totals")
+    #expect(count == 1)
+}
+
+@Test("a session keeps its own tokens and its subagents' apart across a round trip")
+func sessionKeepsSubagentUsageSeparate() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+
+    let own = TokenUsage(freshInput: 100, cacheCreation: 200, cacheRead: 300, output: 40, thinking: 5)
+    let spawned = TokenUsage(freshInput: 10, cacheCreation: 20, cacheRead: 30, output: 4, thinking: 1)
+    store.upsert(session: makeSession(id: "split", usage: own, subagentUsage: spawned, subagentCount: 3))
+
+    let loaded = try! #require(store.session(id: "split"))
+    #expect(loaded.usage == own)
+    #expect(loaded.subagentUsage == spawned)
+    #expect(loaded.subagentCount == 3)
+    #expect(loaded.combinedUsage == own + spawned)
+    #expect(store.allSessions().first?.subagentUsage == spawned)
+    #expect(store.allSessions().first?.subagentCount == 3)
+}
+
 // MARK: - Usage samples
 
 @Test("usage samples come back ordered by time")
@@ -391,6 +565,38 @@ func rollupsDoNotDoubleCountOnUpdate() {
     // The incremental path agrees with a full recompute.
     store.recomputeRollups()
     #expect(store.dailyTotals(days: 1).first?.usage.freshInput == 900)
+}
+
+@Test("rollups count subagent tokens and stay at the latest combined total, not the sum of writes")
+func rollupsUseCombinedUsageAsSubagentSpendGrows() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+    let now = Date()
+
+    store.upsert(session: makeSession(
+        id: "spawning", project: "P", startedAt: now,
+        usage: TokenUsage(freshInput: 100), subagentUsage: TokenUsage(freshInput: 40), subagentCount: 1
+    ))
+    store.upsert(session: makeSession(
+        id: "spawning", project: "P", startedAt: now,
+        usage: TokenUsage(freshInput: 250), subagentUsage: TokenUsage(freshInput: 500), subagentCount: 2
+    ))
+
+    // The second combined total, not 140 + 750: the subtract-then-add pair has
+    // to use the same definition on both sides or every write inflates.
+    let totals = store.dailyTotals(days: 1)
+    #expect(totals.count == 1)
+    #expect(totals.first?.usage.freshInput == 750)
+
+    let sessionCount = try! store.connection!.scalarInt64(
+        "SELECT session_count FROM daily_rollups WHERE project_name = 'P'"
+    )
+    #expect(sessionCount == 1)
+
+    // A repair recompute agrees with the incremental path, so it cannot
+    // silently rewrite history down to the parent-only figure.
+    store.recomputeRollups()
+    #expect(store.dailyTotals(days: 1).first?.usage.freshInput == 750)
 }
 
 @Test("rollups follow a session when its project changes")

@@ -35,6 +35,7 @@ extension MonitorViewModel {
             tokenScaleMaximum: tokenScaleMaximum,
             burnRates: burnSamples(),
             series: points.map(Self.chartPoint),
+            seriesOutput: Self.seriesOutput(points),
             seriesUnavailableReason: points.isEmpty ? "No history recorded yet" : nil,
             projects: summaries.map(Self.projectRow),
             history: Self.history(from: sessions, now: now),
@@ -69,11 +70,29 @@ extension MonitorViewModel {
         )
     }
 
-    private static func chartLabel(_ date: Date) -> String {
+    /// The output half of each day, keyed the same way the chart keys its
+    /// points. A day the store could not answer for contributes no entry, which
+    /// is what keeps a gap distinguishable from a day that produced no output.
+    private static func seriesOutput(_ points: [DailyPoint]) -> [String: Double] {
+        var result: [String: Double] = [:]
+        for point in points {
+            guard let usage = point.usage else { continue }
+            result[point.day] = Double(usage.output)
+        }
+        return result
+    }
+
+    /// Built once. A `DateFormatter` per point allocated one per day of the
+    /// series and re-ran locale lookup each time, for a label that never varies.
+    private static let chartLabelFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.setLocalizedDateFormatFromTemplate("MMMd")
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    private static func chartLabel(_ date: Date) -> String {
+        chartLabelFormatter.string(from: date)
     }
 
     private static func projectRow(_ summary: ProjectSummary) -> ProjectRow {
@@ -98,7 +117,11 @@ extension MonitorViewModel {
                     project: session.projectName,
                     startedAt: session.startedAt,
                     duration: max(0, session.lastActivityAt.timeIntervalSince(session.startedAt)),
-                    usage: session.usage,
+                    // The same definition the session list and the token scale
+                    // use. Parent-only here put two different totals for one
+                    // session on the same screen, differing by the subagent
+                    // share, which is 41% on this repository.
+                    usage: session.combinedUsage,
                     model: session.model
                 )
             }

@@ -21,6 +21,19 @@ public actor MonitorEngine {
     private var accumulatedPaths: [String: [String]] = [:]
     private var accumulatedTrail: [String: [TimedActivity]] = [:]
     private var accumulatedRecords: [String: Int] = [:]
+    /// Sessions whose accumulators have been seeded from the store this
+    /// process. Read cursors are persisted but the totals they correspond to
+    /// were not, so without seeding a session resumed after a relaunch counts
+    /// only the records written since the last run and reports a total far
+    /// below what it actually spent.
+    private var seeded: Set<String> = []
+    /// The newest per-request usage block seen for each session, kept because a
+    /// delta with no new records carries none and the context meter should hold
+    /// its last real reading rather than flicker to unavailable.
+    private var lastRequestUsage: [String: TokenUsage] = [:]
+    /// Guards `refreshSessions` against overlapping passes. See its doc comment.
+    private var isRefreshing = false
+    private var hasPendingRefresh = false
     private var lastUsageFetch: Date?
     private var observers: [UUID: @Sendable (MonitorSnapshot) -> Void] = [:]
     private var lastUpserted: [String: AISession] = [:]
@@ -65,7 +78,40 @@ public actor MonitorEngine {
 
     /// Cheap pass: discovery plus incremental transcript reads. Safe to call on
     /// every filesystem event because both sources are event-sized, not full scans.
+    /// Single flight. Two passes cannot overlap, and a request that arrives
+    /// while one is running is coalesced into it rather than queued.
+    ///
+    /// This became necessary when the subagent read was added: `await
+    /// subagents.refresh` is the first suspension point ever placed inside the
+    /// session loop, and actor isolation does not survive a suspension. The
+    /// watcher fires a detached task per debounced burst, so two passes could
+    /// interleave. The failure is not a data race, it is worse to reason about:
+    /// pass A computes a total, suspends, pass B computes a larger total and
+    /// upserts it, then pass A resumes and upserts its smaller one, so
+    /// `applyRollup` subtracts the larger and adds the smaller and the day's
+    /// figure walks backwards. It self-heals on the next pass, which is exactly
+    /// what makes it hard to notice.
+    ///
+    /// Coalescing rather than queuing is right here because a refresh is a full
+    /// re-read of current state, not an increment: running it twice in a row
+    /// produces the same answer as running it once.
     public func refreshSessions() async {
+        if isRefreshing {
+            hasPendingRefresh = true
+            return
+        }
+        isRefreshing = true
+        defer {
+            isRefreshing = false
+            if hasPendingRefresh {
+                hasPendingRefresh = false
+                Task { await self.refreshSessions() }
+            }
+        }
+        await performRefresh()
+    }
+
+    private func performRefresh() async {
         EngineCounters.shared.countSessionRefresh()
         let discovered = discovery.discover()
         let now = Date()
@@ -74,6 +120,8 @@ public actor MonitorEngine {
         var producedTokens = false
 
         for var session in discovered {
+            seedIfNeeded(session)
+
             let delta = transcripts.readIncremental(
                 sessionID: session.id,
                 workingDirectory: session.workingDirectory
@@ -117,7 +165,26 @@ public actor MonitorEngine {
             accumulatedRecords[session.id] = records
             session.recordsParsed = records
 
+            // Subagents are a separate source: the parent transcript contains
+            // none of their records. Read before the burn tracker samples, so
+            // the rate reflects what the session actually spent.
+            if let subagents {
+                let spawned = await subagents.refresh(
+                    sessionID: session.id,
+                    workingDirectory: session.workingDirectory
+                )
+                subagentsBySession[session.id] = spawned
+                session.subagentUsage = spawned.reduce(TokenUsage.zero) { $0 + $1.usage }
+                session.subagentCount = spawned.count
+            }
+
             if let tier = delta.serviceTier { session.serviceTier = tier }
+            // Carried forward across passes with no new records, so the meter
+            // does not blank out whenever the session is briefly quiet.
+            if let request = delta.lastRequestUsage {
+                lastRequestUsage[session.id] = request
+            }
+            session.lastRequestUsage = lastRequestUsage[session.id]
             if let model = delta.latestModel {
                 session.model = model
             }
@@ -129,9 +196,16 @@ public actor MonitorEngine {
             // the tracker is empty. Recording an identical total on every
             // filesystem event grows the ring, changes the sparkline series,
             // and republishes a burn rate that did not change.
+            //
+            // The sample is the combined total. A session that delegates most
+            // of its work to subagents spends real tokens the whole time, and a
+            // rate computed from the parent transcript alone reads as idle
+            // while the bill keeps moving.
+            let combinedTotal = session.combinedUsage.total
+            let previousCombinedTotal = burnTrackers[session.id]?.lastCumulativeTokens
             var tracker = burnTrackers[session.id] ?? BurnRateTracker()
-            if tracker.lastCumulativeTokens != running.total {
-                tracker.record(tokens: running.total, at: now)
+            if tracker.lastCumulativeTokens != combinedTotal {
+                tracker.record(tokens: combinedTotal, at: now)
                 burnTrackers[session.id] = tracker
             }
 
@@ -141,8 +215,11 @@ public actor MonitorEngine {
                 store?.upsert(session: session)
                 lastUpserted[session.id] = session
             }
-            if delta.usage.total > 0 {
-                store?.recordUsageSample(sessionID: session.id, usage: running, at: now)
+            // Keyed on the combined total rather than on the parent delta, so a
+            // pass in which only a subagent spent anything still records a
+            // sample and still invalidates the cached daily figure.
+            if previousCombinedTotal != combinedTotal {
+                store?.recordUsageSample(sessionID: session.id, usage: session.combinedUsage, at: now)
                 producedTokens = true
             }
             live.append(session)
@@ -161,15 +238,26 @@ public actor MonitorEngine {
 
     /// Network pass, rate limited by the cache TTL. Kept separate from
     /// `refreshSessions` so filesystem churn never triggers a request.
-    public func refreshUsage(force: Bool = false) async {
+    ///
+    /// - Parameter minimumInterval: the floor between two requests. It defaults
+    ///   to the cache TTL, but the caller can lower it, because the user can
+    ///   choose a refresh interval shorter than the TTL and a rate limit the
+    ///   caller cannot lower would silently ignore that choice.
+    public func refreshUsage(
+        force: Bool = false,
+        minimumInterval: TimeInterval = Constants.Usage.cacheTTL
+    ) async {
         guard let usageProvider else { return }
         if !force, let last = lastUsageFetch,
-           Date().timeIntervalSince(last) < Constants.Usage.cacheTTL {
+           Date().timeIntervalSince(last) < minimumInterval {
             return
         }
         lastUsageFetch = Date()
         EngineCounters.shared.countUsageFetch()
-        let state = await usageProvider.fetch()
+        // The floor travels with the request: the engine's own rate limit and
+        // the provider's cache have to agree, or the tighter of the two wins
+        // silently.
+        let state = await usageProvider.fetch(minimumInterval: force ? 0 : minimumInterval)
         publishIfChanged(
             MonitorSnapshot(
                 sessions: snapshot.sessions,
@@ -191,15 +279,61 @@ public actor MonitorEngine {
 
     // MARK: - Internals
 
+    /// Adopts a session's persisted total before its first delta of this run.
+    ///
+    /// The read cursor and the total have to move together. The cursor survives
+    /// a relaunch in SQLite; the total lived only in this dictionary, so a
+    /// resumed session used to start again from zero while its reader carried
+    /// on from byte N. The visible effect was a live total that collapsed after
+    /// every restart, and then a rollup rewritten downward to match, because
+    /// `upsert` replaces a session's stored figures rather than adding to them.
+    ///
+    /// Seeding once per process is enough: after the first pass the in-memory
+    /// accumulator is the authority and the store is downstream of it.
+    private func seedIfNeeded(_ session: AISession) {
+        guard !seeded.contains(session.id) else { return }
+        guard let store else {
+            seeded.insert(session.id)
+            return
+        }
+        // Marked seeded only once the store is known to have answered. A failed
+        // read and an absent row both return nil, and treating a failure as
+        // "nothing stored" would pin the accumulator at zero for the life of
+        // the process while the cursor is already at byte N: a permanent
+        // undercount that then propagates into the rollup on the next upsert.
+        let before = store.health
+        let stored = store.session(id: session.id)
+        if case .unavailable = store.health { return }
+        if case .healthy = before, case .degraded = store.health { return }
+        seeded.insert(session.id)
+        guard let stored else { return }
+        accumulated[session.id] = stored.usage
+        // A session read back from the store carries no per-record detail: the
+        // schema keeps tokens, not tool names or paths. Those accumulators stay
+        // empty and rebuild from the records read after the resume point, which
+        // is honest about what this process has actually observed.
+    }
+
     /// A session that disappeared from discovery has ended. Its accumulator is
     /// dropped so a recycled id cannot inherit a stale total.
-    private func reapVanished(liveIDs: Set<String>, at date: Date) {
+    private func reapVanished(liveIDs: Set<String>, at date: Date) async {
         let vanished = Set(snapshot.sessions.map(\.id)).subtracting(liveIDs)
         for id in vanished {
             store?.markEnded(sessionID: id, at: date)
             burnTrackers[id] = nil
             accumulated[id] = nil
             lastUpserted[id] = nil
+            // Every per-session accumulator, not only the token one. Leaving
+            // any of these behind lets a recycled session id inherit another
+            // session's tool counts, paths, or timeline.
+            accumulatedTools[id] = nil
+            accumulatedPaths[id] = nil
+            accumulatedTrail[id] = nil
+            accumulatedRecords[id] = nil
+            lastRequestUsage[id] = nil
+            subagentsBySession[id] = nil
+            seeded.remove(id)
+            await subagents?.forget(sessionID: id)
         }
     }
 
@@ -247,6 +381,13 @@ public actor MonitorEngine {
 /// The engine's view of persistence. The store module implements this; keeping
 /// it here means the engine compiles without knowing which database is behind it.
 public protocol ClaudenceStoring: CursorStoring {
+    /// Whether the store is answering. Needed because a failed read and an
+    /// absent row are both nil, and the engine must not mistake one for the
+    /// other when seeding a session's accumulated total.
+    var health: StoreHealth { get }
+    /// The last persisted view of a session, used to seed the engine's
+    /// accumulators so a resumed read cursor does not restart its total.
+    func session(id: String) -> AISession?
     func upsert(session: AISession)
     func markEnded(sessionID: String, at: Date)
     func recordUsageSample(sessionID: String, usage: TokenUsage, at: Date)

@@ -30,6 +30,96 @@ struct PrivacyTests {
         SHA256.hash(data: Data(command.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Property labels no decoding type may declare. One definition, used by
+    /// every test in this suite that inspects labels rather than values.
+    ///
+    /// This applies to the decoding surface only. `TokenUsage` legitimately has
+    /// a `thinking` property holding a token count, which section 3.1 permits
+    /// under `message.usage.*`, so a domain value graph is checked against its
+    /// own permitted field paths below rather than against this list.
+    static let forbiddenLabels = [
+        "text", "thinking", "toolUseResult", "tool_result", "snapshot",
+        "attachment", "command", "content_text", "input_text",
+    ]
+
+    // MARK: - Subagent field paths
+    //
+    // Section 3.1, as amended on 2026-09-02, permits the four fields
+    // `SubagentLocator.Meta` decodes from `agent-<id>.meta.json`: `agentType`,
+    // `description`, `toolUseId` and `spawnDepth`. `description` reaches the
+    // domain as `taskDescription` and the database as `task_description`.
+    // The sets below spell out every field these two types may carry, so a
+    // field added to either fails here and has to be argued into the allowlist
+    // rather than arriving with it.
+
+    static let permittedSubagentPaths: Set<String> = [
+        "id",
+        "parentSessionID",
+        "agentType",
+        "taskDescription",
+        "usage.freshInput",
+        "usage.cacheCreation",
+        "usage.cacheRead",
+        "usage.output",
+        "usage.thinking",
+        "currentActivity.verb",
+        "currentActivity.subject",
+        "model",
+        "lastActivityAt",
+        "recordsParsed",
+        "spawnDepth",
+    ]
+
+    static let permittedSubagentTotalPaths: Set<String> = [
+        "parentSessionID",
+        "subagentID",
+        "agentType",
+        "taskDescription",
+        "usage.freshInput",
+        "usage.cacheCreation",
+        "usage.cacheRead",
+        "usage.output",
+        "usage.thinking",
+        "recordsParsed",
+        "lastActivityAt",
+        "spawnDepth",
+        "model",
+    ]
+
+    /// Markers, one per field that can hold a string, so a walk that skips a
+    /// field is visible as a missing marker rather than as a silent pass.
+    static let markerID = "MARKER-SUBAGENT-ID-4a1c9f"
+    static let markerParent = "MARKER-PARENT-SESSION-8f2071"
+    static let markerAgentType = "MARKER-AGENT-TYPE-13bd6e"
+    static let markerTask = "MARKER-TASK-DESCRIPTION-77e5c2"
+    static let markerModel = "MARKER-MODEL-c30a48"
+    static let markerVerb = "MARKER-ACTIVITY-VERB-5b91d0"
+    static let markerSubject = "MARKER-ACTIVITY-SUBJECT-e604af"
+
+    static var subagentMarkers: [String] {
+        [markerID, markerParent, markerAgentType, markerTask, markerModel, markerVerb, markerSubject]
+    }
+
+    static let markedUsage = TokenUsage(
+        freshInput: 11, cacheCreation: 22, cacheRead: 33, output: 44, thinking: 55
+    )
+    static let markedTimestamp = Date(timeIntervalSince1970: 1_700_000_000)
+
+    static func markedSubagent() -> AISubagent {
+        AISubagent(
+            id: markerID,
+            parentSessionID: markerParent,
+            agentType: markerAgentType,
+            taskDescription: markerTask,
+            usage: markedUsage,
+            currentActivity: Activity(verb: markerVerb, subject: markerSubject),
+            model: markerModel,
+            lastActivityAt: markedTimestamp,
+            recordsParsed: 7,
+            spawnDepth: 2
+        )
+    }
+
     /// A transcript in which every forbidden field carries a sentinel.
     private func loadedFixture() -> TranscriptFixture {
         let fixture = TranscriptFixture()
@@ -175,10 +265,8 @@ struct PrivacyTests {
         """)
         let record = try JSONDecoder().decode(TranscriptRecord.self, from: Data(line.utf8))
 
-        let forbidden = ["text", "thinking", "toolUseResult", "tool_result", "snapshot",
-                         "attachment", "command", "content_text", "input_text"]
         for label in Self.deepLabels(of: record) {
-            #expect(!forbidden.contains(label), "decoding type declares a '\(label)' property")
+            #expect(!Self.forbiddenLabels.contains(label), "decoding type declares a '\(label)' property")
         }
     }
 
@@ -213,6 +301,110 @@ struct PrivacyTests {
         }
     }
 
+    // MARK: - The newest request block is walked on purpose
+
+    @Test("The delta's lastRequestUsage is populated, so the leak check reaches it")
+    func lastRequestUsageIsReachedDeliberately() throws {
+        let fixture = loadedFixture()
+        let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
+
+        // Added after the rest of this suite was written. It was reached only
+        // incidentally, by a walk over a delta that happened to carry one; a
+        // fixture that stopped populating it would have made the leak check
+        // vacuous for this field without failing anything. Now it is stated.
+        let request = try #require(delta.lastRequestUsage, "fixture must populate lastRequestUsage")
+        #expect(request.total > 0)
+
+        let paths = Set(Self.deepFieldPaths(of: delta))
+        #expect(paths.contains("lastRequestUsage.freshInput"))
+        #expect(paths.contains("lastRequestUsage.cacheRead"))
+        #expect(paths.contains("lastRequestUsage.output"))
+
+        // It holds counts and nothing else.
+        let dump = Self.deepDescription(of: request)
+        for sentinel in Self.allSentinels {
+            #expect(!dump.contains(sentinel), "lastRequestUsage leaked \(sentinel)")
+        }
+    }
+
+    // MARK: - The subagent types carry nothing outside the allowlist
+
+    @Test("An AISubagent's value graph is exactly the amended allowlist")
+    func subagentGraphIsExactlyTheAllowlist() {
+        let subagent = Self.markedSubagent()
+
+        let paths = Set(Self.deepFieldPaths(of: subagent))
+        #expect(paths == Self.permittedSubagentPaths,
+                "unexpected \(paths.subtracting(Self.permittedSubagentPaths)), missing \(Self.permittedSubagentPaths.subtracting(paths))")
+
+        // The walk really did reach every field, so the comparison above is a
+        // statement about the type and not about a walk that stopped early.
+        let dump = Self.deepDescription(of: subagent)
+        for marker in Self.subagentMarkers {
+            #expect(dump.contains(marker), "the walk never reached \(marker)")
+        }
+        for sentinel in Self.allSentinels {
+            #expect(!dump.contains(sentinel), "subagent leaked \(sentinel)")
+        }
+    }
+
+    @Test("A SubagentTotal's value graph is exactly the amended allowlist")
+    func subagentTotalGraphIsExactlyTheAllowlist() {
+        let total = SubagentTotal(Self.markedSubagent())
+
+        let paths = Set(Self.deepFieldPaths(of: total))
+        #expect(paths == Self.permittedSubagentTotalPaths,
+                "unexpected \(paths.subtracting(Self.permittedSubagentTotalPaths)), missing \(Self.permittedSubagentTotalPaths.subtracting(paths))")
+
+        // Every marker except the activity, which the durable form drops on
+        // purpose: an activity label names a file, and there is no reason to
+        // keep that on disk once the subagent is gone.
+        let dump = Self.deepDescription(of: total)
+        for marker in [Self.markerID, Self.markerParent, Self.markerAgentType,
+                       Self.markerTask, Self.markerModel] {
+            #expect(dump.contains(marker), "the walk never reached \(marker)")
+        }
+        #expect(!dump.contains(Self.markerVerb))
+        #expect(!dump.contains(Self.markerSubject))
+        for sentinel in Self.allSentinels {
+            #expect(!dump.contains(sentinel), "subagent total leaked \(sentinel)")
+        }
+    }
+
+    @Test("A SubagentTotal read back from SQLite is still exactly the allowlist")
+    func persistedSubagentTotalIsExactlyTheAllowlist() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudencePrivacy", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+        let written = SubagentTotal(Self.markedSubagent())
+        store.upsertSubagentTotal(written)
+
+        let read = try #require(store.subagentTotals(forSession: Self.markerParent).first)
+
+        // The persisted shape, not only the in-memory one. A column added to
+        // `subagent_totals` and surfaced on this type fails here too.
+        let paths = Set(Self.deepFieldPaths(of: read))
+        #expect(paths == Self.permittedSubagentTotalPaths,
+                "unexpected \(paths.subtracting(Self.permittedSubagentTotalPaths)), missing \(Self.permittedSubagentTotalPaths.subtracting(paths))")
+
+        #expect(read.subagentID == Self.markerID)
+        #expect(read.agentType == Self.markerAgentType)
+        #expect(read.taskDescription == Self.markerTask)
+        #expect(read.model == Self.markerModel)
+        #expect(read.usage == Self.markedUsage)
+        #expect(read.recordsParsed == 7)
+        #expect(read.spawnDepth == 2)
+
+        let dump = Self.deepDescription(of: read)
+        for sentinel in Self.allSentinels {
+            #expect(!dump.contains(sentinel), "persisted total leaked \(sentinel)")
+        }
+    }
+
     // MARK: - Reflection helpers
 
     /// Renders every stored property, recursively, so a leak anywhere in the
@@ -224,6 +416,28 @@ struct PrivacyTests {
         return mirror.children
             .map { "\($0.label ?? "_")=\(deepDescription(of: $0.value, depth: depth + 1))" }
             .joined(separator: " ")
+    }
+
+    /// Every field in the value graph, as a dotted path from the root.
+    ///
+    /// Optionals are transparent, so a field reads the same whether it holds a
+    /// value or nil, and a nil field is still listed rather than vanishing.
+    /// `Date` is a leaf: its single stored property is an implementation
+    /// detail of Foundation and naming it in an allowlist would say nothing.
+    static func deepFieldPaths(of value: Any, prefix: String = "", depth: Int = 0) -> [String] {
+        guard depth < 12 else { return [] }
+        if value is Date { return prefix.isEmpty ? [] : [prefix] }
+        let mirror = Mirror(reflecting: value)
+        if mirror.displayStyle == .optional {
+            guard let child = mirror.children.first else { return prefix.isEmpty ? [] : [prefix] }
+            return deepFieldPaths(of: child.value, prefix: prefix, depth: depth + 1)
+        }
+        if mirror.children.isEmpty { return prefix.isEmpty ? [] : [prefix] }
+        return mirror.children.flatMap { child -> [String] in
+            let label = child.label ?? "_"
+            let path = prefix.isEmpty ? label : "\(prefix).\(label)"
+            return deepFieldPaths(of: child.value, prefix: path, depth: depth + 1)
+        }
     }
 
     /// Every property label in the value graph.

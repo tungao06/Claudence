@@ -56,6 +56,7 @@ Four sources, all undocumented Claude Code internals, all behind adapters with v
 |---|---|
 | `~/.claude/sessions/<pid>.json` | live sessions: pid, sessionId, cwd, status, startedAt, name |
 | `~/.claude/projects/<slug>/<sessionId>.jsonl` | tokens (`message.usage`) and activity (`tool_use`) |
+| `~/.claude/projects/<slug>/<sessionId>/subagents/agent-<id>.jsonl` | subagent tokens and activity, plus `.meta.json` for type, task label, spawn depth |
 | Keychain `Claude Code-credentials` | OAuth access and refresh token |
 | `GET api.anthropic.com/api/oauth/usage` | 5h / 7d / model-scoped usage windows |
 
@@ -63,6 +64,8 @@ Two traps that cost real time if rediscovered:
 
 - **`ps` is not session discovery.** Most processes named `claude` are `bg-pty-host`, `bg-spare`, `daemon run`, or `--chrome-native-host`. Naive counting overcounts roughly 4x. Discovery comes from the registry; `ps` only corroborates a PID already found there.
 - **Transcripts reach 12 MB.** Never re-parse a whole file. Persist `(path, inode, byteOffset)` and resume; a changed inode means rotation, so reset to zero.
+- **A cursor and its total must be durable together.** Persisting the offset without the accumulated total is worse than persisting neither: the reader resumes at byte N, the total restarts at zero, and the collapsed figure is then written back over the session row and rewrites the daily rollup downward. This shipped once and was found by an audit, not by a test.
+- **The parent transcript contains none of its subagents' records.** Measured here: 47% of a session's true total lived in the fifth source. `isSidechain` is false on every parent record, so there is no signal in the parent that anything is missing.
 
 Liveness needs `kill(pid, 0)` **and** a matching `procStart`. PID alone resurrects dead sessions under recycled PIDs.
 
@@ -71,6 +74,10 @@ Liveness needs `kill(pid, 0)` **and** a matching `procStart`. PID alone resurrec
 Enforced by tests, not discipline. A test must fail if the parser emits anything outside the allowlist.
 
 Readable: `message.usage.*`, `message.model`, `content[].name`, `content[].input.file_path`, and `content[].input.command` **as a SHA256 hash only**. Plus timestamps, sessionId, cwd, gitBranch, version.
+
+Also readable, added 2026-09-02 when subagent tracking landed: the four fields `SubagentLocator.Meta` decodes from `~/.claude/projects/<slug>/<sessionId>/subagents/agent-<id>.meta.json`, which are `agentType`, `description`, `toolUseId`, and `spawnDepth`. `description` reaches the interface as `AISubagent.taskDescription` and the disk as the `subagent_totals.task_description` column. Nothing else in that file is read: a field `Meta` does not declare is left on disk deliberately, and adding one is an amendment to this list, not a detail of the decoder. This covers the spawn metadata of a subagent and nothing about its work. It is not the subagent's prompt, not its messages, and not its results; those live in the sibling `agent-<id>.jsonl` and are parsed under exactly the rules above.
+
+Both halves of the argument, because a reader deciding about the next `meta.json` field needs both. For: Claude Code writes `description` at spawn time, so it is a label produced by the tool rather than content produced by a person or a model, and without it the subagent list is eight indistinguishable rows named `agent-01` through `agent-08`, which is a display with no reason to exist. Against: it is free text of arbitrary content. Whoever spawns the subagent chooses the string, nothing constrains it to a short label, and anyone who writes a secret into a task description has written that secret into this application's SQLite file. The field is kept because the display is worthless without it, not because the risk is zero. A future field from that file gets the same two-sided reading rather than being waved through on the grounds that the tool wrote it.
 
 Never read, store, or display: `content[].text`, tool results, file history snapshots and deltas, attachment payloads, or the raw command string. Command strings routinely carry API keys and connection strings, so activity labels stay at tool-name granularity ("Running a command") rather than echoing the command.
 
@@ -103,6 +110,7 @@ Bars use `total`. Breakdowns always show cache separately — cache reads cost r
   date +%s; ps -o time= -p $PID    # wait 5+ minutes, then repeat
   # idle % = (cpu2 - cpu1) / (wall2 - wall1) * 100
   ```
+  A warm baseline is necessary and not sufficient. The window also has to be idle: a measurement taken while agents are writing transcripts and builds are running reports the cost of real work, and reads as a regression. Cross-check a suspicious figure with `sample <pid>` and with `--diagnose --counters`, which reports the engine's own cost separately.
 - Performance budget: idle CPU under 0.5%, resident memory under 60 MB, cold start under 1 s, 12 MB transcript re-scan under 50 ms.
 - Semantic color tokens (`healthy`, `attention`, `warning`, `critical`) only; no hex in views. Never color alone — every indicator pairs a glyph with text.
 

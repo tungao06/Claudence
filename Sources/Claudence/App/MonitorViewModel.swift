@@ -45,6 +45,15 @@ final class MonitorViewModel {
     let engine: MonitorEngine
 
     let analytics: AnalyticsService?
+
+    /// How long the usage loop waits between requests, and the floor it passes
+    /// to the engine so a shorter choice is not swallowed by the engine's own
+    /// rate limit. Set by the composition root from `Preferences`; the default
+    /// is the cache TTL, which is what the loop used before it was settable.
+    ///
+    /// This paces the one polled source in the application. Session discovery
+    /// and token counts stay event driven and are not affected by it.
+    var usageRefreshInterval: TimeInterval = Constants.Usage.cacheTTL
     private var observerToken: UUID?
     private var usageTask: Task<Void, Never>?
 
@@ -74,10 +83,14 @@ final class MonitorViewModel {
         // Usage lives on its own cadence. Filesystem churn must never trigger a
         // network request, so this loop is deliberately separate from the
         // event-driven session refresh.
-        usageTask = Task { [engine] in
+        usageTask = Task { [weak self, engine] in
             while !Task.isCancelled {
-                await engine.refreshUsage()
-                try? await Task.sleep(for: .seconds(Constants.Usage.cacheTTL))
+                // Read on every pass rather than captured once, so changing the
+                // interval in Settings takes effect at the next tick instead of
+                // at the next launch.
+                let interval = self?.usageRefreshInterval ?? Constants.Usage.cacheTTL
+                await engine.refreshUsage(minimumInterval: interval)
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
@@ -128,10 +141,59 @@ final class MonitorViewModel {
         burnRates[session.id] ?? .zero
     }
 
+    /// Subagents a session spawned, newest activity first. Held apart from the
+    /// snapshot because the drill-down is opened rarely and a subagent list
+    /// changing must not invalidate the session list that is always on screen.
+    private(set) var subagentsBySession: [String: [AISubagent]] = [:]
+
+    func subagents(for session: AISession) -> [AISubagent] {
+        subagentsBySession[session.id] ?? []
+    }
+
+    /// Each session's share of the tokens Claudence measured over the recent
+    /// window, keyed by session id.
+    ///
+    /// The denominator is what this application measured, not the provider's
+    /// window capacity: the usage API reports a percentage consumed and never
+    /// a capacity, so there is no honest way to divide a token count by it.
+    /// Nil for a session means the window measured nothing to take a share of.
+    private(set) var recentShares: [String: Double] = [:]
+
+    func recentShare(for session: AISession) -> Double? {
+        recentShares[session.id]
+    }
+
+    /// Recomputes the shares. Reads the database, so it runs off the main actor
+    /// and is called when a detail view opens rather than on every snapshot.
+    func refreshRecentShares() async {
+        guard let analytics else { return }
+        let shares = await Task.detached(priority: .utility) {
+            guard let result = analytics.shareOfRecentTokens() else { return [String: Double]() }
+            var mapped: [String: Double] = [:]
+            for entry in result.sessions where entry.share != nil {
+                mapped[entry.sessionID] = entry.share
+            }
+            return mapped
+        }.value
+        if recentShares != shares {
+            recentShares = shares
+        }
+    }
+
+    /// Pulls the subagent lists for the sessions currently on screen. Called
+    /// when a detail view opens, not on every refresh: reading them is cheap
+    /// but publishing them is not, and nothing shows them until asked.
+    func refreshSubagents(for sessionID: String) async {
+        let list = await engine.subagents(forSession: sessionID)
+        if subagentsBySession[sessionID] != list {
+            subagentsBySession[sessionID] = list
+        }
+    }
+
     /// Shared denominator for the session token bars, so their lengths are
     /// comparable to each other rather than each being full width.
     var tokenScaleMaximum: Int? {
-        let peak = sessions.map(\.usage.total).max() ?? 0
+        let peak = sessions.map(\.combinedUsage.total).max() ?? 0
         return peak > 0 ? peak : nil
     }
 

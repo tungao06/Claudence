@@ -49,9 +49,9 @@ Never reorder this. Analytics never appears above sessions; sessions never appea
 
 ## 2. Data sources
 
-Every number in the UI traces back to one of these four sources. Nothing else. Verified against Claude Code 2.1.257 on macOS 26.6.2.
+Every number in the UI traces back to one of these five sources. Nothing else. Verified against Claude Code 2.1.257 and 2.1.258 on macOS 26.6.2.
 
-All four are **undocumented internal interfaces**. Each gets an adapter with explicit schema detection and a defined degraded state. No parser reads them directly.
+All five are **undocumented internal interfaces**. Each gets an adapter with explicit schema detection and a defined degraded state. No parser reads them directly.
 
 ### 2.1 Session registry — live session discovery
 
@@ -190,6 +190,26 @@ Hard constraints on this path:
 - Cache responses for 60 s. Back off on 429 and keep serving the cached value.
 - Any failure degrades to `Usage unavailable`. Never substitute a guess.
 
+### 2.5 Subagent transcripts — the tokens the parent transcript does not contain
+
+This source was found late, after the application had already shipped totals that were wrong.
+
+A session's subagents do **not** appear in its own transcript. `isSidechain` is false on every parent record and no `agent-name` record is written. They live in a directory beside the parent file:
+
+```
+~/.claude/projects/<slug>/<sessionId>/subagents/agent-<id>.jsonl
+~/.claude/projects/<slug>/<sessionId>/subagents/agent-<id>.meta.json
+```
+
+The `.jsonl` is an ordinary transcript with full `message.usage` and `tool_use` blocks, read with the same `(path, inode, byteOffset)` cursor discipline as the parent, under cursor keys namespaced `subagent:<parent>:<id>` so they cannot collide with a session id. The `.meta.json` carries `agentType`, `description`, `toolUseId` and `spawnDepth`; those four fields and no others are read, and section 3.1 records why.
+
+Measured on this repository's own session while this section was written: parent 141.83M tokens, 20 subagents 128.56M, so **47% of the true total was invisible**. The figure has ranged from 41% to 48% across sessions. Subagents have no process of their own and their tokens are billed to the parent, so they roll up into the parent's total as `AISession.combinedUsage`, with the split kept separately so nothing double counts and the breakdown can be shown.
+
+Two constraints this source imposes that the others do not:
+
+- **A cursor and the total it corresponds to must be durable together.** The read cursors were persisted from the start; the accumulated totals were not. A session resumed after a relaunch therefore added its delta to zero and reported a fraction of what it had spent, and the collapsed figure was then written back over the session row, rewriting the daily rollup downward. Schema version 2 persists both halves.
+- **An unreadable directory is not an empty one.** A locator that returns "no subagents" for a directory it could not read will have its callers conclude that every subagent vanished. The locator reports the two cases separately for that reason.
+
 ---
 
 ## 3. Privacy contract
@@ -213,6 +233,15 @@ content[].input.command             SHA256 hash only, never the string
 timestamp, sessionId, cwd, gitBranch, version
 ```
 
+From `subagents/agent-<id>.meta.json`, which is the file Claude Code writes beside a subagent transcript, exactly the four fields `SubagentLocator.Meta` declares and no others:
+
+```
+agentType                           subagent type: general-purpose, Explore
+description                         task label written when the subagent spawns
+toolUseId                           the parent tool_use id that created it
+spawnDepth                          nesting depth, 1 for a direct subagent
+```
+
 **Must never read, store, or display:**
 
 ```
@@ -222,6 +251,12 @@ file-history-snapshot / -delta      file contents
 attachment payloads
 the raw command string
 ```
+
+The subagent block was added on 2026-09-02, when subagent tracking landed and `description` began to reach both the session detail view, as `AISubagent.taskDescription`, and the database, as `subagent_totals.task_description`. Until then the code read a field this list did not name, which is the defect the amendment closes.
+
+What it covers is the spawn metadata of a subagent and nothing about its work. It is not the subagent's prompt, not its messages, not its results. Those are in the sibling `agent-<id>.jsonl`, which is parsed under the rules above like any other transcript. If `meta.json` carries fields beyond the four named here, they are deliberately not decoded; widening `Meta` is an amendment to this section rather than a change to a decoder.
+
+The reasoning has two halves and both belong on the record. The case for reading `description` is that Claude Code writes it at spawn time, so it is a label produced by the tool rather than content produced by a person or a model, and it is the only thing that distinguishes one subagent row from another: without it the list is eight identical rows named `agent-01` through `agent-08`, which is a display with no reason to exist. The case against is that it is free text of arbitrary content. Whoever spawns the subagent chooses the string, nothing constrains its length or its subject, and a task description containing a secret puts that secret into this application's SQLite file, where the rest of section 3 promises nothing of the kind will be. Both statements are true at once. The field is kept because the feature is worthless without it, not because the exposure is nil, and the next field proposed from this file is argued the same way rather than admitted on the grounds that the tool wrote it.
 
 ### 3.2 Consequence
 
@@ -366,20 +401,24 @@ The six states from the original spec are kept only where the data supports them
 | RUNNING | registry `status` (observed: `busy`) | yes |
 | IDLE | registry `status` (observed: `idle`) | yes |
 | COMPLETED | registry file removed, process gone | yes |
-| WAITING | not yet derivable | no |
+| WAITING | registry `status` (observed: `waiting`) | yes |
 | PERMISSION | not yet derivable | no |
 | ERROR | not yet derivable | no |
 
-Observed so far: `busy` on interactive sessions, `idle` on background records. The adapter accumulates every distinct raw value it sees into `SessionRegistryAdapter.observedStatusValues`, so the full set grows as the application runs. `updatedAt` governs only the fallback for an unknown or missing status, never the mapping of a known one.
+Observed so far: `busy` on interactive sessions, `idle` on background records, and `waiting` while a session is blocked on the user. `waiting` was listed as not derivable until a live capture on Claude Code 2.1.258, polling `~/.claude/sessions/<pid>.json` every two seconds, caught one session moving `busy -> waiting -> busy -> idle`. The status string is written by the source; nothing is being inferred. Two states remain underivable, PERMISSION and ERROR, and they stay out of the UI.
+
+The adapter accumulates every distinct raw value it sees into `SessionRegistryAdapter.observedStatusValues`, so the full set grows as the application runs. `updatedAt` governs only the fallback for an unknown or missing status, never the mapping of a known one. `waiting` is mapped directly for the same reason `busy` is: `updatedAt` moves on a transition, so a session that has been waiting on the user for minutes carries a minutes-old timestamp, and routing it through the recency fallback displayed it as Idle.
 
 The full set of registry `status` values must be enumerated by observation. Until a state is proven derivable it does not appear in the UI. Designing UI for states with no data source produces a display that silently lies.
 
 Indicators always pair a glyph with text. Color is never the sole carrier of meaning.
 
 ```
-* Working        o Idle          v Completed
-! Permission     x Error         ~ Waiting
+* Working        o Idle          v Completed     ^ Needs you
+! Permission     x Error
 ```
+
+`Needs you` is the wording for WAITING. "Waiting" on its own does not say who is being waited on and reads as a synonym for Idle in the row directly above it. Its glyph is a raised hand, the one silhouette in the set that is not a circle, so the state survives being read at 10pt and without colour. Its colour is the accent, not a rung of the severity ramp: a session waiting on the user is not a fault.
 
 Animate active states only.
 

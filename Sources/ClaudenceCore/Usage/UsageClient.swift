@@ -170,10 +170,22 @@ public actor UsageClient: UsageProviding {
     // MARK: Public API
 
     /// Never throws. Every failure is an ordinary degraded state.
-    public func fetch() async -> UsageState {
+    ///
+    /// - Parameter minimumInterval: how old a cached reading may be before the
+    ///   network is asked again. It defaults to `Constants.Usage.cacheTTL`, and
+    ///   the caller lowers it when the user has chosen a shorter refresh
+    ///   interval. Without this the client held its own fixed 60 second cache,
+    ///   so choosing 30 seconds in Settings made the engine ask twice as often
+    ///   and receive the same cached answer both times: the setting appeared to
+    ///   do nothing, and the reason was a layer below where anyone would look.
+    ///
+    ///   The backoff after a failure is deliberately NOT lowered with it. That
+    ///   one protects the endpoint rather than the reading, and a user picking a
+    ///   faster refresh is not asking to retry a failing server harder.
+    public func fetch(minimumInterval: TimeInterval = Constants.Usage.cacheTTL) async -> UsageState {
         let instant = now()
 
-        if let cache, instant.timeIntervalSince(cache.fetchedAt) < Constants.Usage.cacheTTL {
+        if let cache, instant.timeIntervalSince(cache.fetchedAt) < minimumInterval {
             return .available(windows: cache.windows, fetchedAt: cache.fetchedAt)
         }
 

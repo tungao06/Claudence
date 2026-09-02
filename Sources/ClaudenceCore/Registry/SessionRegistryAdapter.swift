@@ -130,7 +130,11 @@ public struct SessionRegistryAdapter: SessionDiscovering {
     /// Every distinct raw `status` string this process has seen, in first-seen
     /// order. Spec section 6 says the real enumeration must be discovered by
     /// observation during M1; this is that instrument. Observed so far:
-    /// `busy`, `idle`.
+    /// `busy`, `idle`, `waiting`. `waiting` was added after a live capture on
+    /// Claude Code 2.1.258 caught the transition sequence
+    /// `busy -> waiting -> busy -> idle` on one session; the earlier note here
+    /// listed only `busy` and `idle` because nothing had polled the file often
+    /// enough to see the middle state.
     public static var observedStatusValues: Set<String> { shared.observedStatuses }
 
     /// Same values in the order they were first seen. Handy for a debug pane.
@@ -141,8 +145,14 @@ public struct SessionRegistryAdapter: SessionDiscovering {
 
     /// Maps the registry's raw status string onto the derivable states.
     ///
-    /// Only `running`, `idle` and `completed` have a proven source today, so
-    /// nothing else can be produced here (`SessionStatus.isDerivable`).
+    /// `running`, `idle`, `completed` and `waiting` have a proven source, so
+    /// nothing outside those can be produced here (`SessionStatus.isDerivable`).
+    /// `waiting` joined the list on the 2.1.258 capture described above; before
+    /// that this comment said only three states were reachable, and the missing
+    /// mapping sent every waiting session through the recency fallback below,
+    /// where anything older than `idleThreshold` was displayed as Idle. A
+    /// session waiting on the user is not idle, and that is the whole reason
+    /// the state exists.
     /// `completed` is normally expressed by the file's absence rather than by a
     /// status string, but the terminal spellings are mapped defensively.
     ///
@@ -173,8 +183,19 @@ public struct SessionRegistryAdapter: SessionDiscovering {
             // already handled upstream by the liveness filter, which drops the
             // record entirely once the process is gone.
             return .running
-        case "idle", "ready", "waiting_for_input":
+        case "idle", "ready":
             return .idle
+        case "waiting", "waiting_for_input":
+            // Also deliberately NOT age-gated, for the same reason `busy` is
+            // not: `updatedAt` moves on a transition, so a session that has sat
+            // waiting on the user for ten minutes carries a ten-minute-old
+            // timestamp. Only `waiting` is observed (2.1.258).
+            // `waiting_for_input` has never been seen and is kept purely as a
+            // defensive spelling; it used to sit in the `idle` list above,
+            // which was the same defect under a different name, since a string
+            // that says it is waiting for input is not describing an idle
+            // session.
+            return .waiting
         case "completed", "complete", "done", "finished", "exited", "closed":
             return .completed
         case nil, "":

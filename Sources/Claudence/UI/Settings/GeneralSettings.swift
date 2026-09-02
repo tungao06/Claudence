@@ -1,6 +1,11 @@
 import SwiftUI
+import ClaudenceCore
 
-/// The three controls that change what the application does.
+/// When Claudence starts, and how much of a session it lists.
+///
+/// Two sections rather than one: startup is a macOS fact Claudence only reports,
+/// while the session controls are ordinary stored preferences. Mixing them would
+/// suggest the login item behaves like the switches under it, and it does not.
 ///
 /// Every control carries an accessibility label and a hint holding the same
 /// sentence printed underneath it, so a VoiceOver user hears the explanation a
@@ -10,12 +15,30 @@ struct GeneralSettings: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        SettingsSection(title: "General") {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+        VStack(alignment: .leading, spacing: Theme.Layout.settingsSectionGap) {
+            SettingsSection(title: "Startup") {
                 launchAtLoginRow
-                menuBarReadingRow
-                menuBarStyleRow
-                notificationsRow
+            }
+            SettingsSection(title: "Sessions") {
+                VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    SettingsToggle(
+                        title: "Show subagents",
+                        explanation: Self.subagentsExplanation,
+                        isOn: $preferences.showSubagents
+                    )
+                    SettingsToggle(
+                        title: "Compact rows",
+                        explanation: Self.compactExplanation,
+                        isOn: $preferences.compactRows
+                    )
+                    SettingsPicker(
+                        title: "Usage refresh",
+                        options: UsageRefreshInterval.allCases,
+                        optionTitle: \.title,
+                        explanation: Self.refreshExplanation,
+                        selection: $preferences.usageRefreshInterval
+                    )
+                }
             }
         }
         // The login item can be switched off in System Settings while this
@@ -28,12 +51,12 @@ struct GeneralSettings: View {
     private var launchAtLoginRow: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             Toggle(isOn: $preferences.launchAtLogin) {
-                Text("Start Claudence at login")
+                Text("Launch at login")
                     .font(Theme.Typography.body)
                     .foregroundStyle(Theme.textPrimary)
             }
             .toggleStyle(.switch)
-            .accessibilityLabel("Start Claudence at login")
+            .accessibilityLabel("Launch at login")
             .accessibilityHint(Self.launchExplanation)
             // The toggle reads `launchAtLoginState`, which is re-read from
             // macOS after every attempt. A refused registration therefore
@@ -102,78 +125,6 @@ struct GeneralSettings: View {
         }
     }
 
-    // MARK: Menu bar
-
-    private var menuBarReadingRow: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Toggle(isOn: $preferences.showMenuBarUsage) {
-                Text("Show a live reading in the menu bar")
-                    .font(Theme.Typography.body)
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .toggleStyle(.switch)
-            .accessibilityLabel("Show a live reading in the menu bar")
-            .accessibilityHint(Self.readingExplanation)
-
-            SettingsExplanation(text: Self.readingExplanation)
-        }
-    }
-
-    private var menuBarStyleRow: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Picker(selection: $preferences.menuBarStyle) {
-                ForEach(MenuBarStyle.allCases) { style in
-                    Text(style.title).tag(style)
-                }
-            } label: {
-                Text("Menu bar reading")
-                    .font(Theme.Typography.body)
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .disabled(!preferences.showMenuBarUsage)
-            .accessibilityLabel("Menu bar reading")
-            .accessibilityHint(preferences.menuBarStyle.explanation)
-            .accessibilityValue(preferences.menuBarStyle.title)
-
-            SettingsExplanation(text: styleExplanation, indented: false)
-        }
-        .animation(
-            Theme.animation(Theme.Motion.disclosure, reduceMotion: reduceMotion),
-            value: preferences.menuBarStyle
-        )
-        .animation(
-            Theme.animation(Theme.Motion.disclosure, reduceMotion: reduceMotion),
-            value: preferences.showMenuBarUsage
-        )
-    }
-
-    /// A disabled picker says why it is disabled. Otherwise it explains the
-    /// selected option, so the line is never inert.
-    private var styleExplanation: String {
-        preferences.showMenuBarUsage
-            ? preferences.menuBarStyle.explanation
-            : "Turn the live reading on to choose what it shows."
-    }
-
-    // MARK: Notifications
-
-    private var notificationsRow: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Toggle(isOn: $preferences.notificationsEnabled) {
-                Text("Notify me about sessions and limits")
-                    .font(Theme.Typography.body)
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .toggleStyle(.switch)
-            .accessibilityLabel("Notify me about sessions and limits")
-            .accessibilityHint(Self.notificationsExplanation)
-
-            SettingsExplanation(text: Self.notificationsExplanation)
-        }
-    }
-
     // MARK: Copy
 
     private static let launchExplanation = """
@@ -181,13 +132,17 @@ struct GeneralSettings: View {
     reports, not what this switch was set to.
     """
 
-    private static let readingExplanation = """
-    Off keeps the menu bar to a plain icon, so nothing about your usage is \
-    legible over your shoulder.
-    """
+    /// Design section 7, verbatim. Accurate: a subagent's tokens are billed to
+    /// its parent, which is what "share of the parent" means here.
+    private static let subagentsExplanation =
+        "List agents spawned under each session, with their share of the parent."
 
-    private static let notificationsExplanation = """
-    A notification when a session finishes and when a usage window is nearly \
-    spent. macOS asks for permission separately, the first time one is sent.
-    """
+    /// Design section 7, verbatim.
+    private static let compactExplanation =
+        "Hide duration, rate and sparkline until a row is opened."
+
+    /// Design section 7, verbatim, and the sentence that keeps this control
+    /// honest: it paces one network call and touches nothing else.
+    private static let refreshExplanation =
+        "Sessions and tokens update on file change; this only paces the usage-limit call."
 }

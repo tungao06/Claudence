@@ -133,6 +133,11 @@ struct DashboardData: Sendable, Equatable {
     let burnRates: [String: BurnSample]
 
     let series: [ChartPoint]
+    /// Output tokens per series id, so the chart can draw the input and output
+    /// bands separately. Held beside the series rather than inside `ChartPoint`
+    /// because a point with no split is honest and a point with a defaulted
+    /// zero would claim the day produced no output.
+    let seriesOutput: [String: Double]
     /// Why the series is empty, when a reason is actually known.
     let seriesUnavailableReason: String?
 
@@ -155,6 +160,7 @@ struct DashboardData: Sendable, Equatable {
         tokenScaleMaximum: Int? = nil,
         burnRates: [String: BurnSample] = [:],
         series: [ChartPoint] = [],
+        seriesOutput: [String: Double] = [:],
         seriesUnavailableReason: String? = nil,
         projects: [ProjectRow] = [],
         history: [HistoryRow] = [],
@@ -168,6 +174,7 @@ struct DashboardData: Sendable, Equatable {
         self.tokenScaleMaximum = tokenScaleMaximum
         self.burnRates = burnRates
         self.series = series
+        self.seriesOutput = seriesOutput
         self.seriesUnavailableReason = seriesUnavailableReason
         self.projects = projects
         self.history = history

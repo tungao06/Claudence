@@ -50,7 +50,9 @@ date +%s; ps -o time= -p $PID     # baseline, warm
 date +%s; ps -o time= -p $PID     # idle % = delta cpu / delta wall
 ```
 
-0.500% still sits exactly on the budget line rather than under it, so U8 re-measures over a longer window before the budget is called met.
+0.500% still sits exactly on the budget line rather than under it, so U8 re-measured over a longer window before the budget was called met.
+
+**U8's result, and a third way to get this measurement wrong.** The final figure is 0.273% over 600 s, RSS 13.6 MB with a 36 MB peak. An intermediate reading of 1.04% was reported and then withdrawn: it was taken while five agents were writing transcripts and several builds were running, so FSEvents were firing continuously and the app was doing real work throughout. A `sample` of the same process showed the main thread parked in `mach_msg_trap`, and the engine's own counters showed 0.03% at 0.08 refreshes per second. Cold baselines and busy windows are two different ways to produce a number that is not idle CPU; the procedure above guards the first, and only judgement guards the second.
 
 ---
 
@@ -129,12 +131,21 @@ Correctness first, then the data the interface needs, then the interface.
 | **U0** `DONE` | Idle CPU back under budget: 0.491% over 171 s warm. The cost was `PresentationReader`, left in place as documentation after the animation it gated was removed. It observed key and occlusion notifications and pushed a state change through the view tree for a flag nothing read. Deleted. | Every later measurement is meaningless until this is clean |
 | **U1** `DONE` | `SubagentLocator` + `SubagentTracker`, rolled into `AISession.combinedUsage`. Verified live: 10 subagents, 77.43M tokens, 41% of the session's true total. | The numbers on screen were 41% low until this landed |
 | **U2** `DONE` | Tool mix, files touched, activity timeline, records parsed, service tier. Verified live: `Bash 180  Agent 10  Write 7  DesignSync 3  Edit 3`. Privacy tests still pass unchanged. | Everything in the detail view depends on these |
-| **U3** | Derived metrics: cache-served, per-hour, window share, day-over-day, input/output split | Cheap once U2 exists |
-| **U4** | Theme change to the design's palette and type scale | Single file; do it before building views on the old tokens |
-| **U5** | Session detail overlay, subagent drill-down, facts panel, tooltips | The bulk of the interface work |
-| **U6** | Settings additions | Independent of U5 |
-| **U7** | Quick actions, Stop Session behind confirmation | Small, and the destructive one needs care |
-| **U8** | Re-measure idle CPU and memory against budget; update `Claudence_CLAUDE.md` section 2 with the subagents source | Nothing is done until the budget is met again |
+| **U3** `DONE` | Derived metrics: cache-served, per-hour, day-over-day, input/output split. Two shipped differently from the plan and both are recorded below: the window share, and the context window. | Cheap once U2 exists |
+| **U4** `DONE` | Theme on the design's palette and type scale. Dark mode and the Attention/Warning/Critical ramp had to be invented, because the design contains neither. `Theme.swift` is still the only file in the target with a colour value. | Single file; do it before building views on the old tokens |
+| **U5** `DONE` | Session detail overlay, subagent drill-down, facts panel, activity timeline, 36 verbatim tooltips, compact rows. | The bulk of the interface work |
+| **U6** `DONE` | Appearance, menu bar style, usage refresh interval, show subagents, compact rows, live indicators, per-event notification switches. | Independent of U5 |
+| **U7** `DONE` | Open Terminal, Open Project, Copy Path, and Stop Session behind a confirmation naming project and pid. `SIGTERM` only, and liveness re-checked uncached against `procStart` before the signal. | Small, and the destructive one needs care |
+| **U8** `DONE` | Idle CPU 0.273% over a 600 s warm window, RSS 13.6 MB with a 36 MB peak, against budgets of 0.5% and 60 MB. Spec section 2 now carries the subagents source as 2.5. | Nothing is done until the budget is met again |
+
+### U1b, which was not in the plan
+
+Two defects found while integrating U1, both of which made shipped numbers wrong:
+
+- **`SubagentTracker` was injected into `MonitorEngine` and never called.** `subagentsBySession` was declared, `subagents(forSession:)` read it, and nothing wrote it. The subagent work reached `--diagnose`, which does its own read, and never reached the application. Every total in the interface was low by the subagent share, which is 41 to 47% on this repository.
+- **Read cursors were durable and the totals they correspond to were not.** `MonitorEngine.accumulated` and `SubagentTracker.accumulated` were both in-memory only, seeded empty on launch, while `read_cursors` resumed from SQLite. A session resumed after a relaunch counted only what was appended since, `upsert` wrote that collapsed figure to the session row, and `applyRollup` rewrote the day's rollup downward to match.
+
+Schema version 2 followed: a `subagent_totals` table, and `subagent_*` columns on `sessions` so the daily rollups stop under-reporting by the subagent share. The rollup arithmetic moved to `combinedUsage` on both sides of its subtract-then-add pair.
 
 ---
 
@@ -151,7 +162,28 @@ Correctness first, then the data the interface needs, then the interface.
 Nothing in this plan overrides these.
 
 - Never fabricate a number. A metric that cannot be derived renders unavailable.
-- Never ship UI for a state with no data source. `WAITING`, `PERMISSION` and `ERROR` remain unshipped.
-- The privacy allowlist covers subagent transcripts identically: tool names and file paths only, never command text, prompt text, or results.
+- Never ship UI for a state with no data source. `PERMISSION` and `ERROR` remain unshipped. `WAITING` no longer does: Claude Code was observed writing the status string itself on 2.1.258 (`busy -> waiting -> busy -> idle`, two-second polling), so it is mapped directly and renders as "Needs you". Before that it fell through the recency fallback and a waiting session was displayed as Idle after sixty seconds.
+- The privacy allowlist covers subagent transcripts identically: tool names and file paths only, never command text, prompt text, or results. It was amended on 2026-09-02 to name the four `meta.json` fields the subagent locator decodes, which the code was already reading before the contract permitted them; the argument against keeping `description` is recorded alongside the argument for.
 - No repeating animation anywhere in a mounted-but-invisible view.
 - Idle CPU under 0.5%, memory under 60 MB, measured as a CPU delta over at least five minutes.
+
+---
+
+## What shipped differently from the plan, and why
+
+### Share of the 5-hour window is a share of what Claudence measured
+
+The plan asked for "share of the 5-hour window". That is not derivable. The usage API reports a percentage consumed and never a capacity, so a session's tokens cannot be divided by the window's size, and computing the size as `measuredTokens / percentUsed` would invent a denominator out of our own incomplete measurement.
+
+What ships is the sum of tokens across sessions active in the last five hours, and each session's share of that local sum. The API name and the doc comment both say so, so nobody can mistake it for a share of the billing window.
+
+### The context window needed a new field before it could be honest
+
+`message.usage` carries no context limit, which the plan already knew. It also turned out that nothing in the pipeline kept the numerator: a context window bounds one request's input, and `AISession.usage` is a running total whose `cache_read` alone reaches tens of millions on a long session. Dividing the cumulative figure by a limit yields percentages in the thousands.
+
+`TranscriptDelta.lastRequestUsage` and `AISession.lastRequestUsage` now carry the newest single record's usage block, kept beside the running sum. The meter is labelled Estimated, because the limit is our table's claim rather than something the transcript said, and a model absent from the table renders unavailable rather than borrowing a neighbour's limit.
+
+### Two things in the design are not reproduced
+
+- **Nine repeating animations**, listed in `Design/UI-CONTRACT.md` section 4.1. One of them, `arcHeadBreathe`, is bound to the menu bar label itself, which is mounted for the life of the process. This is the exact shape of the defect that measured 6.9% of a core against a 0.5% budget.
+- **The privacy paragraph**, which reads "One request ever leaves this app". Two do: the usage GET, and a conditional token refresh when the access token has expired. The settings pane discloses both.

@@ -103,6 +103,7 @@ public struct EventDeriver: Sendable {
         to next: MonitorSnapshot
     ) -> [NotificationEvent] {
         var result = usageEvents(in: next)
+        result.append(contentsOf: idleEvents(from: previous, to: next))
         result.append(contentsOf: completionEvents(from: previous, to: next))
         return result
     }
@@ -163,6 +164,66 @@ public struct EventDeriver: Sendable {
         if now >= stored { return true }
         if let reported, reported > stored { return true }
         return false
+    }
+
+    // MARK: - Session went idle
+
+    /// A session that was working now reports itself idle, and reported it
+    /// rather than merely aged into it.
+    ///
+    /// The rule, in full:
+    ///
+    /// 1. The session is present in both snapshots. A session first seen while
+    ///    already idle is history, not a transition, and the app has no
+    ///    business announcing history: the same reasoning that makes
+    ///    `NotificationBridge` treat its first snapshot as a baseline.
+    /// 2. Both statuses are derivable. A state no source can produce must not
+    ///    drive a notification, on either end of the arrow; see spec section 6.
+    /// 3. `lastActivityAt` strictly advanced. This is the load-bearing clause
+    ///    and the reason the event can exist at all.
+    ///
+    ///    `SessionRegistryAdapter.mapStatus` reaches `.idle` by two routes. One
+    ///    is a direct read of a `status` string the registry wrote, which is an
+    ///    observed transition: Claude Code 2.1.258 rewrites
+    ///    `~/.claude/sessions/<pid>.json` when a session stops working, FSEvents
+    ///    delivers it, and the write moves `updatedAt`, which is what
+    ///    `lastActivityAt` carries. The other is the recency fallback for an
+    ///    unknown or missing status, which flips
+    ///    to `.idle` once the record is older than `Constants.Watch.idleThreshold`
+    ///    with no file written at all, so `lastActivityAt` sits still.
+    ///
+    ///    An advanced `lastActivityAt` therefore means the registry said so,
+    ///    and an unchanged one means the clock did. The two can never be
+    ///    confused, because a record that was just rewritten is by definition
+    ///    recent and the recency branch returns `.running` for it. Without this
+    ///    clause the event would fire from the passage of time, on whatever
+    ///    snapshot some unrelated source happened to trigger next, which is a
+    ///    notification about nothing having happened.
+    /// 4. A fresh snapshot (`updatedAt` strictly advanced), for the same reason
+    ///    completions need one: a replayed value is not evidence.
+    ///
+    /// No memory is kept, unlike completions. Idle is not terminal, so
+    /// busy -> idle -> busy -> idle is two real transitions rather than one
+    /// repeated; suppressing a session that flaps is the throttle's job, and
+    /// its per-key cooling period already keys on `sessionIdle:<id>`.
+    private func idleEvents(
+        from previous: MonitorSnapshot,
+        to next: MonitorSnapshot
+    ) -> [NotificationEvent] {
+        guard next.updatedAt > previous.updatedAt else { return [] }
+
+        var before: [String: AISession] = [:]
+        for session in previous.sessions { before[session.id] = session }
+
+        var events: [NotificationEvent] = []
+        for session in next.sessions.sorted(by: { $0.id < $1.id }) {
+            guard session.status == .idle, session.status.isDerivable else { continue }
+            guard let earlier = before[session.id] else { continue }
+            guard earlier.status != .idle, earlier.status.isDerivable else { continue }
+            guard session.lastActivityAt > earlier.lastActivityAt else { continue }
+            events.append(.sessionIdle(session: session))
+        }
+        return events
     }
 
     // MARK: - Session completion
@@ -232,6 +293,12 @@ public struct EventDeriver: Sendable {
     /// Keeps the newest value of every eligible session. Non-derivable states
     /// are never recorded, which is what makes them structurally unable to
     /// produce an event rather than merely filtered at the end.
+    ///
+    /// `status` is read here only to decide eligibility for a completion. The
+    /// transition into `.idle` is a separate question with a separate rule,
+    /// deliberately not folded in here: see `idleEvents`, which needs the two
+    /// snapshots side by side and cannot work from this map, since it holds one
+    /// value per session rather than a before and an after.
     private mutating func record(_ sessions: [AISession]) {
         for session in sessions where session.status.isDerivable {
             known[session.id] = session

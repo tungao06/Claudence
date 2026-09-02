@@ -212,6 +212,44 @@ struct StatusMappingTests {
         )
     }
 
+    @Test("waiting maps to waiting, not through the recency fallback")
+    func waitingStatus() {
+        #expect(
+            SessionRegistryAdapter.mapStatus("waiting", lastActivityAt: recent, now: Self.now)
+                == .waiting
+        )
+        #expect(
+            SessionRegistryAdapter.mapStatus(
+                "waiting_for_input", lastActivityAt: recent, now: Self.now
+            ) == .waiting
+        )
+    }
+
+    @Test("waiting stays waiting even when updatedAt has gone stale")
+    func waitingStale() {
+        // The regression. `waiting` was unmapped, so it fell through to the
+        // recency fallback and a session that had been blocked on the user for
+        // longer than the idle threshold was displayed as Idle. Captured on
+        // Claude Code 2.1.258: one session went busy -> waiting -> busy -> idle,
+        // and `updatedAt` only moves on the transition, so a real waiting
+        // session is stale by construction.
+        #expect(
+            SessionRegistryAdapter.mapStatus("waiting", lastActivityAt: stale, now: Self.now)
+                == .waiting
+        )
+        #expect(
+            SessionRegistryAdapter.mapStatus("waiting", lastActivityAt: stale, now: Self.now)
+                != .idle
+        )
+    }
+
+    @Test("waiting is derivable, permission and error are not")
+    func waitingIsDerivable() {
+        #expect(SessionStatus.waiting.isDerivable)
+        #expect(!SessionStatus.permission.isDerivable)
+        #expect(!SessionStatus.error.isDerivable)
+    }
+
     @Test("Terminal spellings map to completed")
     func completedStatus() {
         for raw in ["completed", "done", "exited", "closed", "finished"] {
@@ -266,7 +304,7 @@ struct StatusMappingTests {
 
     @Test("Every mapped state is derivable today")
     func onlyDerivableStates() {
-        for raw in ["busy", "idle", "completed", "who_knows", ""] {
+        for raw in ["busy", "idle", "completed", "waiting", "who_knows", ""] {
             let mapped = SessionRegistryAdapter.mapStatus(
                 raw, lastActivityAt: recent, now: Self.now
             )

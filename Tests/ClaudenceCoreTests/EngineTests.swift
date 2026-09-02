@@ -34,7 +34,7 @@ private final class FakeTranscripts: TranscriptReading, @unchecked Sendable {
 private struct FakeUsage: UsageProviding {
     let sourceName = "fake-usage"
     let state: UsageState
-    func fetch() async -> UsageState { state }
+    func fetch(minimumInterval: TimeInterval) async -> UsageState { state }
 }
 
 private func makeSession(
@@ -275,7 +275,10 @@ func derivableStates() {
     #expect(SessionStatus.running.isDerivable)
     #expect(SessionStatus.idle.isDerivable)
     #expect(SessionStatus.completed.isDerivable)
-    #expect(!SessionStatus.waiting.isDerivable)
+    // Waiting became derivable once Claude Code was observed writing the
+    // status string itself, rather than it being inferred from a clock. See
+    // SessionRegistryAdapter and spec section 6.
+    #expect(SessionStatus.waiting.isDerivable)
     #expect(!SessionStatus.permission.isDerivable)
     #expect(!SessionStatus.error.isDerivable)
 }

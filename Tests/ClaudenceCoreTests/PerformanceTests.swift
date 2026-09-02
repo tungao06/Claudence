@@ -24,7 +24,9 @@ private struct FixedUsage: UsageProviding {
     let sourceName = "fixed-usage"
     let windows: [UsageWindow]
     /// A fresh `fetchedAt` on every call, exactly like the real client.
-    func fetch() async -> UsageState { .available(windows: windows, fetchedAt: Date()) }
+    func fetch(minimumInterval: TimeInterval) async -> UsageState {
+        .available(windows: windows, fetchedAt: Date())
+    }
 }
 
 private final class PublishCounter: @unchecked Sendable {

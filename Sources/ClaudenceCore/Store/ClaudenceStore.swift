@@ -164,8 +164,10 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                     INSERT INTO sessions (
                         id, project_name, working_directory, provider, pid, proc_start,
                         started_at, last_activity_at, ended_at, model, claude_code_version,
-                        fresh_input, cache_creation, cache_read, output, thinking
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        fresh_input, cache_creation, cache_read, output, thinking,
+                        subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
+                        subagent_output, subagent_thinking, subagent_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         project_name = excluded.project_name,
                         working_directory = excluded.working_directory,
@@ -180,7 +182,13 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                         cache_creation = excluded.cache_creation,
                         cache_read = excluded.cache_read,
                         output = excluded.output,
-                        thinking = excluded.thinking
+                        thinking = excluded.thinking,
+                        subagent_fresh_input = excluded.subagent_fresh_input,
+                        subagent_cache_creation = excluded.subagent_cache_creation,
+                        subagent_cache_read = excluded.subagent_cache_read,
+                        subagent_output = excluded.subagent_output,
+                        subagent_thinking = excluded.subagent_thinking,
+                        subagent_count = excluded.subagent_count
                     """,
                     [
                         .text(session.id),
@@ -202,6 +210,12 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                         .integer(Int64(session.usage.cacheRead)),
                         .integer(Int64(session.usage.output)),
                         .integer(Int64(session.usage.thinking)),
+                        .integer(Int64(session.subagentUsage.freshInput)),
+                        .integer(Int64(session.subagentUsage.cacheCreation)),
+                        .integer(Int64(session.subagentUsage.cacheRead)),
+                        .integer(Int64(session.subagentUsage.output)),
+                        .integer(Int64(session.subagentUsage.thinking)),
+                        .integer(Int64(session.subagentCount)),
                     ]
                 )
 
@@ -216,10 +230,13 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                     )
                 }
 
+                // Combined, not parent-only. `rollupKeyAndUsage` subtracts the
+                // same definition, and the subtract-then-add pair is only self
+                // correcting while both sides agree.
                 try self.applyRollup(
                     day: self.dayString(for: session.startedAt),
                     project: session.projectName,
-                    usage: session.usage,
+                    usage: session.combinedUsage,
                     sign: 1,
                     sessionCountDelta: 1,
                     in: database
@@ -412,10 +429,15 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         perform("recompute rollups") { database in
             try database.withTransaction {
                 try database.execute("DELETE FROM daily_rollups")
+                // Combined, matching `upsert(session:)`. A repair that used the
+                // parent-only figure would quietly rewrite history down by
+                // every session's subagent spend.
                 let rows = try database.query(
                     """
                     SELECT project_name, started_at,
-                           fresh_input, cache_creation, cache_read, output, thinking
+                           fresh_input, cache_creation, cache_read, output, thinking,
+                           subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
+                           subagent_output, subagent_thinking
                       FROM sessions
                     """
                 ) { row in
@@ -428,6 +450,12 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                             cacheRead: row.int(4),
                             output: row.int(5),
                             thinking: row.int(6)
+                        ) + TokenUsage(
+                            freshInput: row.int(7),
+                            cacheCreation: row.int(8),
+                            cacheRead: row.int(9),
+                            output: row.int(10),
+                            thinking: row.int(11)
                         )
                     )
                 }
@@ -442,6 +470,106 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                     )
                 }
             }
+        }
+    }
+
+    // MARK: - Subagent totals
+
+    /// Every persisted subagent of a session, ordered by id so a read is
+    /// reproducible.
+    ///
+    /// This is the other half of `read_cursors`. The cursor says where the
+    /// subagent transcript was left off; without the total that offset stands
+    /// for, a relaunch resumes mid-file and counts only what arrives next.
+    public func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
+        perform("read subagent totals", default: []) { database in
+            try database.query(
+                """
+                SELECT parent_session_id, subagent_id, agent_type, task_description,
+                       spawn_depth, model, last_activity_at, records_parsed,
+                       fresh_input, cache_creation, cache_read, output, thinking
+                  FROM subagent_totals
+                 WHERE parent_session_id = ?
+                 ORDER BY subagent_id ASC
+                """,
+                [.text(sessionID)]
+            ) { row in
+                SubagentTotal(
+                    parentSessionID: row.string(0),
+                    subagentID: row.string(1),
+                    agentType: row.stringOptional(2),
+                    taskDescription: row.stringOptional(3),
+                    usage: TokenUsage(
+                        freshInput: row.int(8),
+                        cacheCreation: row.int(9),
+                        cacheRead: row.int(10),
+                        output: row.int(11),
+                        thinking: row.int(12)
+                    ),
+                    recordsParsed: row.int(7),
+                    lastActivityAt: row.doubleOptional(6).map { Date(timeIntervalSince1970: $0) },
+                    spawnDepth: row.int(4),
+                    model: row.stringOptional(5)
+                )
+            }
+        }
+    }
+
+    /// Writes a subagent's running total, replacing whatever was there.
+    ///
+    /// The value is absolute, not a delta: the tracker owns the accumulation
+    /// and this row is only its durable copy. `COALESCE` on the label columns
+    /// keeps a description already on disk when a later pass has none, because
+    /// a missing `meta.json` costs a subagent its labels, never its tokens.
+    public func upsertSubagentTotal(_ total: SubagentTotal) {
+        perform("upsert subagent total") { database in
+            try database.execute(
+                """
+                INSERT INTO subagent_totals (
+                    parent_session_id, subagent_id, agent_type, task_description,
+                    spawn_depth, model, last_activity_at, records_parsed,
+                    fresh_input, cache_creation, cache_read, output, thinking
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(parent_session_id, subagent_id) DO UPDATE SET
+                    agent_type = COALESCE(excluded.agent_type, subagent_totals.agent_type),
+                    task_description = COALESCE(excluded.task_description, subagent_totals.task_description),
+                    spawn_depth = excluded.spawn_depth,
+                    model = COALESCE(excluded.model, subagent_totals.model),
+                    last_activity_at = excluded.last_activity_at,
+                    records_parsed = excluded.records_parsed,
+                    fresh_input = excluded.fresh_input,
+                    cache_creation = excluded.cache_creation,
+                    cache_read = excluded.cache_read,
+                    output = excluded.output,
+                    thinking = excluded.thinking
+                """,
+                [
+                    .text(total.parentSessionID),
+                    .text(total.subagentID),
+                    SQLiteValue(total.agentType),
+                    SQLiteValue(total.taskDescription),
+                    .integer(Int64(total.spawnDepth)),
+                    SQLiteValue(total.model),
+                    SQLiteValue(total.lastActivityAt?.timeIntervalSince1970),
+                    .integer(Int64(total.recordsParsed)),
+                    .integer(Int64(total.usage.freshInput)),
+                    .integer(Int64(total.usage.cacheCreation)),
+                    .integer(Int64(total.usage.cacheRead)),
+                    .integer(Int64(total.usage.output)),
+                    .integer(Int64(total.usage.thinking)),
+                ]
+            )
+        }
+    }
+
+    /// Drops every subagent row belonging to a session, so an ended session
+    /// leaves nothing a recycled id could inherit.
+    public func deleteSubagentTotals(forSession sessionID: String) {
+        perform("delete subagent totals") { database in
+            try database.execute(
+                "DELETE FROM subagent_totals WHERE parent_session_id = ?",
+                [.text(sessionID)]
+            )
         }
     }
 
@@ -506,7 +634,9 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     private static let sessionColumns = """
         SELECT id, project_name, working_directory, provider, pid, proc_start,
                started_at, last_activity_at, ended_at, model, claude_code_version,
-               fresh_input, cache_creation, cache_read, output, thinking
+               fresh_input, cache_creation, cache_read, output, thinking,
+               subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
+               subagent_output, subagent_thinking, subagent_count
           FROM sessions
         """
 
@@ -539,6 +669,17 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                 output: row.int(14),
                 thinking: row.int(15)
             ),
+            // Read back separately, never pre-added: `combinedUsage` is the
+            // derived figure and a session loaded from disk has to agree with
+            // the one that was written.
+            subagentUsage: TokenUsage(
+                freshInput: row.int(16),
+                cacheCreation: row.int(17),
+                cacheRead: row.int(18),
+                output: row.int(19),
+                thinking: row.int(20)
+            ),
+            subagentCount: row.int(21),
             model: row.stringOptional(9),
             claudeCodeVersion: row.stringOptional(10)
         )
@@ -551,11 +692,19 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     }
 
     /// The bucket a session currently contributes to, read before it is changed.
+    ///
+    /// The usage returned is the combined figure, parent plus subagents,
+    /// because that is what `upsert(session:)` adds back. Reading the
+    /// parent-only figure here would subtract less than the next write adds,
+    /// and every upsert would inflate the bucket by the session's subagent
+    /// spend.
     private func rollupKeyAndUsage(for sessionID: String, in database: SQLiteDatabase) throws -> RollupKey? {
         try database.queryFirst(
             """
             SELECT project_name, started_at,
-                   fresh_input, cache_creation, cache_read, output, thinking
+                   fresh_input, cache_creation, cache_read, output, thinking,
+                   subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
+                   subagent_output, subagent_thinking
               FROM sessions
              WHERE id = ?
             """,
@@ -570,6 +719,12 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                     cacheRead: row.int(4),
                     output: row.int(5),
                     thinking: row.int(6)
+                ) + TokenUsage(
+                    freshInput: row.int(7),
+                    cacheCreation: row.int(8),
+                    cacheRead: row.int(9),
+                    output: row.int(10),
+                    thinking: row.int(11)
                 )
             )
         }

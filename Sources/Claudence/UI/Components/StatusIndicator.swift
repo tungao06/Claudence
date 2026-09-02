@@ -14,7 +14,16 @@ struct StatusIndicator: View {
     let glyphSize: CGFloat
     /// Changes when the session did something. Each change fires one dip.
     /// Nil means the caller has nothing to report, and the glyph never moves.
+    ///
+    /// Callers pass a coarse token, not a raw timestamp. A transcript event
+    /// arrives about four times a second while a session streams, and a token
+    /// that changed that often restarted the 0.55 s dip before it could finish,
+    /// so `isPulsing` never returned to false and the glyph sat permanently
+    /// dimmed. See `SessionRow.activityToken`.
     let activityToken: AnyHashable?
+    /// The user's `Live indicators` setting. Off means the glyph never moves,
+    /// whatever the session is doing.
+    let isLive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
@@ -23,18 +32,20 @@ struct StatusIndicator: View {
         _ status: SessionStatus,
         showsText: Bool = true,
         glyphSize: CGFloat = Theme.Bar.statusGlyph,
-        activityToken: AnyHashable? = nil
+        activityToken: AnyHashable? = nil,
+        isLive: Bool = true
     ) {
         self.status = status
         self.showsText = showsText
         self.glyphSize = glyphSize
         self.activityToken = activityToken
+        self.isLive = isLive
     }
 
     /// Only an active state pulses, and never under Reduce Motion. Motion here
     /// means "this just happened", nothing else.
     private var mayPulse: Bool {
-        status == .running && !reduceMotion && activityToken != nil
+        status == .running && isLive && !reduceMotion && activityToken != nil
     }
 
     var body: some View {

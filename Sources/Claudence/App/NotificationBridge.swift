@@ -39,17 +39,17 @@ final class NotificationBridge: @unchecked Sendable {
     private let lock = NSLock()
     private var deriver: EventDeriver
     private var lastSnapshot: MonitorSnapshot?
-    private var enabled: Bool
+    private var policy: NotificationFilter
     private var observerToken: UUID?
 
     init(
         deriver: EventDeriver = EventDeriver(),
         throttle: NotificationThrottle = NotificationThrottle(),
-        isEnabled: Bool = true
+        filter: NotificationFilter = .all
     ) {
         self.deriver = deriver
         self.throttle = throttle
-        self.enabled = isEnabled
+        self.policy = filter
         self.center = Self.makeCenter()
         let subsystem = Bundle.main.bundleIdentifier ?? "com.tungao.claudence"
         self.log = Logger(subsystem: subsystem, category: "notifications")
@@ -63,14 +63,35 @@ final class NotificationBridge: @unchecked Sendable {
         return UNUserNotificationCenter.current()
     }
 
-    // MARK: - Settings switch
+    // MARK: - Settings switches
 
     /// Owned by Settings. Turning it off stops delivery immediately but keeps
     /// the baseline snapshot moving, so turning it back on resumes from the
     /// present rather than replaying a backlog of everything that was missed.
+    ///
+    /// The master switch only. It is kept as its own property because it is the
+    /// coarse control the rest of the app already talks to, and because the
+    /// per-event switches below are meaningless while it is off.
     var isEnabled: Bool {
-        get { withLock { enabled } }
-        set { withLock { enabled = newValue } }
+        get { withLock { policy.isEnabled } }
+        set { withLock { policy.isEnabled = newValue } }
+    }
+
+    /// The whole notification policy, master switch and per-event switches
+    /// together, pushed down by the composition root.
+    ///
+    /// Same shape as `isEnabled`: plain state this type is told about, never
+    /// something it reaches out to `Preferences` for. `Preferences` is
+    /// `@MainActor` and lives in the app target, and `handle` runs on whatever
+    /// thread the engine published from, so a read from here would need a hop
+    /// in the middle of a decision that has to stay synchronous.
+    ///
+    /// Setting this replaces `isEnabled` as well, which is what the caller
+    /// wants: one assignment carries the user's whole intent rather than
+    /// leaving the two halves to be applied in some order.
+    var filter: NotificationFilter {
+        get { withLock { policy } }
+        set { withLock { policy = newValue } }
     }
 
     /// `NSLock.lock()` is unavailable from an async context, so every critical
@@ -114,18 +135,23 @@ final class NotificationBridge: @unchecked Sendable {
     /// Cheap and synchronous: the diff is a value computation and delivery is
     /// handed to a detached task.
     func handle(_ snapshot: MonitorSnapshot) {
-        let events = withLock { () -> [NotificationEvent] in
+        let (filter, derived) = withLock { () -> (NotificationFilter, [NotificationEvent]) in
             let previous = lastSnapshot
             lastSnapshot = snapshot
-            guard let previous else { return [] }
-            let derived = deriver.events(from: previous, to: snapshot)
-            // Disabled: the deriver still advances, so its dedup memory and
-            // armed flags stay in step with reality; the result is discarded.
-            return enabled ? derived : []
+            guard let previous else { return (policy, []) }
+            // Derived unconditionally, whatever the switches say, so the
+            // deriver's dedup memory and armed flags stay in step with reality
+            // and a switch turned back on resumes from the present rather than
+            // replaying a backlog. Only the delivery is optional.
+            return (policy, deriver.events(from: previous, to: snapshot))
         }
 
-        guard !events.isEmpty else { return }
-        let admitted = throttle.admit(events)
+        guard !derived.isEmpty else { return }
+        // One call rather than a filter and then a throttle, because the order
+        // matters and `NotificationFilter.admissible` is where it is stated: an
+        // event the user switched off must not spend a slot of the throttle's
+        // shared budget on its way to being discarded.
+        let admitted = filter.admissible(derived, through: throttle)
         guard !admitted.isEmpty else { return }
 
         Task { [weak self] in
@@ -180,6 +206,14 @@ final class NotificationBridge: @unchecked Sendable {
             // a monitoring tool uninstalled.
             content.sound = nil
             content.interruptionLevel = .passive
+        case .sessionIdle:
+            // Louder than a completion, quieter than the budget running out.
+            // A session going idle means the user is now the thing holding the
+            // work up, so a banner that never surfaces would defeat the point;
+            // it is still not urgent enough to make a noise, and the switch for
+            // it is off by default.
+            content.sound = nil
+            content.interruptionLevel = .active
         }
         return content
     }

@@ -354,6 +354,7 @@ struct DashboardView: View {
             sectionHeader("Usage over time")
             UsageChart(
                 points: data.series,
+                outputTokens: data.seriesOutput,
                 title: "Usage over time",
                 unavailableMessage: "No usage history",
                 unavailableReason: data.seriesUnavailableReason

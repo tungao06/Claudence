@@ -131,9 +131,18 @@ struct TokenBar: View {
             }
         }
         .frame(height: height)
+        // Animated on a quantised fraction, not the raw one.
+        //
+        // The raw fraction moves on every transcript event, which arrives about
+        // four times a second while a session is streaming. A 0.35 s animation
+        // restarted every 0.25 s never finishes, so it interpolates
+        // continuously, and this bar lives inside a popover that stays mounted
+        // after dismissal. Quantising to whole percent means a redraw only
+        // happens when the bar would visibly move, which is the only time an
+        // animation was ever worth running.
         .animation(
             Theme.animation(Theme.Motion.valueChange, reduceMotion: reduceMotion),
-            value: fraction
+            value: (fraction * 100).rounded()
         )
         .accessibilityHidden(true)
     }

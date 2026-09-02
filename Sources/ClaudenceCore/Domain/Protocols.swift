@@ -27,7 +27,17 @@ public protocol TranscriptReading: SourceAdapter {
 
 /// Provides account usage windows.
 public protocol UsageProviding: SourceAdapter, Sendable {
-    func fetch() async -> UsageState
+    /// - Parameter minimumInterval: how old a cached reading may be before the
+    ///   network is asked again. An implementation that does not cache ignores
+    ///   it. The engine passes the user's chosen refresh interval, so a shorter
+    ///   choice is not swallowed by a provider's own fixed cache.
+    func fetch(minimumInterval: TimeInterval) async -> UsageState
+}
+
+extension UsageProviding {
+    public func fetch() async -> UsageState {
+        await fetch(minimumInterval: Constants.Usage.cacheTTL)
+    }
 }
 
 // MARK: - Transcript delta
@@ -52,6 +62,15 @@ public struct TranscriptDelta: Sendable, Equatable {
     public var activityTrail: [TimedActivity]
     /// `usage.service_tier` from the most recent record carrying one.
     public var serviceTier: String?
+    /// The single most recent record's own `message.usage`, not the running sum.
+    ///
+    /// This is the only figure a context window can honestly be measured
+    /// against. A context window sizes one request's input; the cumulative
+    /// total counts every request the session ever made, and its `cache_read`
+    /// alone runs to tens of millions on a long session, so dividing it by a
+    /// limit yields percentages in the thousands. Keeping the newest block
+    /// separately is what makes the difference between a meter and a fiction.
+    public var lastRequestUsage: TokenUsage?
 
     public init(
         usage: TokenUsage = .zero,
@@ -63,7 +82,8 @@ public struct TranscriptDelta: Sendable, Equatable {
         toolCounts: [String: Int] = [:],
         filePaths: [String] = [],
         activityTrail: [TimedActivity] = [],
-        serviceTier: String? = nil
+        serviceTier: String? = nil,
+        lastRequestUsage: TokenUsage? = nil
     ) {
         self.usage = usage
         self.latestActivity = latestActivity
@@ -75,6 +95,7 @@ public struct TranscriptDelta: Sendable, Equatable {
         self.filePaths = filePaths
         self.activityTrail = activityTrail
         self.serviceTier = serviceTier
+        self.lastRequestUsage = lastRequestUsage
     }
 
     public static let empty = TranscriptDelta()

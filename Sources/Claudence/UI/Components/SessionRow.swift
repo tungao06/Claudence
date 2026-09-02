@@ -5,9 +5,22 @@ import ClaudenceCore
 ///
 /// Priority order, top to bottom, fixed by spec section 7.2:
 /// status, project, working directory, activity, token energy, then duration
-/// and burn rate on one quiet trailing line. Everything below the activity line
-/// is progressively disclosed, so at rest the row answers "what is it doing and
-/// how much energy has it used" and nothing more.
+/// and burn rate on one quiet trailing line.
+///
+/// The row has two behaviours, chosen by whether a caller passes `onOpen`.
+/// With one, the row is a door: the whole header opens the detail overlay,
+/// which is where the breakdown, the subagent split and the facts now live.
+/// Without one it keeps its original in-place disclosure, which is what the
+/// previews and the dashboard grid still use.
+///
+/// `isCompact` is the design's `Compact rows` setting. It hides the trailing
+/// line only, which is what that setting's own explanation promises: duration,
+/// rate and sparkline. The energy bar stays, because a session list with no
+/// energy in it is no longer the thing this product is.
+///
+/// The bar measures `combinedUsage`, not `usage`. A session's subagents have no
+/// process of their own and their tokens are billed to the parent, so the parent
+/// transcript alone under-reports: measured on this repository, by 41%.
 struct SessionRow: View {
     let session: AISession
     /// Value that fills the token bar. Nil draws no bar rather than a ratio we
@@ -17,6 +30,15 @@ struct SessionRow: View {
     let burnRatePerMinute: Double?
     /// Recent burn samples for the sparkline. Fewer than two draws nothing.
     let burnHistory: [Double]
+    /// Hides duration, rate and sparkline. Taken as a parameter rather than
+    /// read from `Preferences` so the flag has one owner and a preview can
+    /// drive it.
+    let isCompact: Bool
+    /// Opens the detail overlay. Nil keeps the row's original in-place
+    /// disclosure instead.
+    let onOpen: (() -> Void)?
+    /// The user's `Live indicators` setting. Off stills the status glyph.
+    let isLive: Bool
 
     @State private var isExpanded: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -26,13 +48,38 @@ struct SessionRow: View {
         tokenScaleMaximum: Int? = nil,
         burnRatePerMinute: Double? = nil,
         burnHistory: [Double] = [],
-        startsExpanded: Bool = false
+        startsExpanded: Bool = false,
+        isCompact: Bool = false,
+        isLive: Bool = true,
+        onOpen: (() -> Void)? = nil
     ) {
         self.session = session
         self.tokenScaleMaximum = tokenScaleMaximum
         self.burnRatePerMinute = burnRatePerMinute
         self.burnHistory = burnHistory
+        self.isCompact = isCompact
+        self.isLive = isLive
+        self.onOpen = onOpen
         _isExpanded = State(initialValue: startsExpanded)
+    }
+
+    /// A three-second bucket of the last activity, not the timestamp itself.
+    ///
+    /// The pulse means "something just happened", and it is a 0.55 s dip. Fed
+    /// the raw `lastActivityAt`, it retriggered on every transcript event,
+    /// which is about four a second while a session streams: the dip never
+    /// completed and the glyph stayed dim, which says the opposite of what the
+    /// motion is for. Bucketing gives at most one dip per bucket and leaves the
+    /// glyph at rest in between.
+    private var activityToken: AnyHashable {
+        Int(session.lastActivityAt.timeIntervalSince1970 / 3)
+    }
+
+    /// A row that opens a detail view has nothing left to disclose in place, so
+    /// its trailing line is governed by the compact setting alone.
+    private var showsTrailingLine: Bool {
+        guard !isCompact else { return false }
+        return onOpen == nil ? isExpanded : true
     }
 
     var body: some View {
@@ -41,12 +88,13 @@ struct SessionRow: View {
             path
             activity
             TokenBar(
-                usage: session.usage,
+                usage: session.combinedUsage,
                 scaleMaximum: tokenScaleMaximum,
-                expansion: $isExpanded
+                isExpandable: onOpen == nil,
+                expansion: onOpen == nil ? $isExpanded : nil
             )
             .padding(.top, Theme.Space.xxs)
-            if isExpanded {
+            if showsTrailingLine {
                 trailingLine
                     .transition(.opacity)
             }
@@ -64,10 +112,15 @@ struct SessionRow: View {
 
     private var header: some View {
         Button {
-            isExpanded.toggle()
+            if let onOpen { onOpen() } else { isExpanded.toggle() }
         } label: {
             HStack(spacing: Theme.Space.s) {
-                StatusIndicator(session.status, showsText: false, activityToken: session.lastActivityAt)
+                StatusIndicator(
+                    session.status,
+                    showsText: false,
+                    activityToken: activityToken,
+                    isLive: isLive
+                )
                 Text(session.projectName)
                     .font(Theme.Typography.title)
                     .foregroundStyle(Theme.textPrimary)
@@ -87,22 +140,29 @@ struct SessionRow: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: Theme.Bar.statusGlyph, weight: .semibold))
                     .foregroundStyle(Theme.textTertiary)
-                    .rotationEffect(.degrees(isExpanded ? Theme.Motion.disclosureRotation : 0))
+                    .rotationEffect(
+                        .degrees(onOpen == nil && isExpanded ? Theme.Motion.disclosureRotation : 0)
+                    )
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(headerLabel)
-        .accessibilityHint(isExpanded ? "Collapse session details" : "Expand session details")
+        .accessibilityHint(headerHint)
         .accessibilityAddTraits(.isButton)
+    }
+
+    private var headerHint: String {
+        guard onOpen == nil else { return "Opens the full detail for this session" }
+        return isExpanded ? "Collapse session details" : "Expand session details"
     }
 
     private var headerLabel: String {
         let state = session.status.isDerivable
             ? Theme.name(for: session.status)
             : "state unsupported"
-        return "\(session.projectName), \(state), \(Format.tokens(session.usage.total)) tokens"
+        return "\(session.projectName), \(state), \(Format.tokens(session.combinedUsage.total)) tokens"
     }
 
     // MARK: - Path

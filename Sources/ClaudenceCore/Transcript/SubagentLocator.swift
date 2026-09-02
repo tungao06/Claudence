@@ -97,14 +97,24 @@ public struct SubagentLocator: Sendable {
         return nil
     }
 
-    /// Every subagent belonging to a session, newest transcript first.
-    public func subagents(forSession sessionID: String, workingDirectory: String) -> [SubagentDescriptor] {
-        guard let directory = directory(forSession: sessionID, workingDirectory: workingDirectory),
-              let entries = try? fileManager.contentsOfDirectory(
-                  at: directory,
-                  includingPropertiesForKeys: [.contentModificationDateKey]
-              )
-        else { return [] }
+    /// Every subagent belonging to a session, or nil when the directory could
+    /// not be listed at all.
+    ///
+    /// The distinction is load bearing. A caller that treats an empty result as
+    /// "every subagent is gone" will delete their persisted totals, and a
+    /// transient failure to read the directory would then look identical to a
+    /// session whose subagents really did disappear. An absent directory is
+    /// still an ordinary empty result, because a session with no subagents has
+    /// no such directory; only a directory that exists and cannot be read is
+    /// reported as unknown.
+    public func listSubagents(forSession sessionID: String, workingDirectory: String) -> [SubagentDescriptor]? {
+        guard let directory = directory(forSession: sessionID, workingDirectory: workingDirectory) else {
+            return []
+        }
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return nil }
 
         let transcripts = entries.filter { $0.pathExtension == "jsonl" }
 
@@ -123,6 +133,11 @@ public struct SubagentLocator: Sendable {
                 )
             }
             .sorted { $0.id < $1.id }
+    }
+
+    /// Convenience for callers that do not distinguish the two failures.
+    public func subagents(forSession sessionID: String, workingDirectory: String) -> [SubagentDescriptor] {
+        listSubagents(forSession: sessionID, workingDirectory: workingDirectory) ?? []
     }
 
     // MARK: - Internals

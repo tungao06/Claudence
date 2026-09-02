@@ -5,8 +5,10 @@ import Observation
 
 /// What the menu bar shows next to its status dot.
 ///
-/// The menu bar is shared, narrow real estate (`Theme.Layout.menuBarMaxWidth`),
-/// so the choice is between three short readings, not a layout editor.
+/// The menu bar is shared, narrow real estate (`Theme.Layout.menuBarMaxWidth`,
+/// 60 pt), so the choice is between four short readings, not a layout editor.
+/// `MenuBarLabel` owns the measurement that decides whether a reading fits; this
+/// enum only names the choices.
 enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
     /// The status dot alone.
     case minimal
@@ -14,15 +16,24 @@ enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
     case usage
     /// The dot plus the number of active sessions.
     case sessions
+    /// The dot plus both: the session count and the percentage together.
+    ///
+    /// This is the widest reading and the only one that can run out of room. It
+    /// is offered because the count is the thing Claude Code's own status line
+    /// cannot show, and a user watching several projects wants it beside the
+    /// number that decides when they stop.
+    case combined
 
     var id: String { rawValue }
 
-    /// Picker label.
+    /// Picker label. Design section 7 names three of these; `sessions` is the
+    /// count-only reading the design does not draw but the app has always had.
     var title: String {
         switch self {
-        case .minimal: return "Dot only"
-        case .usage: return "Usage"
-        case .sessions: return "Sessions"
+        case .minimal: return "Icon"
+        case .usage: return "Icon + %"
+        case .sessions: return "Count"
+        case .combined: return "Count \u{00B7} %"
         }
     }
 
@@ -30,9 +41,82 @@ enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
     /// whatever the data says, and this file does not invent one.
     var explanation: String {
         switch self {
-        case .minimal: return "The status dot on its own, and nothing else."
-        case .usage: return "The status dot and the percentage of your usage window consumed."
-        case .sessions: return "The status dot and the number of sessions running now."
+        case .minimal:
+            return "The status dot on its own, and nothing else."
+        case .usage:
+            return "The status dot and the percentage of your usage window consumed."
+        case .sessions:
+            return "The status dot and the number of sessions running now."
+        case .combined:
+            return """
+            The status dot, the session count and the percentage together. \
+            The widest readings shrink a little so the label never exceeds 60 pt.
+            """
+        }
+    }
+}
+
+// MARK: - Appearance
+
+/// Which palette the windows use.
+///
+/// This type stores the choice and nothing else. Applying it belongs to whoever
+/// owns the windows, because a settings view that reached for `NSApp.appearance`
+/// would be a leaf of the tree reconfiguring the whole application.
+enum AppearanceMode: String, CaseIterable, Identifiable, Sendable {
+    /// Follow the system setting, and keep following it when it changes.
+    case auto
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .auto: return "Auto"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .auto: return "Follow the system setting, including when it switches at sunset."
+        case .light: return "Always the light palette, whatever the system is set to."
+        case .dark: return "Always the dark palette, whatever the system is set to."
+        }
+    }
+}
+
+// MARK: - Usage refresh interval
+
+/// How often the usage endpoint is asked how much of the limit is left.
+///
+/// This paces one network call and nothing else. See the note on `Preferences`
+/// for why an interval control exists here at all when the rest of the
+/// application is event driven.
+enum UsageRefreshInterval: String, CaseIterable, Identifiable, Sendable {
+    case thirtySeconds
+    case oneMinute
+    case fiveMinutes
+
+    var id: String { rawValue }
+
+    /// The value the polling loop sleeps for.
+    var seconds: TimeInterval {
+        switch self {
+        case .thirtySeconds: return 30
+        case .oneMinute: return 60
+        case .fiveMinutes: return 300
+        }
+    }
+
+    /// Design section 7 spells these `30s`, `60s`, `5m`.
+    var title: String {
+        switch self {
+        case .thirtySeconds: return "30s"
+        case .oneMinute: return "60s"
+        case .fiveMinutes: return "5m"
         }
     }
 }
@@ -41,9 +125,26 @@ enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
 
 /// Every user-facing setting, backed by `UserDefaults`.
 ///
-/// Deliberately small. There is no refresh-interval setting: the application is
-/// driven by filesystem events and never polls, so an interval control would be
-/// a dial wired to nothing.
+/// ## Why there is a refresh interval, and what it does not touch
+///
+/// This file used to say there was deliberately no refresh-interval setting,
+/// because the application is event driven and never polls. Half of that is
+/// still true and worth keeping: session discovery and token counts are driven
+/// by FSEvents and offset-based tailing, so an idle machine does no work, and
+/// `usageRefreshInterval` does not touch either of them. Turning it to `5m` will
+/// not make a session appear five minutes late.
+///
+/// The other half was wrong. The usage endpoint is not a file and emits no
+/// events, so `MonitorViewModel` has always asked it on a timer. That timer was
+/// a hard-coded number with no way to change it, which is not the same thing as
+/// not polling. `usageRefreshInterval` is that one timer, made visible. It is
+/// the only polled source in the application, and this is the only control that
+/// paces anything.
+///
+/// `Preferences` exposes the value; the polling loop reads it. Nothing here
+/// starts, stops or reschedules a timer.
+///
+/// ## Launch at login
 ///
 /// `launchAtLogin` is the one preference that is not stored here. macOS owns it,
 /// registration is allowed to fail, and the user can change it in System
@@ -61,12 +162,23 @@ enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
 /// true  + .minimal            the live severity dot, no text
 /// true  + .usage              the dot and the percentage consumed
 /// true  + .sessions           the dot and the active session count
+/// true  + .combined           the dot, the count and the percentage
 /// ```
 ///
 /// `showMenuBarUsage` is the quiet switch: turn it off and nothing about your
 /// usage is legible over your shoulder. `menuBarStyle` chooses the reading when
 /// it is on, and is kept while the switch is off so turning it back on restores
 /// the choice.
+///
+/// ## Notification switches
+///
+/// The three `notifyOn...` flags are stored intent, read by the notification
+/// bridge rather than by this type. Two of them name a case that
+/// `NotificationEvent` actually has. `notifyOnSessionIdle` does not yet, and it
+/// is stored anyway rather than dropped because `SessionStatus.idle` is
+/// derivable: the source exists, only the event is missing. That is a different
+/// situation from `permission` and `error`, which have no source at all and
+/// therefore have no key here and never will until one is proven.
 @MainActor
 @Observable
 final class Preferences {
@@ -77,6 +189,14 @@ final class Preferences {
         static let showMenuBarUsage = "com.tungao.claudence.preference.showMenuBarUsage"
         static let menuBarStyle = "com.tungao.claudence.preference.menuBarStyle"
         static let notificationsEnabled = "com.tungao.claudence.preference.notificationsEnabled"
+        static let appearance = "com.tungao.claudence.preference.appearance"
+        static let usageRefreshInterval = "com.tungao.claudence.preference.usageRefreshInterval"
+        static let showSubagents = "com.tungao.claudence.preference.showSubagents"
+        static let compactRows = "com.tungao.claudence.preference.compactRows"
+        static let liveIndicators = "com.tungao.claudence.preference.liveIndicators"
+        static let notifyOnSessionCompleted = "com.tungao.claudence.preference.notifyOnSessionCompleted"
+        static let notifyOnUsageThreshold = "com.tungao.claudence.preference.notifyOnUsageThreshold"
+        static let notifyOnSessionIdle = "com.tungao.claudence.preference.notifyOnSessionIdle"
     }
 
     // MARK: Dependencies
@@ -96,10 +216,62 @@ final class Preferences {
         didSet { defaults.set(menuBarStyle.rawValue, forKey: Key.menuBarStyle) }
     }
 
-    /// Whether Claudence posts notifications. Default on. The system permission
-    /// is a separate question, owned by the notification code.
+    /// Whether Claudence posts notifications at all. Default on. The system
+    /// permission is a separate question, owned by the notification code, and
+    /// the per-event switches below only matter while this one is on.
     var notificationsEnabled: Bool {
         didSet { defaults.set(notificationsEnabled, forKey: Key.notificationsEnabled) }
+    }
+
+    /// Which palette the windows use. Default `.auto`.
+    var appearance: AppearanceMode {
+        didSet { defaults.set(appearance.rawValue, forKey: Key.appearance) }
+    }
+
+    /// How often the usage endpoint is polled. Default `.oneMinute`, which is
+    /// the interval the application already used before it was adjustable.
+    var usageRefreshInterval: UsageRefreshInterval {
+        didSet { defaults.set(usageRefreshInterval.rawValue, forKey: Key.usageRefreshInterval) }
+    }
+
+    /// Whether a session row lists the agents spawned under it. Default on.
+    var showSubagents: Bool {
+        didSet { defaults.set(showSubagents, forKey: Key.showSubagents) }
+    }
+
+    /// Whether a closed session row hides duration, rate and sparkline until it
+    /// is opened. Default off: the full row is the design's normal state, and
+    /// this is the setting for someone watching many sessions at once.
+    var compactRows: Bool {
+        didSet { defaults.set(compactRows, forKey: Key.compactRows) }
+    }
+
+    /// Whether a working session gets a visible liveness cue. Default on.
+    ///
+    /// Not a repeating animation, whatever the design's wording suggests: the
+    /// cue is a one-shot change when the value moves. System Reduce Motion still
+    /// wins over this switch.
+    var liveIndicators: Bool {
+        didSet { defaults.set(liveIndicators, forKey: Key.liveIndicators) }
+    }
+
+    /// Notify when a monitored session is gone and its absence is confirmed.
+    /// Default on. Backed by `NotificationEvent.sessionCompleted`.
+    var notifyOnSessionCompleted: Bool {
+        didSet { defaults.set(notifyOnSessionCompleted, forKey: Key.notifyOnSessionCompleted) }
+    }
+
+    /// Notify when a usage window crosses the critical threshold upward.
+    /// Default on. Backed by `NotificationEvent.usageThreshold`.
+    var notifyOnUsageThreshold: Bool {
+        didSet { defaults.set(notifyOnUsageThreshold, forKey: Key.notifyOnUsageThreshold) }
+    }
+
+    /// Notify when a session stops working but stays open. Default off, because
+    /// a session that pauses while its human reads the diff is the ordinary
+    /// case and interrupting them for it would be noise.
+    var notifyOnSessionIdle: Bool {
+        didSet { defaults.set(notifyOnSessionIdle, forKey: Key.notifyOnSessionIdle) }
     }
 
     /// What the menu bar should actually render, once the switch is applied.
@@ -136,6 +308,14 @@ final class Preferences {
             Key.showMenuBarUsage: true,
             Key.menuBarStyle: MenuBarStyle.usage.rawValue,
             Key.notificationsEnabled: true,
+            Key.appearance: AppearanceMode.auto.rawValue,
+            Key.usageRefreshInterval: UsageRefreshInterval.oneMinute.rawValue,
+            Key.showSubagents: true,
+            Key.compactRows: false,
+            Key.liveIndicators: true,
+            Key.notifyOnSessionCompleted: true,
+            Key.notifyOnUsageThreshold: true,
+            Key.notifyOnSessionIdle: false,
         ])
 
         self.defaults = defaults
@@ -144,6 +324,20 @@ final class Preferences {
         self.menuBarStyle = MenuBarStyle(rawValue: defaults.string(forKey: Key.menuBarStyle) ?? "")
             ?? .usage
         self.notificationsEnabled = defaults.bool(forKey: Key.notificationsEnabled)
+        // An unrecognised raw value falls back to the registered default rather
+        // than to an arbitrary first case, so a hand-edited plist or a renamed
+        // case degrades to the behaviour the app shipped with.
+        self.appearance = AppearanceMode(rawValue: defaults.string(forKey: Key.appearance) ?? "")
+            ?? .auto
+        self.usageRefreshInterval = UsageRefreshInterval(
+            rawValue: defaults.string(forKey: Key.usageRefreshInterval) ?? ""
+        ) ?? .oneMinute
+        self.showSubagents = defaults.bool(forKey: Key.showSubagents)
+        self.compactRows = defaults.bool(forKey: Key.compactRows)
+        self.liveIndicators = defaults.bool(forKey: Key.liveIndicators)
+        self.notifyOnSessionCompleted = defaults.bool(forKey: Key.notifyOnSessionCompleted)
+        self.notifyOnUsageThreshold = defaults.bool(forKey: Key.notifyOnUsageThreshold)
+        self.notifyOnSessionIdle = defaults.bool(forKey: Key.notifyOnSessionIdle)
         self.launchAtLoginState = launchAtLogin.readState()
         self.launchAtLoginFailure = nil
     }

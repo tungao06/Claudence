@@ -212,6 +212,101 @@ public struct AnalyticsService: Sendable {
         return estimator.estimate(sessions: sessions)
     }
 
+    // MARK: Day over day
+
+    /// Today's tokens against yesterday's, or nil when the store could not
+    /// answer.
+    ///
+    /// Nil and a zero delta are different claims and the caller must render them
+    /// differently. Nil means "no comparison available"; a delta whose
+    /// `fractionalChange` is nil means "yesterday recorded nothing, so there is
+    /// nothing to compare against"; a delta of 0 means the two days genuinely
+    /// matched.
+    ///
+    /// Reads `dailyTotals(days: 2)`, whose window the store measures from the
+    /// real clock. As with `dailySeries`, an injected `now` far from the real
+    /// clock puts the two windows out of alignment and the day keys stop
+    /// matching; tests pin `now` to `Date()` for that reason.
+    public func dayOverDay() -> DayOverDayDelta? {
+        let today = calendar.startOfDay(for: now())
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
+
+        let todayKey = ClaudenceStore.dayString(for: today, calendar: calendar)
+        let yesterdayKey = ClaudenceStore.dayString(for: yesterday, calendar: calendar)
+
+        let before = store.health
+        let totals = store.dailyTotals(days: 2)
+        guard Self.answered(before: before, after: store.health) else { return nil }
+
+        var byDay: [String: TokenUsage] = [:]
+        for row in totals { byDay[row.day, default: .zero] += row.usage }
+
+        return DayOverDayDelta(
+            today: byDay[todayKey] ?? .zero,
+            yesterday: byDay[yesterdayKey] ?? .zero
+        )
+    }
+
+    // MARK: Share of recent activity
+
+    /// The window `shareOfRecentTokens` uses unless told otherwise: five hours,
+    /// matching the cadence of the provider's shortest usage window purely so
+    /// the two sit on the same time scale on screen. It is not a share of that
+    /// window and cannot be converted into one. See `RecentTokenShares`.
+    public static let recentActivityWindow: TimeInterval = 5 * 60 * 60
+
+    /// How the sessions active in the last `window` divide up the tokens
+    /// Claudence measured in that period, or nil when the store could not
+    /// answer.
+    ///
+    /// The denominator is local and measured, never the provider's window
+    /// capacity, which is not a number this application is given. The reasoning
+    /// is written out on `RecentTokenShares`, and the name of every member here
+    /// says "recent tokens" rather than "window" so the two cannot be confused
+    /// at a call site.
+    ///
+    /// Sessions come from `allSessions(since:)`, which filters on last activity,
+    /// so "active in the window" means the session did something in it. A
+    /// long-running session that has been quiet for six hours is correctly
+    /// absent, and its earlier tokens are not in the denominator either.
+    public func shareOfRecentTokens(
+        window: TimeInterval = AnalyticsService.recentActivityWindow
+    ) -> RecentTokenShares? {
+        let until = now()
+        let since = until.addingTimeInterval(-max(0, window))
+
+        let before = store.health
+        let sessions = store.allSessions(since: since)
+        guard Self.answered(before: before, after: store.health) else { return nil }
+
+        var measured = TokenUsage.zero
+        for session in sessions { measured += session.combinedUsage }
+        let denominator = measured.total
+
+        let shares = sessions.map { session in
+            SessionTokenShare(
+                sessionID: session.id,
+                projectName: session.projectName,
+                usage: session.combinedUsage,
+                share: denominator > 0
+                    ? Double(session.combinedUsage.total) / Double(denominator)
+                    : nil
+            )
+        }.sorted {
+            $0.usage.total == $1.usage.total
+                ? $0.sessionID < $1.sessionID
+                : $0.usage.total > $1.usage.total
+        }
+
+        return RecentTokenShares(
+            window: window,
+            since: since,
+            until: until,
+            measuredTotal: measured,
+            sessions: shares
+        )
+    }
+
     // MARK: Private
 
     /// Whether a read actually produced an answer.

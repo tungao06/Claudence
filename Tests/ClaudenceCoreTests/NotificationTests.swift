@@ -386,7 +386,10 @@ struct DerivableStateTests {
 
     @Test("No event is produced for a session status that is not derivable")
     func nonDerivableStatesProduceNothing() {
-        for status in [SessionStatus.waiting, .permission, .error] {
+        // `waiting` used to be in this list. It is derivable now, because the
+        // registry writes the status rather than it being inferred, so only
+        // permission and error remain unproven.
+        for status in [SessionStatus.permission, .error] {
             #expect(status.isDerivable == false)
 
             var deriver = makeDeriver()
@@ -422,8 +425,135 @@ struct DerivableStateTests {
     func shippedEventSetIsMinimal() {
         // Spec section 10 lists four events. Two of them describe states that
         // section 6 marks as not derivable, so they are not modelled at all.
-        #expect(NotificationEvent.Kind.allCases.count == 2)
-        #expect(Set(NotificationEvent.Kind.allCases.map(\.rawValue)) == ["usageThreshold", "sessionCompleted"])
+        // `sessionIdle` is the fifth, which the table does not list; the reason
+        // it is allowed to exist is on `NotificationEvent` itself.
+        #expect(NotificationEvent.Kind.allCases.count == 3)
+        #expect(Set(NotificationEvent.Kind.allCases.map(\.rawValue))
+            == ["usageThreshold", "sessionCompleted", "sessionIdle"])
+    }
+}
+
+// MARK: - Session idle
+
+@Suite("Session idle events")
+struct SessionIdleTests {
+
+    /// The registry-written case: the file was rewritten, so the status moved
+    /// and `lastActivityAt` moved with it.
+    private func reported(_ id: String, _ status: SessionStatus, at instant: Date) -> AISession {
+        makeSession(id, status: status, lastActivityAt: instant)
+    }
+
+    @Test("A session the registry reports as idle fires exactly once")
+    func reportedIdleFiresOnce() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .idle, at: at(30))]),
+            makeSnapshot(at: at(60), sessions: [reported("alpha", .idle, at: at(30))]),
+            makeSnapshot(at: at(90), sessions: [reported("alpha", .idle, at: at(30))]),
+        ], with: &deriver)
+
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .sessionIdle)
+        #expect(events.first?.subjectID == "alpha")
+    }
+
+    @Test("An idle reached by the clock rather than by the registry does not fire")
+    func staleIdleDoesNotFire() {
+        // `SessionRegistryAdapter.mapStatus` routes an unknown or missing status
+        // by recency, so a record nobody wrote flips to `.idle` once it is older
+        // than `Constants.Watch.idleThreshold`. The tell is that
+        // `lastActivityAt` did not move: no file was written, nothing happened,
+        // only the clock advanced.
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(120), sessions: [reported("alpha", .idle, at: at(0))]),
+            makeSnapshot(at: at(180), sessions: [reported("alpha", .idle, at: at(0))]),
+        ], with: &deriver)
+
+        #expect(events.isEmpty)
+    }
+
+    @Test("A session first seen already idle is history, not a transition")
+    func firstSightingIsNotATransition() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: []),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .idle, at: at(30))]),
+            makeSnapshot(at: at(60), sessions: [reported("alpha", .idle, at: at(30))]),
+        ], with: &deriver)
+
+        #expect(events.isEmpty)
+    }
+
+    @Test("Going back to work and idling again is a second real transition")
+    func idleAfterResumingFiresAgain() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .idle, at: at(30))]),
+            makeSnapshot(at: at(60), sessions: [reported("alpha", .running, at: at(60))]),
+            makeSnapshot(at: at(90), sessions: [reported("alpha", .idle, at: at(90))]),
+        ], with: &deriver)
+
+        // Two genuine transitions. Suppressing a session that flaps is the
+        // throttle's job, not the deriver's, and its per-key cooling period
+        // already covers `sessionIdle:alpha`.
+        #expect(events.count == 2)
+    }
+
+    @Test("A stale snapshot is not evidence that a session went idle")
+    func staleSnapshotIsNotEvidence() {
+        var deriver = makeDeriver()
+        let working = makeSnapshot(at: at(60), sessions: [reported("alpha", .running, at: at(0))])
+        let quiet = makeSnapshot(at: at(30), sessions: [reported("alpha", .idle, at: at(30))])
+
+        #expect(deriver.events(from: working, to: quiet).isEmpty)
+    }
+
+    @Test("A non-derivable status before the transition produces nothing")
+    func nonDerivablePredecessorProducesNothing() {
+        for status in [SessionStatus.permission, .error] {
+            var deriver = makeDeriver()
+            let events = derive([
+                makeSnapshot(at: at(0), sessions: [reported("alpha", status, at: at(0))]),
+                makeSnapshot(at: at(30), sessions: [reported("alpha", .idle, at: at(30))]),
+            ], with: &deriver)
+
+            #expect(events.isEmpty, "\(status.rawValue) must not lead into an idle event")
+        }
+    }
+
+    @Test("Only the session that went idle is reported")
+    func othersAreUnaffected() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [
+                reported("alpha", .running, at: at(0)),
+                reported("beta", .running, at: at(0)),
+            ]),
+            makeSnapshot(at: at(30), sessions: [
+                reported("alpha", .idle, at: at(30)),
+                reported("beta", .running, at: at(30)),
+            ]),
+        ], with: &deriver)
+
+        #expect(events.count == 1)
+        #expect(events.first?.subjectID == "alpha")
+    }
+
+    @Test("A session that goes idle and later ends produces both events, in order")
+    func idleThenCompletion() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .idle, at: at(30))]),
+            makeSnapshot(at: at(60), sessions: []),
+        ], with: &deriver)
+
+        #expect(events.map(\.kind) == [.sessionIdle, .sessionCompleted])
     }
 }
 
@@ -521,6 +651,138 @@ struct NotificationThrottleTests {
     }
 }
 
+// MARK: - Preference filter
+
+@Suite("Notification preferences")
+struct NotificationFilterTests {
+
+    /// One event of every shipped kind, so a test that turns one switch off can
+    /// assert on what survived rather than only on what did not.
+    private var oneOfEach: [NotificationEvent] {
+        [
+            .usageThreshold(window: window("five_hour", 92)),
+            .sessionCompleted(session: makeSession("alpha")),
+            .sessionIdle(session: makeSession("beta", status: .idle)),
+        ]
+    }
+
+    @Test("Every shipped kind has a switch, and the default leaves them all on")
+    func defaultAllowsEveryKind() {
+        #expect(NotificationFilter().allowedKinds == Set(NotificationEvent.Kind.allCases))
+        #expect(NotificationFilter.all.apply(to: oneOfEach) == oneOfEach)
+    }
+
+    @Test("Each per-event switch suppresses only its own event")
+    func perEventSwitchesAreIndependent() {
+        let events = oneOfEach
+        // Every kind is covered by construction, so a kind added later without
+        // a switch fails here rather than shipping unfiltered.
+        for kind in NotificationEvent.Kind.allCases {
+            let off = NotificationFilter(
+                isEnabled: true,
+                allowedKinds: Set(NotificationEvent.Kind.allCases).subtracting([kind])
+            )
+            let survivors = off.apply(to: events)
+
+            #expect(survivors.contains { $0.kind == kind } == false,
+                    "\(kind.rawValue) should have been suppressed")
+            #expect(survivors.count == events.count - 1,
+                    "\(kind.rawValue) should not have taken anything else with it")
+            #expect(survivors == events.filter { $0.kind != kind },
+                    "order should survive the filter")
+        }
+    }
+
+    @Test("Only the kind that is on gets through when the others are off")
+    func aSingleKindLeftOn() {
+        for kind in NotificationEvent.Kind.allCases {
+            let only = NotificationFilter(isEnabled: true, allowedKinds: [kind])
+            #expect(only.apply(to: oneOfEach).map(\.kind) == [kind])
+        }
+    }
+
+    @Test("The master switch off suppresses every kind whatever the per-event switches say")
+    func masterSwitchOverridesEveryKind() {
+        let events = oneOfEach
+        let off = NotificationFilter(
+            isEnabled: false,
+            allowedKinds: Set(NotificationEvent.Kind.allCases)
+        )
+
+        #expect(off.apply(to: events).isEmpty)
+        #expect(NotificationFilter.silent.apply(to: events).isEmpty)
+
+        // The per-event switches are kept rather than cleared, so turning the
+        // master back on restores the choices instead of resetting them.
+        var back = off
+        back.isEnabled = true
+        #expect(back.apply(to: events) == events)
+    }
+
+    @Test("An event suppressed by preference does not spend the throttle's budget")
+    func preferenceSuppressionDoesNotConsumeThrottleBudget() {
+        let clock = TestClock(t0)
+        // A ceiling of one, so whatever reaches the throttle first takes the
+        // only slot there is and anything behind it is visibly refused.
+        let throttle = NotificationThrottle(
+            coolingPeriod: 600,
+            globalLimit: 1,
+            globalWindow: 600,
+            clock: { clock.now }
+        )
+        let filter = NotificationFilter(isEnabled: true, allowedKinds: [.sessionCompleted])
+
+        let unwanted = NotificationEvent.usageThreshold(window: window("five_hour", 92))
+        let wanted = NotificationEvent.sessionCompleted(session: makeSession("alpha"))
+
+        // The unwanted event is first in the pass. Filtering after the throttle
+        // instead of before it would let it take the single slot, and the event
+        // the user actually asked for would be dropped as a burst overflow,
+        // silently, because of a switch meant to make the app quieter.
+        let admitted = filter.admissible([unwanted, wanted], through: throttle)
+
+        #expect(admitted == [wanted])
+        #expect(throttle.admittedInWindow == 1)
+        // The sharp one: the throttle never saw the suppressed event at all, so
+        // it did not even count it as something it refused.
+        #expect(throttle.suppressedCount == 0)
+    }
+
+    @Test("The master switch off spends none of the throttle's budget either")
+    func masterSwitchSpendsNoBudget() {
+        let clock = TestClock(t0)
+        let throttle = NotificationThrottle(
+            coolingPeriod: 600,
+            globalLimit: 5,
+            globalWindow: 600,
+            clock: { clock.now }
+        )
+
+        #expect(NotificationFilter.silent.admissible(oneOfEach, through: throttle).isEmpty)
+        #expect(throttle.admittedInWindow == 0)
+        #expect(throttle.suppressedCount == 0)
+
+        // Turning it back on finds the budget untouched and the keys uncooled.
+        let admitted = NotificationFilter.all.admissible(oneOfEach, through: throttle)
+        #expect(admitted.count == oneOfEach.count)
+    }
+
+    @Test("An allowed event is still subject to the throttle")
+    func filteringDoesNotBypassTheThrottle() {
+        let clock = TestClock(t0)
+        let throttle = NotificationThrottle(coolingPeriod: 600, clock: { clock.now })
+        let filter = NotificationFilter.all
+        let usage = NotificationEvent.usageThreshold(window: window("five_hour", 92))
+
+        #expect(filter.admissible([usage], through: throttle) == [usage])
+        #expect(filter.admissible([usage], through: throttle).isEmpty)
+        #expect(throttle.suppressedCount == 1)
+
+        clock.advance(601)
+        #expect(filter.admissible([usage], through: throttle) == [usage])
+    }
+}
+
 // MARK: - Wording
 
 @Suite("Notification wording")
@@ -530,6 +792,18 @@ struct NotificationWordingTests {
     func titles() {
         #expect(NotificationEvent.usageThreshold(window: window("five_hour", 92)).title == "Usage at 90%")
         #expect(NotificationEvent.sessionCompleted(session: makeSession("alpha")).title == "Session completed")
+        #expect(NotificationEvent.sessionIdle(session: makeSession("alpha")).title == "Session idle")
+    }
+
+    @Test("The idle body carries name, duration and tokens, and nothing else")
+    func idleBody() {
+        let session = makeSession("claudence-06", tokens: 128_000, startedAt: at(0), lastActivityAt: at(8_040))
+        #expect(NotificationEvent.sessionIdle(session: session).body()
+            == "claudence-06 stopped working after 2h 14m and 128k tokens.")
+
+        let silent = makeSession("scratch", tokens: 0, startedAt: at(0), lastActivityAt: at(90))
+        #expect(NotificationEvent.sessionIdle(session: silent).body()
+            == "scratch stopped working after 1m 30s.")
     }
 
     @Test("The usage body reads as plain English and never invents a number")
@@ -561,5 +835,9 @@ struct NotificationWordingTests {
             == "usageThreshold:five_hour")
         #expect(NotificationEvent.sessionCompleted(session: makeSession("alpha")).throttleKey
             == "sessionCompleted:alpha")
+        // Same subject, different kind: a session that goes idle and later ends
+        // must not have one of those muted by the other.
+        #expect(NotificationEvent.sessionIdle(session: makeSession("alpha")).throttleKey
+            == "sessionIdle:alpha")
     }
 }

@@ -11,8 +11,11 @@ public enum AIProviderType: String, Sendable, Codable, CaseIterable {
 // MARK: - Session status
 
 /// Only states with a proven data source are used by the UI.
-/// `waiting`, `permission` and `error` exist for the provider contract but must
-/// not be rendered until a source is proven to derive them. See spec section 6.
+/// `permission` and `error` exist for the provider contract but must not be
+/// rendered until a source is proven to derive them. `waiting` was in that
+/// group until a live capture on Claude Code 2.1.258 showed the registry
+/// writing `"waiting"` as a status string of its own, which is a source; it is
+/// derivable now and the adapter maps it directly. See spec section 6.
 public enum SessionStatus: String, Sendable, Codable {
     case running
     case idle
@@ -24,8 +27,8 @@ public enum SessionStatus: String, Sendable, Codable {
     /// Whether this state is currently derivable from a real data source.
     public var isDerivable: Bool {
         switch self {
-        case .running, .idle, .completed: return true
-        case .waiting, .permission, .error: return false
+        case .running, .idle, .completed, .waiting: return true
+        case .permission, .error: return false
         }
     }
 }
@@ -129,6 +132,14 @@ public struct AISession: Sendable, Identifiable, Equatable {
     public var serviceTier: String?
     /// Assistant records read from this session's own transcript.
     public var recordsParsed: Int
+    /// The newest single request's `message.usage`, not the running total.
+    ///
+    /// A context window sizes one request's input. `usage` is cumulative, and
+    /// its `cache_read` alone reaches tens of millions on a long session, so
+    /// measuring a context window against it produces percentages in the
+    /// thousands. Nil until a record with a usage block has been read, which is
+    /// the ordinary state for a session that has not answered yet.
+    public var lastRequestUsage: TokenUsage?
 
     public init(
         id: String,
@@ -150,7 +161,8 @@ public struct AISession: Sendable, Identifiable, Equatable {
         filePaths: [String] = [],
         activityTrail: [TimedActivity] = [],
         serviceTier: String? = nil,
-        recordsParsed: Int = 0
+        recordsParsed: Int = 0,
+        lastRequestUsage: TokenUsage? = nil
     ) {
         self.id = id
         self.provider = provider
@@ -172,6 +184,7 @@ public struct AISession: Sendable, Identifiable, Equatable {
         self.activityTrail = activityTrail
         self.serviceTier = serviceTier
         self.recordsParsed = recordsParsed
+        self.lastRequestUsage = lastRequestUsage
     }
 
     /// What this session actually cost: its own transcript plus every subagent

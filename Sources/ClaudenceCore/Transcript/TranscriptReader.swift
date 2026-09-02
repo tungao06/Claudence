@@ -179,6 +179,8 @@ final class DeltaBuilder {
     private var filePaths: [String] = []
     private var trail: [TimedActivity] = []
     private var serviceTier: String?
+    /// The newest record's own usage block, kept apart from the running sum.
+    private var lastRequestUsage: TokenUsage?
 
     /// Bounded so a long-running session cannot grow these without limit. The
     /// interface only ever shows a handful.
@@ -192,7 +194,12 @@ final class DeltaBuilder {
         parsed += 1
 
         if let usageBlock = record.message?.usage {
-            usage += usageBlock.tokenUsage
+            let block = usageBlock.tokenUsage
+            usage += block
+            // Records arrive in file order, so the last one absorbed is the
+            // newest. This overwrite is the point: the context window needs the
+            // size of one request, never the sum of every request.
+            lastRequestUsage = block
         }
         if let model = record.message?.model, !model.isEmpty {
             self.model = model
@@ -244,7 +251,8 @@ final class DeltaBuilder {
             toolCounts: toolCounts,
             filePaths: filePaths,
             activityTrail: trail,
-            serviceTier: serviceTier
+            serviceTier: serviceTier,
+            lastRequestUsage: lastRequestUsage
         )
     }
 }

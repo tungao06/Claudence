@@ -1,0 +1,437 @@
+import Foundation
+import Testing
+
+@testable import ClaudenceCore
+
+// MARK: - Fixture
+
+/// A throwaway subagent tree:
+/// `<projects>/<slug>/<sessionId>/subagents/agent-<id>.jsonl`, with the
+/// `meta.json` beside it that Claude Code writes. Nothing here touches the real
+/// `~/.claude`.
+private final class SubagentFixture {
+    let root: URL
+    let projectsDirectory: URL
+    let sessionID: String
+    let workingDirectory = "/Users/tester/TungAo-Project/project/Claudence"
+    let subagentsDirectory: URL
+
+    init(sessionID: String = UUID().uuidString.lowercased()) {
+        self.sessionID = sessionID
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("claudence-subagent-persistence-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        projectsDirectory = root.appendingPathComponent("projects", isDirectory: true)
+        subagentsDirectory = projectsDirectory
+            .appendingPathComponent(TranscriptLocator.slug(forWorkingDirectory: workingDirectory), isDirectory: true)
+            .appendingPathComponent(sessionID, isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+        try? FileManager.default.createDirectory(at: subagentsDirectory, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    func transcript(_ agent: String) -> URL {
+        subagentsDirectory.appendingPathComponent("\(agent).jsonl")
+    }
+
+    /// Creates a subagent with its labels and an initial set of records.
+    /// Returns the byte length of what was written, which is where a cursor
+    /// from a previous run would sit.
+    @discardableResult
+    func create(_ agent: String, agentType: String? = nil, description: String? = nil, lines: [String] = []) -> UInt64 {
+        if let agentType, let description {
+            let meta = """
+                {"agentType":"\(agentType)","description":"\(description)","toolUseId":"toolu_1","spawnDepth":1}
+                """
+            try? Data(meta.utf8).write(to: subagentsDirectory.appendingPathComponent("\(agent).meta.json"))
+        }
+        FileManager.default.createFile(atPath: transcript(agent).path, contents: Data())
+        return append(agent, lines: lines)
+    }
+
+    @discardableResult
+    func append(_ agent: String, lines: [String]) -> UInt64 {
+        guard !lines.isEmpty else { return size(agent) }
+        let text = lines.map { $0 + "\n" }.joined()
+        if let handle = try? FileHandle(forWritingTo: transcript(agent)) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(text.utf8))
+            try? handle.close()
+        }
+        return size(agent)
+    }
+
+    func remove(_ agent: String) {
+        try? FileManager.default.removeItem(at: transcript(agent))
+        try? FileManager.default.removeItem(at: subagentsDirectory.appendingPathComponent("\(agent).meta.json"))
+    }
+
+    func size(_ agent: String) -> UInt64 { FileStatus(path: transcript(agent).path)?.size ?? 0 }
+    func inode(_ agent: String) -> UInt64 { FileStatus(path: transcript(agent).path)?.inode ?? 0 }
+
+    /// A record shaped like a real Claude Code assistant line.
+    func record(
+        timestamp: String = "2026-08-18T07:39:02.837Z",
+        model: String = "claude-sonnet-5",
+        input: Int,
+        cacheCreation: Int = 0,
+        cacheRead: Int = 0,
+        output: Int = 0,
+        thinking: Int = 0
+    ) -> String {
+        """
+        {"parentUuid":"\(UUID().uuidString.lowercased())","isSidechain":true,"userType":"external",\
+        "cwd":"\(workingDirectory)","sessionId":"\(sessionID)","version":"2.1.257","gitBranch":"main",\
+        "type":"assistant","message":{"id":"msg_01Abc","type":"message","role":"assistant",\
+        "model":"\(model)","content":[{"type":"text","text":"ordinary response text"}],\
+        "usage":{"input_tokens":\(input),"cache_creation_input_tokens":\(cacheCreation),\
+        "cache_read_input_tokens":\(cacheRead),"output_tokens":\(output),\
+        "output_tokens_details":{"thinking_tokens":\(thinking)},"service_tier":"standard"}},\
+        "uuid":"\(UUID().uuidString.lowercased())","timestamp":"\(timestamp)"}
+        """
+    }
+
+    func makeTracker(store: (any SubagentTotalStoring)?, cursors: CursorStoring) -> SubagentTracker {
+        SubagentTracker(
+            locator: SubagentLocator(projectsDirectory: projectsDirectory),
+            reader: TranscriptReader(
+                cursorStore: cursors,
+                locator: TranscriptLocator(projectsDirectory: projectsDirectory)
+            ),
+            store: store
+        )
+    }
+
+    /// The descriptor the tracker itself will see, found the same way: by
+    /// listing the directory. Building one by hand would risk a path that
+    /// differs from the located one and a cursor the reader then ignores.
+    func descriptor(_ agent: String) -> SubagentDescriptor {
+        SubagentLocator(projectsDirectory: projectsDirectory)
+            .subagents(forSession: sessionID, workingDirectory: workingDirectory)
+            .first { $0.id == agent }!
+    }
+
+    /// The key the reader stores a subagent's offset under, taken from the
+    /// tracker rather than spelled out, so the two cannot drift apart.
+    func cursorKey(_ agent: String) -> String {
+        SubagentTracker.cursorKey(for: descriptor(agent))
+    }
+
+    /// The cursor a previous run would have left after consuming the whole
+    /// file, expressed against the located path.
+    func cursorAtEnd(_ agent: String) -> ReadCursor {
+        let path = descriptor(agent).transcriptPath
+        let status = FileStatus(path: path)
+        return ReadCursor(path: path, inode: status?.inode ?? 0, byteOffset: status?.size ?? 0)
+    }
+}
+
+/// An in-memory `SubagentTotalStoring` that also counts its writes, so a test
+/// can assert that an idle pass touches the database not at all.
+private final class FakeTotalStore: SubagentTotalStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var rows: [String: SubagentTotal] = [:]
+    private var _writes = 0
+    private var _deletes = 0
+
+    init(seed: [SubagentTotal] = []) {
+        for total in seed { rows[Self.key(total.parentSessionID, total.subagentID)] = total }
+    }
+
+    var writes: Int { lock.lock(); defer { lock.unlock() }; return _writes }
+    var deletes: Int { lock.lock(); defer { lock.unlock() }; return _deletes }
+
+    func resetCounters() {
+        lock.lock()
+        defer { lock.unlock() }
+        _writes = 0
+        _deletes = 0
+    }
+
+    func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
+        lock.lock()
+        defer { lock.unlock() }
+        return rows.values
+            .filter { $0.parentSessionID == sessionID }
+            .sorted { $0.subagentID < $1.subagentID }
+    }
+
+    func upsertSubagentTotal(_ total: SubagentTotal) {
+        lock.lock()
+        defer { lock.unlock() }
+        _writes += 1
+        rows[Self.key(total.parentSessionID, total.subagentID)] = total
+    }
+
+    func deleteSubagentTotals(forSession sessionID: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        _deletes += 1
+        rows = rows.filter { $0.value.parentSessionID != sessionID }
+    }
+
+    private static func key(_ parent: String, _ subagent: String) -> String { "\(parent)|\(subagent)" }
+}
+
+/// `ClaudenceStore` gets its `SubagentTotalStoring` conformance elsewhere in
+/// the source module; this adapter lets the test drive the real database
+/// without declaring a second conformance to the same protocol.
+private struct StoreTotals: SubagentTotalStoring {
+    let store: ClaudenceStore
+
+    func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
+        store.subagentTotals(forSession: sessionID)
+    }
+
+    func upsertSubagentTotal(_ total: SubagentTotal) {
+        store.upsertSubagentTotal(total)
+    }
+
+    func deleteSubagentTotals(forSession sessionID: String) {
+        store.deleteSubagentTotals(forSession: sessionID)
+    }
+}
+
+// MARK: - Seeding
+
+@Suite("Subagent totals survive a restart")
+struct SubagentPersistenceTests {
+
+    /// The regression this whole mechanism exists for.
+    ///
+    /// The read cursor is persisted and the total was not, so a relaunch
+    /// resumed mid-transcript and counted only what arrived afterwards. Every
+    /// token before the offset vanished from the live figure.
+    @Test("a resumed cursor adds its delta to the persisted total instead of starting from zero")
+    func seededTotalPlusDeltaRatherThanDeltaAlone() async {
+        let fixture = SubagentFixture()
+        let firstRun = fixture.record(input: 1_000, cacheRead: 4_000, output: 200)
+        fixture.create("agent-a", agentType: "Explore", description: "map the store", lines: [firstRun])
+
+        // What the previous process left behind: a cursor at the end of the
+        // first record, and the total that offset stands for.
+        let cursors = TranscriptMemoryCursorStore()
+        cursors.saveCursor(fixture.cursorAtEnd("agent-a"), forSession: fixture.cursorKey("agent-a"))
+        let persisted = SubagentTotal(
+            parentSessionID: fixture.sessionID,
+            subagentID: "agent-a",
+            agentType: "Explore",
+            taskDescription: "map the store",
+            usage: TokenUsage(freshInput: 1_000, cacheRead: 4_000, output: 200),
+            recordsParsed: 1,
+            lastActivityAt: Date(timeIntervalSince1970: 1_772_000_000),
+            spawnDepth: 1,
+            model: "claude-sonnet-5"
+        )
+        let store = FakeTotalStore(seed: [persisted])
+
+        // This run appends one more record and reads only that.
+        fixture.append("agent-a", lines: [fixture.record(input: 7, cacheRead: 11, output: 3)])
+
+        let tracker = fixture.makeTracker(store: store, cursors: cursors)
+        let subagents = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+
+        let agent = try! #require(subagents.first { $0.id == "agent-a" })
+        #expect(agent.usage == TokenUsage(freshInput: 1_007, cacheRead: 4_011, output: 203))
+        #expect(agent.recordsParsed == 2)
+        // Without seeding this is what the defect produced.
+        #expect(agent.usage != TokenUsage(freshInput: 7, cacheRead: 11, output: 3))
+        #expect(agent.agentType == "Explore")
+        #expect(agent.taskDescription == "map the store")
+
+        // And the grown total went back to the store.
+        let saved = try! #require(store.subagentTotals(forSession: fixture.sessionID).first)
+        #expect(saved.usage == agent.usage)
+        #expect(saved.recordsParsed == 2)
+    }
+
+    @Test("seeding reads the store once per session, not once per pass")
+    func seedingHappensOncePerSession() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", lines: [fixture.record(input: 5)])
+        let store = FakeTotalStore()
+        let tracker = fixture.makeTracker(store: store, cursors: TranscriptMemoryCursorStore())
+
+        for _ in 0..<3 {
+            _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        }
+
+        // Three passes, one record: the total is read once and written once.
+        let agent = try! #require(store.subagentTotals(forSession: fixture.sessionID).first)
+        #expect(agent.usage.freshInput == 5)
+        #expect(store.writes == 1)
+    }
+
+    @Test("a refresh that reads no new records performs no write")
+    func idlePassWritesNothing() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", lines: [fixture.record(input: 5, output: 2)])
+        let store = FakeTotalStore()
+        let tracker = fixture.makeTracker(store: store, cursors: TranscriptMemoryCursorStore())
+
+        _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        #expect(store.writes == 1)
+        store.resetCounters()
+
+        // Nothing appended. The transcript is not even opened, and the row is
+        // already exactly what the accumulator holds.
+        for _ in 0..<5 {
+            _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        }
+        #expect(store.writes == 0)
+        #expect(store.deletes == 0)
+    }
+
+    @Test("a growing transcript writes once per pass that actually read something")
+    func writesFollowRealDeltas() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", lines: [fixture.record(input: 5)])
+        let store = FakeTotalStore()
+        let tracker = fixture.makeTracker(store: store, cursors: TranscriptMemoryCursorStore())
+
+        _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        fixture.append("agent-a", lines: [fixture.record(input: 6)])
+        _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+
+        #expect(store.writes == 2)
+        #expect(store.subagentTotals(forSession: fixture.sessionID).first?.usage.freshInput == 11)
+    }
+
+    @Test("forgetting a session keeps its persisted rows, which pair with the cursors")
+    func forgetKeepsRows() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", lines: [fixture.record(input: 5)])
+        let store = FakeTotalStore(seed: [
+            SubagentTotal(parentSessionID: "other", subagentID: "agent-z", usage: TokenUsage(output: 9))
+        ])
+        let tracker = fixture.makeTracker(store: store, cursors: TranscriptMemoryCursorStore())
+
+        _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        #expect(store.subagentTotals(forSession: fixture.sessionID).count == 1)
+
+        await tracker.forget(sessionID: fixture.sessionID)
+
+        let leftInMemory = await tracker.subagents(forSession: fixture.sessionID)
+        // The row stays. It pairs with the read cursor, and nothing deletes a
+        // cursor, so dropping the total alone would leave the transcript
+        // resumable at byte N against a total of zero. A session brought back
+        // with `claude --resume` would then count only what is appended after
+        // the resume, the engine would write that collapsed figure to the
+        // session row, and the rollup would be rewritten down by everything the
+        // subagents had spent. This mirrors the parent side, where `markEnded`
+        // keeps the session row for exactly the same reason.
+        #expect(store.subagentTotals(forSession: fixture.sessionID).count == 1)
+        #expect(leftInMemory.isEmpty)
+        // Another session's rows are untouched.
+        #expect(store.subagentTotals(forSession: "other").count == 1)
+    }
+
+    @Test("a subagent that vanished from disk loses its persisted row as well")
+    func vanishedSubagentLosesItsRow() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", lines: [fixture.record(input: 5)])
+        fixture.create("agent-b", lines: [fixture.record(input: 50)])
+        let store = FakeTotalStore()
+        let tracker = fixture.makeTracker(store: store, cursors: TranscriptMemoryCursorStore())
+
+        _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        #expect(store.subagentTotals(forSession: fixture.sessionID).map(\.subagentID) == ["agent-a", "agent-b"])
+
+        fixture.remove("agent-a")
+        let remaining = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+
+        #expect(remaining.map(\.id) == ["agent-b"])
+        let rows = store.subagentTotals(forSession: fixture.sessionID)
+        #expect(rows.map(\.subagentID) == ["agent-b"])
+        // The survivor kept its figure through the rewrite.
+        #expect(rows.first?.usage.freshInput == 50)
+    }
+
+    @Test("a subagent persisted by an earlier run whose transcript is gone is cleaned up on the first pass")
+    func seededButVanishedSubagentIsCleanedUp() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-live", lines: [fixture.record(input: 5)])
+        let store = FakeTotalStore(seed: [
+            SubagentTotal(parentSessionID: fixture.sessionID, subagentID: "agent-gone",
+                          usage: TokenUsage(freshInput: 900), recordsParsed: 3)
+        ])
+        let tracker = fixture.makeTracker(store: store, cursors: TranscriptMemoryCursorStore())
+
+        let subagents = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+
+        #expect(subagents.map(\.id) == ["agent-live"])
+        #expect(store.subagentTotals(forSession: fixture.sessionID).map(\.subagentID) == ["agent-live"])
+    }
+
+    @Test("without a store the tracker behaves exactly as it did, correct within a run")
+    func trackerWithoutAStoreStillAccumulates() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", lines: [fixture.record(input: 5, output: 1)])
+        let tracker = fixture.makeTracker(store: nil, cursors: TranscriptMemoryCursorStore())
+
+        _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        fixture.append("agent-a", lines: [fixture.record(input: 6, output: 2)])
+        let subagents = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+
+        #expect(subagents.first?.usage == TokenUsage(freshInput: 11, output: 3))
+        await tracker.forget(sessionID: fixture.sessionID)
+        let forgotten = await tracker.subagents(forSession: fixture.sessionID)
+        #expect(forgotten.isEmpty)
+    }
+
+    // MARK: - Through the real store
+
+    @Test("the tracker resumes from a real ClaudenceStore across a simulated relaunch")
+    func totalsSurviveARelaunchThroughTheRealStore() async {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", agentType: "general-purpose", description: "do the work",
+                       lines: [fixture.record(input: 1_000, cacheRead: 4_000, output: 200)])
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudenceSubagentPersistence", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("claudence.db")
+
+        // First run: read the transcript, persisting both cursor and total.
+        do {
+            let store = ClaudenceStore(url: databaseURL)
+            let tracker = fixture.makeTracker(store: StoreTotals(store: store), cursors: store)
+            _ = await tracker.refresh(sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+            #expect(store.health == .healthy)
+        }
+
+        fixture.append("agent-a", lines: [fixture.record(input: 7, cacheRead: 11, output: 3)])
+
+        // Second run: a new store and a new tracker over the same file.
+        let store = ClaudenceStore(url: databaseURL)
+        let tracker = fixture.makeTracker(store: StoreTotals(store: store), cursors: store)
+        let subagents = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+
+        let agent = try! #require(subagents.first)
+        #expect(agent.usage == TokenUsage(freshInput: 1_007, cacheRead: 4_011, output: 203))
+        #expect(agent.recordsParsed == 2)
+        #expect(agent.agentType == "general-purpose")
+        #expect(agent.taskDescription == "do the work")
+        #expect(store.subagentTotals(forSession: fixture.sessionID).first?.usage == agent.usage)
+    }
+}

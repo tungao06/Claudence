@@ -104,6 +104,149 @@ private enum ActivityFixture {
     )
 }
 
+/// A single assistant record's own usage block, for the context-window meter.
+/// `AISession.usage` is a running total across the whole session and is the
+/// wrong number for this; see the note atop `ContextWindow.swift`. Kept in its
+/// own fixture, with numbers distinct from every `UsageFixture` entry, so
+/// nobody mistakes a session total for a single request's input.
+private enum RequestUsageFixture {
+    static let single = TokenUsage(
+        freshInput: 7_777,
+        cacheCreation: 61_111,
+        cacheRead: 233_333,
+        output: 9_999,
+        thinking: 1_111
+    )
+}
+
+/// Tool-call counts for the tool-mix section. Names only, per the privacy
+/// allowlist; the numbers are invented and unordered on purpose, so the view's
+/// own sort (busiest first) is what puts them in order rather than the fixture.
+private enum ToolMixFixture {
+    static let varied: [String: Int] = [
+        "Edit": 19,
+        "Read": 41,
+        "Bash": 12,
+        "Grep": 7,
+        "Write": 3,
+    ]
+}
+
+/// Distinct file paths for the files-touched section. Fake project, fake
+/// filenames, so nothing here reads as a real measurement of this repository.
+private enum FilePathFixture {
+    static let several: [String] = [
+        "/Users/preview/code/widgetco/Sources/Widget/Engine/Processor.swift",
+        "/Users/preview/code/widgetco/Sources/Widget/UI/DetailView.swift",
+        "/Users/preview/code/widgetco/Tests/WidgetTests/ProcessorTests.swift",
+    ]
+}
+
+/// Recent activities for the timeline. Built independent of `ActivityMapper`
+/// so a change to the real verb wording cannot silently start passing here.
+private enum TrailFixture {
+    /// Nothing read yet: the timeline's own unavailable state.
+    static let empty: [TimedActivity] = []
+
+    /// Exactly the engine's cap of 24 (`MonitorEngine.accumulatedTrail`),
+    /// oldest first the way the engine stores it, so the view's own
+    /// reverse-then-prefix logic is what puts "just now" at the top.
+    static let atCap: [TimedActivity] = (0..<24).map { index in
+        TimedActivity(
+            at: Date().addingTimeInterval(-Double(24 - index) * 150),
+            activity: entry(index)
+        )
+    }
+
+    private static func entry(_ index: Int) -> Activity {
+        switch index % 4 {
+        case 0: return Activity(verb: "Editing", subject: "Handler\(index).swift")
+        case 1: return Activity(verb: "Running a command")
+        case 2: return Activity(verb: "Searching", subject: "codebase")
+        default: return Activity(verb: "Reading", subject: "Config\(index).json")
+        }
+    }
+}
+
+/// One session's cost as a share of Claudence's recent-window total. A
+/// fraction, not a token count, so it lives apart from `UsageFixture`.
+private enum WindowShareFixture {
+    static let strong = 0.18
+}
+
+/// Subagents spawned by `SessionFixture.withSubagents`. Four rows: three with
+/// full labels and one whose `meta.json` never resolved, so the list's two
+/// label states and its share arithmetic all have something to draw.
+private enum SubagentFixture {
+    static let editor = AISubagent(
+        id: "preview-subagent-editor",
+        parentSessionID: "preview-with-subagents",
+        agentType: "code-editor",
+        taskDescription: "Refactor the token formatter to share one code path",
+        usage: TokenUsage(freshInput: 3_000, cacheCreation: 12_000, cacheRead: 40_000, output: 5_000, thinking: 500),
+        lastActivityAt: Date().addingTimeInterval(-90)
+    )
+
+    static let researcher = AISubagent(
+        id: "preview-subagent-researcher",
+        parentSessionID: "preview-with-subagents",
+        agentType: "researcher",
+        taskDescription: "Survey how the registry handles a reaped process",
+        usage: TokenUsage(freshInput: 1_500, cacheCreation: 8_000, cacheRead: 22_000, output: 3_000, thinking: 200),
+        lastActivityAt: Date().addingTimeInterval(-420)
+    )
+
+    static let reviewer = AISubagent(
+        id: "preview-subagent-reviewer",
+        parentSessionID: "preview-with-subagents",
+        agentType: "reviewer",
+        taskDescription: "Check the new adapter against the privacy allowlist",
+        usage: TokenUsage(freshInput: 900, cacheCreation: 4_000, cacheRead: 9_000, output: 1_800, thinking: 100),
+        lastActivityAt: Date().addingTimeInterval(-1_800)
+    )
+
+    /// `meta.json` went unread this pass: both labels fall back to the
+    /// unavailable wording rather than to a guess.
+    static let unlabeled = AISubagent(
+        id: "preview-subagent-unlabeled",
+        parentSessionID: "preview-with-subagents",
+        agentType: nil,
+        taskDescription: nil,
+        usage: TokenUsage(freshInput: 400, cacheCreation: 1_000, cacheRead: 2_000, output: 600),
+        lastActivityAt: Date().addingTimeInterval(-60)
+    )
+
+    static let empty: [AISubagent] = []
+    static let several: [AISubagent] = [editor, researcher, reviewer]
+    static let withUnlabeled: [AISubagent] = [editor, unlabeled]
+
+    static var severalTotal: TokenUsage { several.reduce(.zero) { $0 + $1.usage } }
+    static var withUnlabeledTotal: TokenUsage { withUnlabeled.reduce(.zero) { $0 + $1.usage } }
+
+    /// Parent totals for a standalone `SubagentListView` preview: comfortably
+    /// above the sum of the rows above, so every share renders under 100%.
+    static let severalParentTotal = 200_000
+    static let withUnlabeledParentTotal = 120_000
+}
+
+/// `SessionActions` for `QuickActionsMenu`. Every closure is a pure return —
+/// no Terminal, no Finder, no pasteboard, no signal — and each button is wired
+/// to a different `SessionActionOutcome` case, so all four outcome tones are
+/// reachable from one fixture without ever touching the real machine.
+private enum QuickActionsFixture {
+    @MainActor static let mixedOutcomes = SessionActions(
+        // Directory "exists" so Terminal reaches the next check instead of
+        // failing early on a missing folder.
+        terminalApplicationURL: { nil }, // Terminal -> .unavailable
+        openDirectory: { _, _ in nil }, // never reached in this fixture
+        revealInFinder: { _ in true }, // Project -> .done
+        directoryExists: { _ in true },
+        copyToPasteboard: { _ in false }, // Copy Path -> .failed
+        isAlive: { _, _ in false }, // Stop -> .alreadyStopped
+        terminate: { _ in 0 } // never reached: isAlive already said no
+    )
+}
+
 private enum SessionFixture {
     private static func make(
         id: String,
@@ -112,11 +255,21 @@ private enum SessionFixture {
         status: SessionStatus,
         activity: Activity?,
         usage: TokenUsage,
-        age: TimeInterval
+        age: TimeInterval,
+        model: String? = "claude-sonnet-5",
+        lastRequestUsage: TokenUsage? = nil,
+        subagentUsage: TokenUsage = .zero,
+        subagentCount: Int = 0,
+        serviceTier: String? = nil,
+        pid: Int32 = 42_541,
+        recordsParsed: Int = 0,
+        toolCounts: [String: Int] = [:],
+        filePaths: [String] = [],
+        activityTrail: [TimedActivity] = []
     ) -> AISession {
         AISession(
             id: id,
-            pid: 42_541,
+            pid: pid,
             procStart: "Tue Sep  1 19:27:02 2026",
             projectName: projectName,
             workingDirectory: workingDirectory,
@@ -125,8 +278,16 @@ private enum SessionFixture {
             startedAt: Date().addingTimeInterval(-age),
             lastActivityAt: Date(),
             usage: usage,
-            model: "claude-sonnet-5",
-            claudeCodeVersion: "2.1.257"
+            subagentUsage: subagentUsage,
+            subagentCount: subagentCount,
+            model: model,
+            claudeCodeVersion: "2.1.257",
+            toolCounts: toolCounts,
+            filePaths: filePaths,
+            activityTrail: activityTrail,
+            serviceTier: serviceTier,
+            recordsParsed: recordsParsed,
+            lastRequestUsage: lastRequestUsage
         )
     }
 
@@ -213,6 +374,100 @@ private enum SessionFixture {
             activity: nil,
             usage: UsageFixture.none,
             age: ClockFixture.elevenMinutes
+        )
+    }
+
+    /// Carries subagents plus a populated facts panel, tool mix, file list and
+    /// timeline, so the "has subagents" preview does not incidentally look
+    /// like `noData` everywhere else on the screen.
+    static var withSubagents: AISession {
+        make(
+            id: "preview-with-subagents",
+            projectName: "claudence-survey",
+            workingDirectory: PathFixture.short,
+            status: .running,
+            activity: ActivityFixture.editing,
+            usage: UsageFixture.small,
+            age: ClockFixture.thirtySevenMinutes,
+            subagentUsage: SubagentFixture.severalTotal,
+            subagentCount: SubagentFixture.several.count,
+            serviceTier: "standard",
+            recordsParsed: 214,
+            toolCounts: ToolMixFixture.varied,
+            filePaths: FilePathFixture.several,
+            activityTrail: TrailFixture.atCap
+        )
+    }
+
+    /// A model the context table sizes, with a single request's usage on
+    /// record: the meter has both halves it needs and renders filled.
+    static var contextFilled: AISession {
+        make(
+            id: "preview-context-filled",
+            projectName: "context-meter-demo",
+            workingDirectory: PathFixture.short,
+            status: .running,
+            activity: ActivityFixture.editing,
+            usage: UsageFixture.medium,
+            age: ClockFixture.sixHours,
+            model: "claude-opus-5",
+            lastRequestUsage: RequestUsageFixture.single,
+            serviceTier: "standard",
+            recordsParsed: 58,
+            toolCounts: ToolMixFixture.varied,
+            filePaths: FilePathFixture.several,
+            activityTrail: TrailFixture.atCap
+        )
+    }
+
+    /// Same known model, but no assistant record with a usage block has been
+    /// read yet: the *other* unavailable reason, not the table-coverage one.
+    static var contextNoRequestYet: AISession {
+        make(
+            id: "preview-context-no-request",
+            projectName: "context-meter-demo",
+            workingDirectory: PathFixture.short,
+            status: .running,
+            activity: ActivityFixture.editing,
+            usage: UsageFixture.small,
+            age: ClockFixture.elevenMinutes,
+            model: "claude-opus-5",
+            lastRequestUsage: nil
+        )
+    }
+
+    /// A model this build's context table does not size at all.
+    /// `lastRequestUsage` is still populated, to make plain that the gap is
+    /// the model, not a missing request.
+    static var contextUnknownModel: AISession {
+        make(
+            id: "preview-context-unknown-model",
+            projectName: "context-meter-demo",
+            workingDirectory: PathFixture.short,
+            status: .running,
+            activity: ActivityFixture.editing,
+            usage: UsageFixture.small,
+            age: ClockFixture.elevenMinutes,
+            model: "claude-preview-9",
+            lastRequestUsage: RequestUsageFixture.single
+        )
+    }
+
+    /// As little as this build can derive: no model record, no pid, nothing.
+    /// Exercises the facts tiles that depend on a fact other than status ever
+    /// having been read, as opposed to `noData`, which still has a pid and a
+    /// model.
+    static var noProcessRecord: AISession {
+        make(
+            id: "preview-no-process",
+            projectName: "orphaned-transcript",
+            workingDirectory: PathFixture.short,
+            status: .running,
+            activity: nil,
+            usage: UsageFixture.none,
+            age: ClockFixture.elevenMinutes,
+            model: nil,
+            pid: 0
         )
     }
 
@@ -615,5 +870,195 @@ struct PopoverCompositionPreview: PreviewProvider {
             }
         }
         .previewDisplayName("Popover composition")
+    }
+}
+
+// MARK: - ActivityTimelineView
+
+struct ActivityTimelineEmptyPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Activity timeline") {
+            ActivityTimelineView(trail: TrailFixture.empty)
+        }
+        .previewDisplayName("ActivityTimelineView / empty")
+    }
+}
+
+struct ActivityTimelineAtCapPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Activity timeline") {
+            // 24 entries in, the engine's own cap; the view's default limit
+            // of 8 then trims that down to the newest handful.
+            ActivityTimelineView(trail: TrailFixture.atCap)
+        }
+        .previewDisplayName("ActivityTimelineView / at cap")
+    }
+}
+
+// MARK: - SessionFactsView
+
+struct SessionFactsPopulatedPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session facts") {
+            SessionFactsView(session: SessionFixture.withSubagents)
+        }
+        .previewDisplayName("SessionFactsView / populated")
+    }
+}
+
+struct SessionFactsGapsPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session facts") {
+            // Kind, Git branch and Registry are unavailable on every session
+            // in this build; this fixture also lacks a pid and a model, so
+            // every tile that can be a gap is one, each with its own reason.
+            SessionFactsView(session: SessionFixture.noProcessRecord)
+        }
+        .previewDisplayName("SessionFactsView / gaps")
+    }
+}
+
+// MARK: - SubagentListView
+
+struct SubagentListEmptyPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Subagents") {
+            // Most sessions spawn nothing; the parent total is irrelevant
+            // when the list itself is empty.
+            SubagentListView(subagents: SubagentFixture.empty, parentTotal: 0)
+        }
+        .previewDisplayName("SubagentListView / empty")
+    }
+}
+
+struct SubagentListSeveralPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Subagents") {
+            SubagentListView(
+                subagents: SubagentFixture.several,
+                parentTotal: SubagentFixture.severalParentTotal
+            )
+        }
+        .previewDisplayName("SubagentListView / several")
+    }
+}
+
+struct SubagentListMissingLabelsPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Subagents") {
+            // The second row's `meta.json` never resolved: both its agent
+            // type and its task description fall back to unavailable wording.
+            SubagentListView(
+                subagents: SubagentFixture.withUnlabeled,
+                parentTotal: SubagentFixture.withUnlabeledParentTotal
+            )
+        }
+        .previewDisplayName("SubagentListView / missing labels")
+    }
+}
+
+// MARK: - QuickActionsMenu
+
+struct QuickActionsMenuOutcomesPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Quick actions") {
+            // Never `.system`: every closure is a pure return, and each
+            // button demonstrates a different `SessionActionOutcome` case -
+            // Terminal unavailable, Project done, Copy Path failed, Stop
+            // already-stopped - so all four tones are visible without this
+            // preview ever touching Terminal, Finder, the pasteboard or a
+            // real process.
+            QuickActionsMenu(session: SessionFixture.working, actions: QuickActionsFixture.mixedOutcomes)
+        }
+        .previewDisplayName("QuickActionsMenu / every outcome tone")
+    }
+}
+
+// MARK: - SessionDetailView
+
+struct SessionDetailWithSubagentsPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session detail") {
+            SessionDetailView(
+                session: SessionFixture.withSubagents,
+                subagents: SubagentFixture.several,
+                tokenScaleMaximum: UsageFixture.mediumScale,
+                burnRatePerMinute: SeriesFixture.rate,
+                burnHistory: SeriesFixture.rising,
+                windowShare: WindowShareFixture.strong,
+                onClose: {}
+            )
+        }
+        .previewDisplayName("SessionDetailView / with subagents")
+    }
+}
+
+struct SessionDetailNoSubagentsPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session detail") {
+            SessionDetailView(
+                session: SessionFixture.working,
+                subagents: SubagentFixture.empty,
+                tokenScaleMaximum: UsageFixture.smallScale,
+                burnRatePerMinute: SeriesFixture.rate,
+                burnHistory: SeriesFixture.rising,
+                onClose: {}
+            )
+        }
+        .previewDisplayName("SessionDetailView / no subagents")
+    }
+}
+
+struct SessionDetailNothingReadYetPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session detail") {
+            // No activity, no tool calls, no files, no burn history: every
+            // unavailable state in the scroll at once, plus a real (not
+            // unavailable) zero for cost, since a priced model at zero usage
+            // is a genuine $0.00, not a gap.
+            SessionDetailView(session: SessionFixture.noData, onClose: {})
+        }
+        .previewDisplayName("SessionDetailView / nothing read yet")
+    }
+}
+
+struct SessionDetailContextFilledPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session detail") {
+            SessionDetailView(
+                session: SessionFixture.contextFilled,
+                tokenScaleMaximum: UsageFixture.mediumScale,
+                burnRatePerMinute: SeriesFixture.rate,
+                burnHistory: SeriesFixture.rising,
+                onClose: {}
+            )
+        }
+        .previewDisplayName("SessionDetailView / context meter filled")
+    }
+}
+
+struct SessionDetailContextNoRequestYetPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session detail") {
+            SessionDetailView(
+                session: SessionFixture.contextNoRequestYet,
+                tokenScaleMaximum: UsageFixture.smallScale,
+                onClose: {}
+            )
+        }
+        .previewDisplayName("SessionDetailView / context, no request yet")
+    }
+}
+
+struct SessionDetailContextUnknownModelPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session detail") {
+            SessionDetailView(
+                session: SessionFixture.contextUnknownModel,
+                tokenScaleMaximum: UsageFixture.smallScale,
+                onClose: {}
+            )
+        }
+        .previewDisplayName("SessionDetailView / context, model not in table")
     }
 }

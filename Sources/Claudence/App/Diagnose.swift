@@ -113,7 +113,10 @@ enum Diagnose {
         }
 
         // The usage call is the only network request the application makes.
-        print("usage (the one outbound request):")
+        // Two requests, not one: the usage GET, and a conditional token refresh
+        // when the access token has expired. An earlier version of this line
+        // claimed one, which was wrong.
+        print("usage (the only outbound path, at most two requests):")
         let semaphore = DispatchSemaphore(value: 0)
         nonisolated(unsafe) var state: UsageState = .unavailable(reason: "not run")
         // Detached: an inherited main-actor context cannot run while the
