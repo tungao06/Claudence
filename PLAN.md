@@ -563,9 +563,9 @@ the menu bar header as a measurement. Nothing durable is written, which is why i
 others, but it breaks the first rule. It is fixed together with 9.6 because both change what
 `todayUsage` means and both land in `MenuBarContent`.
 
-- [ ] `MonitorSnapshot.todayUsage` becomes optional and the header renders the unavailable state
+- [x] `MonitorSnapshot.todayUsage` becomes optional and the header renders the unavailable state
 
-### 9.6 `Today` reads zero after local midnight  `CONFIRMED`
+### 9.6 `Today` reads zero after local midnight  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -585,14 +585,27 @@ Two further defects are downstream of this one and are fixed with it:
 - Today's cost never refreshes at all. `MenuBarContent.swift:68` keys its refresh on
   `todayUsage.total / 250_000`, and after midnight that value is stuck at zero.
 
-- [ ] Derive per-day totals from `usage_samples` deltas keyed by the day `sampled_at` falls in,
+- [x] Derive per-day totals from `usage_samples` deltas keyed by the day `sampled_at` falls in,
       with the start-date rollup as the fallback for sessions with no samples
-- [ ] Route the correction through `recomputeRollups()`, never incremental writes
-- [ ] Suppress the day-over-day caption when there is no comparison rather than printing -100%
-- [ ] Test: a session spanning midnight contributes to both days and the two-day sum is unchanged
+- [x] Route the correction through `recomputeRollups()`, never incremental writes
+- [x] Suppress the day-over-day caption when there is no comparison rather than printing -100%
+- [x] Test: a session spanning midnight contributes to both days and the two-day sum is unchanged
 
 The rollup total was rewritten downward once before by a cursor/total mismatch and was found by
 an audit rather than a test. The sum-preservation test is not optional.
+
+Three things the item did not anticipate. Nothing called `recomputeRollups()` at all, so the fix
+needed a caller before it could be true at runtime; the engine runs it on the first pass, on a day
+rollover and while a live session predates today, throttled to 60 seconds. The split cannot be
+done incrementally, because subtracting the previous contribution would need the previous split
+and the session row does not carry one, so between repairs an overnight session's growth is filed
+on its start day again: provably right about the total, up to 60 seconds late about the day.
+And `session_count` deliberately stays on the start day, because it counts sessions rather than
+session-days.
+
+Carry into 9.12: the repair reads every session and every sample inside one transaction. That is
+cheap against a 484 KB database and unmeasured against the database the history import will
+produce. Time it on the imported database before trusting the 60 second throttle.
 
 ### 9.7 Counting and labelling  `CONFIRMED`
 
