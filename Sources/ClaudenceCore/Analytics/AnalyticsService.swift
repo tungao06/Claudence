@@ -203,10 +203,12 @@ public struct AnalyticsService: Sendable {
     /// Tokens hour by hour across `range`, oldest first.
     ///
     /// Built by differentiating `usage_samples`, which hold each session's
-    /// running total. A sample's delta from the one before it is attributed to
-    /// the hour the *later* sample falls in: that is where the tokens were
-    /// observed, and splitting a delta across the boundary it may straddle
-    /// would be a guess about when inside the interval the work happened.
+    /// running total. A sample's rise above the highest total that session has
+    /// reached is attributed to the hour the *later* sample falls in: that is
+    /// where the tokens were observed, and splitting a delta across the
+    /// boundary it may straddle would be a guess about when inside the interval
+    /// the work happened. The comparison is against that high-water mark rather
+    /// than against the previous sample because the samples are not monotonic.
     ///
     /// The first sample a session ever has is a special case with two wrong
     /// answers available. Counting its whole total puts every token the session
@@ -239,13 +241,19 @@ public struct AnalyticsService: Sendable {
         )
 
         var measured: [String: TokenUsage] = [:]
-        var previous: [String: TokenUsage] = [:]
+        // The highest running total each session has reached, not merely the
+        // sample before this one. `usage_samples` is not monotonic, and against
+        // the previous sample alone every token between the floor of a
+        // regression and the level it fell from is drawn a second time on the
+        // way back up.
+        var peak: [String: TokenUsage] = [:]
         for row in rows {
-            defer { previous[row.sessionID] = row.usage }
+            let mark = peak[row.sessionID]
+            peak[row.sessionID] = Self.higher(mark ?? .zero, row.usage)
 
             let delta: TokenUsage
-            if let earlier = previous[row.sessionID] {
-                delta = Self.increase(from: earlier, to: row.usage)
+            if let mark {
+                delta = Self.increase(from: mark, to: row.usage)
             } else if startedInRange.contains(row.sessionID) {
                 delta = row.usage
             } else {
@@ -298,13 +306,16 @@ public struct AnalyticsService: Sendable {
         )
     }
 
-    /// The rise from one running total to the next, floored at zero per field.
+    /// The rise of a running total above the highest it has already reached,
+    /// floored at zero per field.
     ///
     /// Totals only ever climb while a session lives, so a fall means the
-    /// session's transcript was rotated or its cursor reset. Clamping keeps
-    /// that from subtracting a real hour's work out of the chart; the lost
-    /// tokens are already unrecoverable at that point, and a negative bar would
-    /// be a second, louder wrong answer.
+    /// session's transcript was rotated or its cursor reset. Nothing is lost
+    /// when that happens: the tokens below the mark were drawn when they were
+    /// first observed. What the floor prevents is the opposite failure, of
+    /// drawing them again as the counter climbs back to where it was, which is
+    /// what measuring against the previous sample did. A negative bar would be
+    /// a second, louder wrong answer.
     private static func increase(from earlier: TokenUsage, to later: TokenUsage) -> TokenUsage {
         TokenUsage(
             freshInput: max(0, later.freshInput - earlier.freshInput),
@@ -312,6 +323,24 @@ public struct AnalyticsService: Sendable {
             cacheRead: max(0, later.cacheRead - earlier.cacheRead),
             output: max(0, later.output - earlier.output),
             thinking: max(0, later.thinking - earlier.thinking)
+        )
+    }
+
+    /// The per-field maximum of two running totals.
+    ///
+    /// Per field rather than per total, because each field is its own
+    /// cumulative counter and none of them can legitimately fall. Holding one
+    /// mark against `total` would make a regression in any single field
+    /// suppress the fields that kept climbing through it, and there would be no
+    /// honest way to split a recovered total back across a breakdown the chart
+    /// shows cache separately in.
+    private static func higher(_ lhs: TokenUsage, _ rhs: TokenUsage) -> TokenUsage {
+        TokenUsage(
+            freshInput: max(lhs.freshInput, rhs.freshInput),
+            cacheCreation: max(lhs.cacheCreation, rhs.cacheCreation),
+            cacheRead: max(lhs.cacheRead, rhs.cacheRead),
+            output: max(lhs.output, rhs.output),
+            thinking: max(lhs.thinking, rhs.thinking)
         )
     }
 

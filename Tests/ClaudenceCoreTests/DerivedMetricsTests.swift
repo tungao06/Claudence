@@ -443,6 +443,82 @@ func hourlySeriesCountsAFirstSampleForANewSession() throws {
     #expect(points.first(where: { $0.date == start })?.usage?.total == 500)
 }
 
+@Test("a cumulative regression contributes zero and the climb back is not counted twice")
+func hourlySeriesDoesNotRecountAfterARegression() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let start = onTheHour(4, from: now)
+
+    // The real shape of session 6ff2ff43 in the shipped database: a running
+    // total that fell and then climbed back over the level it fell from.
+    store.upsert(session: makeDerivedSession(
+        id: "6ff2ff43", startedAt: onTheHour(20, from: now), lastActivityAt: now))
+    store.recordUsageSample(
+        sessionID: "6ff2ff43", usage: usage(189_121_530), at: onTheHour(5, from: now))
+    store.recordUsageSample(
+        sessionID: "6ff2ff43", usage: usage(51_512_855), at: start.addingTimeInterval(600))
+    store.recordUsageSample(
+        sessionID: "6ff2ff43", usage: usage(189_121_530),
+        at: onTheHour(3, from: now).addingTimeInterval(600))
+    store.recordUsageSample(
+        sessionID: "6ff2ff43", usage: usage(200_000_000),
+        at: onTheHour(2, from: now).addingTimeInterval(600))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let points = service.hourlySeries(in: start..<now)
+
+    // The fall is a cursor reset, not a refund, so it is worth nothing. The
+    // climb back to 189,121,530 restates tokens already drawn and is worth
+    // nothing either. Only the 10,878,470 above the previous high is new.
+    #expect(points.first(where: { $0.date == start })?.usage?.total == 0)
+    #expect(points.first(where: { $0.date == onTheHour(3, from: now) })?.usage?.total == 0)
+    #expect(
+        points.first(where: { $0.date == onTheHour(2, from: now) })?.usage?.total == 10_878_470)
+
+    let drawn = points.compactMap(\.usage).reduce(TokenUsage.zero, +)
+    #expect(drawn.total == 10_878_470)
+}
+
+@Test("the high-water mark is per field, so fields that never fell keep counting")
+func hourlySeriesHoldsThePeakPerField() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let start = onTheHour(4, from: now)
+
+    func sample(_ fresh: Int, _ cacheRead: Int, _ output: Int) -> TokenUsage {
+        TokenUsage(freshInput: fresh, cacheRead: cacheRead, output: output)
+    }
+
+    // Only cacheRead regresses. Fresh input and output climb steadily through
+    // it, and the hours they were spent in must still report them.
+    store.upsert(session: makeDerivedSession(
+        id: "partial", startedAt: onTheHour(20, from: now), lastActivityAt: now))
+    store.recordUsageSample(
+        sessionID: "partial", usage: sample(100, 1_000, 10), at: onTheHour(5, from: now))
+    store.recordUsageSample(
+        sessionID: "partial", usage: sample(120, 400, 12), at: start.addingTimeInterval(600))
+    store.recordUsageSample(
+        sessionID: "partial", usage: sample(140, 1_000, 14),
+        at: onTheHour(3, from: now).addingTimeInterval(600))
+    store.recordUsageSample(
+        sessionID: "partial", usage: sample(160, 1_200, 16),
+        at: onTheHour(2, from: now).addingTimeInterval(600))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let points = service.hourlySeries(in: start..<now)
+
+    let first = try #require(points.first(where: { $0.date == start })?.usage)
+    #expect(first == sample(20, 0, 2))
+
+    let second = try #require(points.first(where: { $0.date == onTheHour(3, from: now) })?.usage)
+    #expect(second == sample(20, 0, 2))
+
+    let third = try #require(points.first(where: { $0.date == onTheHour(2, from: now) })?.usage)
+    #expect(third == sample(20, 200, 2))
+}
+
 @Test("the five-hour range ends at the reset rather than at the clock")
 func fiveHourRangeEndsAtTheReset() {
     let now = Date()
