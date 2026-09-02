@@ -271,31 +271,37 @@ struct SessionDetailView: View {
     /// record's own usage block. The denominator is `ContextWindowTable`, which
     /// is this application's claim rather than the transcript's, which is why
     /// the reading is labelled Estimated. See PLAN-UI decision 1.
+    ///
+    /// Three states, not two, and the third is the interesting one: when the
+    /// request size is known and the model's limit is not, the figure is still
+    /// printed, with no bar and no percentage. Which state applies is decided by
+    /// `ContextWindowTable.reading`, in the domain, where it is testable; this
+    /// property owns the wording and the layout only.
     @ViewBuilder
     private var contextWell: some View {
-        if let fraction = contextFraction, let window = contextWindows.window(for: session.model) {
+        switch contextWindows.reading(requestUsage: session.lastRequestUsage, model: session.model) {
+        case let .measured(fraction, requestInputTokens, maximumInputTokens):
             ContextWell(
                 fraction: fraction,
-                detail: "\(Format.tokens(session.lastRequestUsage?.billableInput ?? 0)) of \(Format.tokens(window.maximumInputTokens))"
+                detail: "\(Format.tokens(requestInputTokens)) of \(Format.tokens(maximumInputTokens))"
             )
-        } else {
-            ContextWell.unavailable(reason: contextReason)
+        case let .amountOnly(requestInputTokens):
+            ContextWell.amountOnly(
+                amount: "\(Format.tokens(requestInputTokens)) in the last request",
+                reason: Self.limitUnknownReason
+            )
+        case .noRequestRead:
+            ContextWell.unavailable(reason: Self.noRequestReason)
         }
     }
 
-    /// Fraction of the model's context window the newest request occupied. Nil
-    /// whenever either half is missing, never a substituted zero.
-    private var contextFraction: Double? {
-        guard let request = session.lastRequestUsage else { return nil }
-        return contextWindows.fractionUsed(requestUsage: request, model: session.model)
-    }
+    /// Why there is no bar although there is a figure. Deliberately a different
+    /// sentence from `noRequestReason`: one says the reading is incomplete, the
+    /// other says there is no reading at all.
+    static let limitUnknownReason =
+        "This model's limit is not in the context-limit table, and a guessed limit is worse than none"
 
-    private var contextReason: String {
-        guard contextWindows.covers(session.model) else {
-            return "This model is not in the context-limit table, and a guessed limit is worse than none"
-        }
-        return "No request with a usage block has been read yet"
-    }
+    static let noRequestReason = "No request with a usage block has been read yet"
 
     // MARK: - Cost and efficiency
 
@@ -1060,26 +1066,42 @@ struct TokenBreakdownColumn<Well: View>: View {
 ///
 /// The reading always carries the word Estimated, because the denominator is
 /// Claudence's own model table and not anything the transcript stated.
+///
+/// Three states, matching `ContextReading`: the meter, the figure with no
+/// meter when the model's limit is unknown, and nothing at all when no request
+/// has been read. The middle one exists because the amount in use is a
+/// measurement in its own right, and withholding it because the ceiling is
+/// missing threw away a fact the reader had.
 struct ContextWell: View {
     let fraction: Double?
     /// `used of limit`, the design's own sub-line, or nil when there is none.
     let detail: String?
+    /// The measured figure shown when there is no limit to measure it against.
+    let amount: String?
     let reason: String?
 
     init(fraction: Double, detail: String) {
         self.fraction = fraction
         self.detail = detail
+        self.amount = nil
         self.reason = nil
     }
 
-    private init(reason: String) {
+    private init(amount: String?, reason: String) {
         self.fraction = nil
         self.detail = nil
+        self.amount = amount
         self.reason = reason
     }
 
     static func unavailable(reason: String) -> ContextWell {
-        ContextWell(reason: reason)
+        ContextWell(amount: nil, reason: reason)
+    }
+
+    /// The amount is known and the limit is not: print the figure, say why
+    /// there is no bar, and never divide by a guess.
+    static func amountOnly(amount: String, reason: String) -> ContextWell {
+        ContextWell(amount: amount, reason: reason)
     }
 
     var body: some View {
@@ -1091,6 +1113,8 @@ struct ContextWell: View {
 
             if let fraction {
                 meter(fraction)
+            } else if let amount {
+                figureWithoutALimit(amount)
             } else {
                 UnavailableView("Context window unavailable", reason: reason, compact: true)
             }
@@ -1100,6 +1124,31 @@ struct ContextWell: View {
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous)
                 .fill(Theme.surfaceInset)
+        )
+    }
+
+    /// The amount with no bar behind it. No severity glyph and no colour: both
+    /// would be claims about how close this request is to a limit nobody has.
+    private func figureWithoutALimit(_ amount: String) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+            Text(amount)
+                .font(Theme.Typography.value)
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            if let reason, !reason.isEmpty {
+                Text(reason)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            reason.map { "Context window, \(amount). \($0)" } ?? "Context window, \(amount)"
         )
     }
 

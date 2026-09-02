@@ -438,7 +438,8 @@ private enum SessionFixture {
 
     /// A model this build's context table does not size at all.
     /// `lastRequestUsage` is still populated, to make plain that the gap is
-    /// the model, not a missing request.
+    /// the model, not a missing request: the well shows the amount in use with
+    /// no bar and no percentage, which is the third `ContextReading`.
     static var contextUnknownModel: AISession {
         make(
             id: "preview-context-unknown-model",

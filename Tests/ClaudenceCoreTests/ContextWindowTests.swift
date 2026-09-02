@@ -150,3 +150,91 @@ func nonPositiveLimitIsUnavailable() {
     let table = ContextWindowTable(entries: [broken], provenance: ContextWindowTable.current.provenance)
     #expect(table.fractionUsed(requestInputTokens: 1_000, model: "claude-test-broken") == nil)
 }
+
+// MARK: - The 1M-context variant
+
+@Test("a [1m] model id resolves to the published one-million window")
+func longContextSuffixResolvesToOneMillion() throws {
+    let table = ContextWindowTable.current
+
+    // The suffix is the published name of the model's 1M-context variant, so
+    // reading it is a read of the id, not a guess about an unlisted model.
+    let opus = try #require(table.window(for: "claude-opus-5[1m]"))
+    #expect(opus.maximumInputTokens == 1_000_000)
+    #expect(opus.modelID == "claude-opus-5[1m]")
+    #expect(table.covers("claude-opus-5[1m]"))
+
+    // Normalisation lowercases first, so the marker's case does not matter.
+    #expect(table.window(for: "claude-opus-5[1M]")?.maximumInputTokens == 1_000_000)
+
+    // The marker states the window on its own, so a base the table does not
+    // size is still sized. Mythos 5 has no entry, and its 1M variant needs none.
+    #expect(table.window(for: "claude-mythos-5[1m]")?.maximumInputTokens == 1_000_000)
+
+    // A snapshot of the same model id also lands on the entry that carries the
+    // marker, since normalisation runs before the marker is read.
+    #expect(table.fractionUsed(requestInputTokens: 250_000, model: "claude-opus-5[1m]") == 0.25)
+}
+
+@Test("only the published marker is read, never any bracketed suffix")
+func onlyTheOneMillionMarkerIsRead() {
+    let table = ContextWindowTable.current
+    // A different bracketed suffix states nothing this build knows how to read.
+    #expect(table.window(for: "claude-opus-5[2m]") == nil)
+    #expect(table.window(for: "claude-opus-5[]") == nil)
+    // The marker with no model in front of it names no model.
+    #expect(table.window(for: "[1m]") == nil)
+}
+
+// MARK: - The three readings
+
+@Test("a reading separates no request read yet from a limit the table lacks")
+func contextReadingDistinguishesItsTwoGaps() throws {
+    let table = ContextWindowTable.current
+    // 261k of billable input, the figure the well has to show either way.
+    let request = TokenUsage(freshInput: 61_000, cacheRead: 200_000)
+    #expect(request.billableInput == 261_000)
+
+    // Nothing read: nothing to show, whether or not the model is sized.
+    #expect(table.reading(requestUsage: nil, model: "claude-opus-5") == .noRequestRead)
+    #expect(table.reading(requestUsage: nil, model: "gpt-5") == .noRequestRead)
+
+    // Amount in hand, limit not: the figure is shown and no meter is drawn.
+    #expect(table.reading(requestUsage: request, model: "gpt-5")
+        == .amountOnly(requestInputTokens: 261_000))
+    #expect(table.reading(requestUsage: request, model: nil)
+        == .amountOnly(requestInputTokens: 261_000))
+
+    // Both halves: the meter, against the limit the table actually states.
+    let measured = table.reading(requestUsage: request, model: "claude-haiku-4-5")
+    guard case let .measured(fraction, tokens, limit) = measured else {
+        Issue.record("a sized model with a request read is a measured reading")
+        return
+    }
+    #expect(abs(fraction - 1.305) < 0.000_001)
+    #expect(tokens == 261_000)
+    #expect(limit == 200_000)
+}
+
+@Test("an unusable limit reads as amount-only, never as a zero-percent meter")
+func contextReadingFallsBackWhenTheLimitIsUnusable() {
+    let broken = ModelContextWindow(
+        modelID: "claude-test-broken", displayName: "Broken", maximumInputTokens: 0)
+    let table = ContextWindowTable(entries: [broken], provenance: ContextWindowTable.current.provenance)
+    #expect(table.reading(requestUsage: TokenUsage(freshInput: 1_000), model: "claude-test-broken")
+        == .amountOnly(requestInputTokens: 1_000))
+}
+
+@Test("a reading of the maintainer's own model draws a meter rather than a gap")
+func contextReadingSizesTheOneMillionVariant() throws {
+    let table = ContextWindowTable.current
+    let request = TokenUsage(freshInput: 61_000, cacheRead: 200_000)
+    let reading = table.reading(requestUsage: request, model: "claude-opus-5[1m]")
+    guard case let .measured(fraction, tokens, limit) = reading else {
+        Issue.record("the [1m] marker sizes the model, so this is a measured reading")
+        return
+    }
+    #expect(abs(fraction - 0.261) < 0.000_001)
+    #expect(tokens == 261_000)
+    #expect(limit == 1_000_000)
+}

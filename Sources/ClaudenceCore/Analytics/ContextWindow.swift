@@ -66,6 +66,34 @@ public struct ModelContextWindow: Sendable, Equatable {
     }
 }
 
+// MARK: - What the display can say about one session
+
+/// The three honest readings of a session's context, as a value the view maps
+/// straight onto a layout instead of rederiving from two optionals.
+///
+/// It is here rather than in the view for the usual reason: the choice between
+/// them is arithmetic over the domain, it is the part that can be wrong, and
+/// the UI target has no test bundle. The view owns the wording and nothing else.
+public enum ContextReading: Sendable, Equatable {
+    /// Both halves in hand: draw the meter.
+    ///
+    /// `fraction` is not clamped, for the reason `ModelContextWindow.fraction`
+    /// gives: a figure above 1 means the caller passed something other than one
+    /// request's input, and hiding that behind a tidy 100% hides a bug.
+    case measured(fraction: Double, requestInputTokens: Int, maximumInputTokens: Int)
+
+    /// The size of the last request is known and the model's limit is not.
+    ///
+    /// Renders the figure with no meter and no percentage. There is no guessed
+    /// denominator here and there must never be one: a share of an unstated
+    /// quantity is exactly the fabricated number the spec forbids.
+    case amountOnly(requestInputTokens: Int)
+
+    /// No assistant record with a usage block has been read, so there is no
+    /// numerator and nothing to show at all.
+    case noRequestRead
+}
+
 // MARK: - The table
 
 /// A per-model context-limit table, matched by the same rule as `ModelPricing`.
@@ -111,6 +139,8 @@ public struct ContextWindowTable: Sendable, Equatable {
 
         if let exact = entries.first(where: { $0.modelID == id }) { return exact }
 
+        if let long = longContextWindow(forNormalizedID: id) { return long }
+
         // Longest known id first, so a more specific family wins.
         for entry in entries.sorted(by: { $0.modelID.count > $1.modelID.count }) {
             let key = entry.modelID
@@ -119,6 +149,45 @@ public struct ContextWindowTable: Sendable, Equatable {
             if ModelPricing.isSnapshotSuffix(suffix) { return entry }
         }
         return nil
+    }
+
+    /// The marker Claude Code appends to name a model's 1M-context variant, as
+    /// it appears in a model id: `claude-opus-5[1m]`.
+    ///
+    /// Lowercase, because `ModelPricing.normalize` has already lowercased the id
+    /// by the time this is compared.
+    static let longContextMarker = "[1m]"
+
+    /// The window the marker states, in tokens. Decimal, like the table above.
+    static let longContextTokens = 1_000_000
+
+    /// The window a `[1m]`-marked id states about itself, or nil when the id
+    /// carries no marker.
+    ///
+    /// This is the one entry in this file that is not a row of the table, and it
+    /// is still not a guess: the suffix is the published name of the model's
+    /// 1M-context variant, so reading it is a read of the id. That is why it
+    /// applies even when the base model has no entry here. `claude-mythos-5` is
+    /// deliberately unsized above because the source states no window for it,
+    /// but `claude-mythos-5[1m]` states its own, and honouring one while
+    /// refusing the other would be arbitrary.
+    ///
+    /// Only this exact marker is read. A different bracketed suffix states
+    /// nothing this build knows how to interpret and resolves to nil, per the
+    /// rule that an honest gap beats a plausible number.
+    private func longContextWindow(forNormalizedID id: String) -> ModelContextWindow? {
+        guard id.hasSuffix(Self.longContextMarker) else { return nil }
+        let base = String(id.dropLast(Self.longContextMarker.count))
+        guard !base.isEmpty else { return nil }
+
+        // The base's own entry supplies a readable name when there is one; the
+        // limit comes from the marker either way, never from the base entry.
+        let name = window(for: base)?.displayName ?? base
+        return ModelContextWindow(
+            modelID: id,
+            displayName: "\(name) (1M context)",
+            maximumInputTokens: Self.longContextTokens
+        )
     }
 
     public func covers(_ rawModelID: String?) -> Bool { window(for: rawModelID) != nil }
@@ -151,6 +220,38 @@ public struct ContextWindowTable: Sendable, Equatable {
     /// request and no `AISession` overload exists.
     public func fractionUsed(requestUsage: TokenUsage, model: String?) -> Double? {
         fractionUsed(requestInputTokens: requestUsage.billableInput, model: model)
+    }
+
+    // MARK: What the display can honestly say
+
+    /// Which of the three context readings the available facts support.
+    ///
+    /// The display used to have two states, meter or nothing, which collapsed
+    /// two unrelated gaps into one sentence. Missing the numerator and missing
+    /// the denominator are not the same situation: without a request read there
+    /// is nothing to say, but with one in hand and no limit there is still a
+    /// measured figure, and refusing to print it hides a fact the reader has.
+    ///
+    /// - Parameter requestUsage: the usage of a **single** assistant record, or
+    ///   nil when none has been read. Never a session or daily total.
+    /// - Parameter model: the session's model id, or nil when none was recorded.
+    public func reading(requestUsage: TokenUsage?, model: String?) -> ContextReading {
+        guard let requestUsage else { return .noRequestRead }
+        let tokens = requestUsage.billableInput
+
+        // A window with an unusable limit takes the amount-only branch for the
+        // same reason `fractionUsed` returns nil for it: 0% is a measurement,
+        // and this is not one.
+        guard let window = window(for: model),
+              let fraction = window.fraction(ofRequestInputTokens: tokens)
+        else {
+            return .amountOnly(requestInputTokens: tokens)
+        }
+        return .measured(
+            fraction: fraction,
+            requestInputTokens: tokens,
+            maximumInputTokens: window.maximumInputTokens
+        )
     }
 
     // MARK: The shipped table

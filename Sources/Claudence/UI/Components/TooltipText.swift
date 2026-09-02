@@ -122,7 +122,7 @@ enum TooltipText {
         ),
         "ctx": Entry(
             title: "Context window",
-            body: "How much of the model's context window the newest request used. The used value is measured from that request; the limit is Claudence's own model table, not something the transcript states, so the reading is labelled Estimated. Under 70% Healthy, 70–85% Attention, 85–95% Warning, above 95% Critical."
+            body: "How much of the model's context window the newest request used. The used value is measured from that request; the limit is Claudence's own model table, not something the transcript states, so the reading is labelled Estimated. Under 70% Healthy, 70–85% Attention, 85–95% Warning, above 95% Critical. When that table has no limit for the model, the amount in use is still shown, with no bar and no percentage."
         ),
     ]
 
