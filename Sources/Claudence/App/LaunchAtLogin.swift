@@ -74,7 +74,6 @@ struct LaunchAtLoginOutcome: Equatable, Sendable {
     /// nil when the system agreed. Never a generic "something went wrong".
     let failure: String?
 
-    var succeeded: Bool { failure == nil }
 }
 
 // MARK: - Service

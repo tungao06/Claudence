@@ -300,6 +300,415 @@ sessions present.
 
 ---
 
+## Phase 9 — Correct the numbers, then subtract, then extend
+
+Rewritten 2026-09-03 after a six-way review: two independent code audits, and four user
+perspectives that were run in isolation from each other and from the maintainer. The audits
+produced eleven confirmed defects; the perspectives disagreed sharply about what the application
+is for, and the disagreement was resolved by decision rather than by consensus.
+
+**The finding that orders this phase.** The parsing and storage layers are sound. Every audit of
+them came back clean: one definition of the token formula with nothing recomputing it,
+`daily_rollups` reconciling exactly against `parent + subagent` for all sixteen sessions,
+`subagent_totals` reconciling exactly against the session columns, a cost estimator that refuses
+to borrow a price for an unknown model, a context meter that uses last-request usage rather than
+the cumulative total, and a severity ramp that agrees with its thresholds at every boundary.
+Every defect below lives in the layer above: the aggregates and the derived metrics.
+
+### Measured baseline
+
+A month of real usage on this machine, read from `~/.claude/projects` on 2026-09-03. These
+figures decide several arguments below, so they are recorded rather than summarised.
+
+```
+22 active days, 219 transcripts, 242 MB, largest single file 19.9 MB
+
+combined            5,297,171,104 tokens
+  parent            3,373,150,914
+  subagent          1,924,020,190      36.3% of the total
+
+subagent share by project
+  hr-leave-management        1.56 B    82.2%
+  e-claim-api-nest           1.05 B    10.0%
+  Claudence                   846 M    41.9%
+  Engate-portal                88 M     0.0%
+
+by model
+  claude-sonnet-5            2.95 B
+  claude-opus-5              2.25 B
+
+2026-09-01 alone             1.51 B    28% of the month in one day
+```
+
+Three consequences. Subagent share is not a constant — it ranges from 0% to 82% by project, so
+any figure that drops subagents is wrong by a factor that changes per row. Sonnet and Opus are
+close to an even split, so a token count that does not separate them cannot be compared across
+projects. And usage is extremely bursty, which is what makes a rate-limit projection worth
+building.
+
+---
+
+## Stage 1 — Correctness
+
+Nothing in stage 2 or 3 starts until this stage is done. The application currently prints
+several figures that are confidently wrong, and a monitoring tool that cannot be trusted is
+worse than none.
+
+### 9.1 The project breakdown contradicts itself inside one row  `CONFIRMED`
+
+**~0.5 day**
+
+`AnalyticsService.swift:344` accumulates `usage += session.usage`, which is parent-only, while
+the cost on the same `ProjectSummary` goes through `CostEstimator.swift:118`, which prices
+`session.combinedUsage`. The tokens cell excludes subagents; the cost cell one column to its
+right includes them.
+
+Measured against the live database:
+
+```
+project        tokens rendered   subagents omitted      true total   understated by
+claudence-99      149,792,426         334,207,592     484,000,018            3.2x
+claudence-97      197,889,320          11,792,545     209,681,865            1.06x
+```
+
+The ordering and the relative bar are worse than the cell. `claudence-99` is genuinely the
+busiest project and is drawn second, at 76% of the bar, behind a project two thirds its size;
+every project without subagents is over-weighted against every project with them.
+
+This is the one aggregate in the codebase that dissents. `daily_rollups`, the sessions table,
+`recentShare` and the usage samples all use `combinedUsage`, and `ClaudenceStore.swift:491`
+carries a comment warning that a repair using the parent-only figure "would quietly rewrite
+history down by every session's subagent spend".
+
+- [ ] `usage += session.combinedUsage`
+- [ ] Test: a project whose sessions have subagents reports the combined figure, and sorts on it
+
+### 9.2 The hourly chart counts tokens twice after a cumulative regression  `CONFIRMED`
+
+**~0.5 day**
+
+`usage_samples` is not monotonic. Thirteen downward steps exist in the current database.
+`AnalyticsService.increase(from:to:)` clamps each field at `max(0, later - earlier)`, so the fall
+contributes zero and the climb back to the previous level is then counted a second time.
+
+```
+session     drawn by the chart     actually spent      overcount
+6ff2ff43           649,468,504        483,706,748     +165.8 M  (+34.3%)
+21d26a51            20,761,085          9,221,707        2.25x
+```
+
+The comment at `AnalyticsService.swift:301` describes the failure as tokens being lost. It is the
+opposite: they are drawn twice.
+
+- [ ] Carry a per-session high-water mark rather than comparing against the previous sample, so a
+      reset contributes zero and the recovery is not re-counted
+- [ ] Test built from the real regression: session `6ff2ff43` falling 189,121,530 to 51,512,855
+
+The daily chart is unaffected — it reads `daily_rollups`, not samples.
+
+### 9.3 "Share of the 5h window" is neither  `CONFIRMED`
+
+**~0.5 day**
+
+Two defects in one row of the session detail.
+
+The label is the one the type forbids. `DerivedMetrics.swift:73` states that the figure "says
+nothing about how much of the billing window is left", and that "the name of every member here
+says *recent tokens* rather than *window* so the two cannot be confused at a call site". The
+only call site, `SessionDetailView.swift:326`, says window.
+
+The figure is also not what it claims. Numerator and denominator are each session's *lifetime*
+`combinedUsage`, merely filtered to sessions active in the last five hours. Computed on the live
+database for the window 20:25 to 01:25, session `6ff2ff43` renders 59% having spent about 1% of
+the tokens actually spent in that window, while the session that spent 61% of them renders 25%.
+
+- [ ] Either compute a true in-window figure from `usage_samples` deltas, or rename the row to
+      what it measures. Not both readings under one label.
+
+### 9.4 Burn rate never decays  `CONFIRMED`
+
+**~0.5 day**
+
+`MonitorSnapshot.swift:117` — `rate(now: Date = Date())` accepts `now` and never reads it.
+Samples are evicted only inside `record(tokens:at:)`, which the engine calls only when the
+combined total actually moved.
+
+A session that spends 1.5 M tokens between 14:00 and 14:05 and then goes quiet still reports
+300,000 per minute at 18:00, on the dashboard tile, in the sessions table and in the session row.
+
+The documentation immediately above that struct claims the opposite behaviour: "an idle gap
+drives the rate toward zero instead of preserving a stale average." The code does not do this.
+
+- [ ] Evict on read as well as on write, using the `now` the caller already passes
+- [ ] Test: a tracker with no new samples reports a falling rate and then zero
+
+### 9.5 A degraded store renders zero as a measurement  `CONFIRMED`
+
+**~0.5 day**
+
+Two independent paths to the same failure, and together they break the project's first rule.
+
+`AnalyticsService.todayTotal()` and `todayCost()` are the only analytics reads with no
+`answered()` guard. Every sibling captures `store.health` before and after and returns nil.
+`DashboardData.todayUsage` is optional precisely so a failed read can render `UnavailableView`,
+but `DashboardAdapter.swift:67` can only ever pass a non-nil value. A failed read therefore
+prints `Tokens today 0` and `$0.00 est.` as measurements.
+
+Underneath that, `ClaudenceStore.note(failure:)` moves `_health` to `.degraded` once and takes
+the `break` branch forever after, and `_health` is set to `.healthy` only during init. So health
+never recovers, and once it is latched a newly failing query produces no transition,
+`answered(before:after:)` returns true, and every other analytics read starts trusting its own
+default as well.
+
+- [ ] Guard both reads, and let them return nil
+- [ ] Record every failure rather than only the first, and let health recover
+- [ ] Make `answered` depend on the outcome of the query rather than on a health transition
+- [ ] Test: a store failure after a prior failure renders `Usage unavailable`, never zero
+
+### 9.6 `Today` reads zero after local midnight  `CONFIRMED`
+
+**~0.5 day**
+
+`daily_rollups.day` is keyed by `session.startedAt` rather than by when the tokens were spent
+(`ClaudenceStore.swift:237` and `:518`). A session that starts at 21:25 and is still running at
+00:52 puts everything it spends after midnight onto the previous day's row, and `todayTotal()`
+asks `WHERE day >= '<today>'` and gets nothing.
+
+Observed at 00:52 on 2026-09-03: all eight rollup rows dated 2026-09-02, while session `871278d1`
+was alive with 172.7 M tokens attributed entirely to the previous day.
+
+Two further defects are downstream of this one and are fixed with it:
+
+- The stat tile renders `down 100% vs yesterday` as a measurement, because
+  `DayOverDayDelta.fractionalChange` computes `(0 - 855,975,471) / 855,975,471`. The type's own
+  documentation calls out this case as one that must stay distinguishable from a real reading.
+- Today's cost never refreshes at all. `MenuBarContent.swift:68` keys its refresh on
+  `todayUsage.total / 250_000`, and after midnight that value is stuck at zero.
+
+- [ ] Derive per-day totals from `usage_samples` deltas keyed by the day `sampled_at` falls in,
+      with the start-date rollup as the fallback for sessions with no samples
+- [ ] Route the correction through `recomputeRollups()`, never incremental writes
+- [ ] Suppress the day-over-day caption when there is no comparison rather than printing -100%
+- [ ] Test: a session spanning midnight contributes to both days and the two-day sum is unchanged
+
+The rollup total was rewritten downward once before by a cursor/total mismatch and was found by
+an audit rather than a test. The sum-preservation test is not optional.
+
+### 9.7 Counting and labelling  `CONFIRMED`
+
+**~0.5 day**
+
+Smaller, all of them cases where the screen states something untrue.
+
+- **Three different "active sessions" counts render at once.** `MonitorViewModel.swift:253` uses
+  `status == .running`; `MenuBarContent.swift:317` uses every session including idle ones, under
+  a label reading ACTIVE SESSIONS; `StatTilesView.swift:158` does the same. With one busy and one
+  idle session, VoiceOver says one, the popover pill says two, the tile says two.
+- **The active tile can print a numerator larger than its denominator.** Numerator is every live
+  registry session; denominator is `sessionsActiveToday()`, which filters stored rows on
+  `last_activity_at`. An idle session carrying yesterday's timestamp is in the first and not the
+  second, so the tile renders `2 / 1 today`. `AnalyticsService.swift:388` documents this exact
+  arrangement as the thing being prevented.
+- **Two definitions of "today" on one window.** `SessionHistoryView.swift:37` filters on
+  `startedAt`; `sessionsActiveToday()` filters on last activity, deliberately. The history table
+  reads "0 sessions" while the tile two cards above reads "/ 1 today".
+- **Two cost figures over different ranges, neither labelled.** The tile is today; the projects
+  table is called with `since: nil`, meaning all time. The tile reads $3.42 beside project costs
+  summing to $5.43.
+- **`TokenBreakdownCard` prints `(0%)` beside a non-zero count.** `Format.share` exists for
+  exactly this and emits `<1%`; the session detail uses it, this card does not.
+
+- [ ] One definition of "active", used everywhere the word appears
+- [ ] One definition of "today", used everywhere the word appears
+- [ ] Label both cost ranges, or make them the same range
+- [ ] Route the card's percentage through `Format.share`
+
+### 9.8 Settings that do not reach every surface  `CONFIRMED`
+
+**~0.5 day**
+
+A control that lies is worse than an absent one, which puts this in stage 1 rather than later.
+
+- [ ] `showSubagents` is read at one site only. `ClaudenceApp.swift:315` passes `showsSubagents:
+      true` as a literal, so the switch works in the popover and is ignored in the dashboard sheet.
+- [ ] `compactRows` is read at one site only; the dashboard's sessions card has no compact concept.
+      Wire it, or rename the setting to say it is the menu bar only.
+- [ ] `liveIndicators` has two delivery paths that can diverge: the environment, read by eight
+      components, and an explicit parameter passed into `SessionRow`, which already reads the
+      environment. Merge onto the environment.
+
+---
+
+## Stage 2 — Subtraction
+
+Approved after all four user perspectives independently named the same things, without seeing
+each other's answers.
+
+### 9.9 Remove what does not earn its place
+
+**~0.5 day, and it is a net deletion**
+
+- [ ] **The subagent detail sheet, entirely.** Thirteen of roughly twenty slots are unavailable by
+      construction rather than for want of data today, and the code says so in six separate
+      comments. The four facts that do exist — parent, agent type, tokens, share of parent — move
+      inline into the subagent row on the parent sheet. What is lost is the per-subagent cache
+      split, which is real data honestly derived; it is not worth a navigation step.
+- [ ] **Tool Mix and Files Touched.** No reader named a decision that changes on `Read 41, Edit 19`,
+      and Files Touched shows three truncated chips of a session that touched sixty files.
+- [ ] **The diagnostic facts**: PID, Kind, Registry, Session id, CC version, Transcript, Tail
+      offset. These exist for whoever is debugging the reader, and `--diagnose --counters` already
+      serves that reader from the terminal. This supersedes the previous plan's intention to spend
+      a day plumbing `Kind`, `Registry`, `Transcript` and `Tail offset` into `AISession`: removing
+      them costs nothing and removes four permanent `Unavailable` labels.
+- [ ] **`Git branch`**, which is not a removal but a correction, and the reason the tile survives.
+      `SessionFactsView` hardcodes it to nil with a reason that is false: `TranscriptReader.swift:216`
+      collects the branch, `MonitorEngine.swift:182` assigns it, and `MenuBarContent.swift:340`
+      already displays it.
+- [ ] **Dead code.** `ClaudenceStore.projectTotals(since:)` (zero callers, and its SQL selects
+      parent-only columns, so wiring it up would reproduce 9.1); `usageSamples(sessionID:since:)`
+      (zero callers); six `RegistryRecord` fields decoded and never read; seven `CostEstimate`
+      members including a `gapDescription` that composes a user-facing sentence nothing prints;
+      `DerivedMetrics.percentChange` and `hasComparison`; nineteen `Theme` tokens including four
+      `subagent*Column` widths left over from a table layout that no longer exists.
+- [ ] **`AISubagent.spawnDepth`**, and its entry in the privacy allowlist. It is read from
+      `meta.json`, carried through the tracker, written to SQLite and read back, and no view
+      renders it. CLAUDE.md argues at length about which fields of that file may be read; one of
+      the four is used for nothing, and permission to read it should not outlive the use.
+
+### 9.10 De-duplicate what is displayed twice
+
+**~0.5 day**
+
+- [ ] `TOKENS TODAY` and the token breakdown card's `Total` are the same number on one window
+- [ ] `ACTIVE SESSIONS 4` restates the row count of the card directly above it
+- [ ] The power meter's attention banner restates the tube and caption forty pixels above it
+- [ ] `Share of the parent` and `Share` appear in the same detail sheet
+- [ ] Three independent computations of "this component as a share of the total" — `Tooltip.swift:395`,
+      `SessionDetailView.swift:966`, `TokenBreakdownCard.swift:156`. One helper on `TokenUsage`.
+- [ ] `SubagentListView.swift:131` computes a share by hand two lines above using
+      `AISubagent.share(ofParentTotal:)`, which exists
+- [ ] The usage chart occupies half the top row and renders `No usage history` in every captured
+      screenshot, including populated ones. Give it a daily fallback when the hourly series is
+      empty, or collapse the card.
+
+---
+
+## Stage 3 — The gauge
+
+The application's stated priority is `power meter -> active sessions -> analytics`, and the
+cheapest unbuilt thing is at the top of it.
+
+### 9.11 Time to empty
+
+**~1 day**
+
+The question the meter cannot currently answer: at 11:04, with the 7-day window at 66% and four
+hours of Opus work planned, does the work fit. The meter shows a photograph where a trajectory is
+needed.
+
+Nothing new has to be read. `UsageWindow` already carries `usedPercent` and `resetsAt`, and
+`BurnRateTracker` already produces tokens per minute. The remaining work is division, plus the
+honesty around it.
+
+- [ ] Projected exhaustion time per window, shown beside the reset time in the same tile, because
+      the gap between those two is the entire decision
+- [ ] Which window binds first. 21% on 5h and 66% on 7d are given equal visual weight today, and
+      the 7-day one is the one that ends the day
+- [ ] The session responsible for the largest share of the current burn, named
+- [ ] `Rate unavailable` until there are enough samples. A projection from one sample is a
+      fabricated number, and this is the feature most able to produce one
+
+Depends on 9.4: a burn rate that never decays produces a projection that never moves.
+
+---
+
+## Stage 4 — The ledger
+
+Every month-shaped question the application invites is currently unanswerable while 242 MB of the
+answer sits on disk and the database holds one day.
+
+### 9.12 Import the history already on disk
+
+**~1.5 days**
+
+- [ ] A one-time import with a chosen start date, and a way to clear a range and re-run it
+- [ ] A path that does not require liveness. Historical sessions have dead PIDs, and discovery is
+      gated on `kill(pid, 0)` plus a matching `procStart`
+- [ ] Report what the import found and what it could not read. An import that silently drops a
+      project is worse than none, because the totals afterwards are trusted
+- [ ] The largest transcript on disk is 19.9 MB against a 12 MB performance fixture. Re-measure
+      the 50 ms re-scan budget against the real file, not the fixture
+
+### 9.13 The monthly table
+
+**~1 day**
+
+One table, twelve rows, readable in ten seconds: project, sessions, tokens, Opus share against
+Sonnet share, and the API-equivalent figure. Sorted by tokens.
+
+- [ ] `daily_rollups` has no model column. Splitting by model needs a schema change
+- [ ] State in the table's own footnote whether subagent tokens are inside the figure. After 9.1
+      they are, and a reader cannot tell by looking
+- [ ] `Est. cost: unavailable` on a row whose tokens are known reads as zero. Say that the tokens
+      are known and the price is not, in the cell
+
+### 9.14 Reframe the money
+
+**~0.5 day**
+
+The dollar figure stays, and stops being presented as an amount owed. On a subscription it is not
+one. It is the only unit that compares 632k of Sonnet against 632k of Opus, which is a real job,
+and the question it actually answers is whether the subscription is earning its price.
+
+- [ ] Label it as an API equivalent rather than a cost
+- [ ] Show the plan's price beside it, so the comparison is on screen rather than in the reader's
+      head
+
+---
+
+## Parked, with the argument recorded
+
+Both of these were previously agreed and are being deferred rather than dropped. The case against
+them was made by a reviewer briefed to argue against additions, and it is recorded here so that
+picking them up later means answering it rather than forgetting it.
+
+**Deleting stored data by date range.** The database is 484 KB after a full day. `rm` on the file
+already works and is what would actually be done. The argument against: building a retention
+interface for half a megabyte is the tool growing for its own sake. What survives regardless, and
+must be written down before anyone implements deletion later: a `sessions` row and its
+`read_cursors` row are deleted in the same transaction or not at all, because a cursor without
+its total resumes at byte N with the total restarted at zero and writes the collapsed figure back
+over the session and the rollup.
+
+**Thai and English.** Three days, 220 strings, 26 files, a new type in Core, a lint test, a
+Buddhist-calendar trap and sixteen monospaced styles whose font carries no Thai glyphs — for one
+reader who spends the day reading Claude Code's own English output, after which every new string
+costs twice, permanently. The measured comparison that decided it: three days is six times the
+cost of fixing the numbers that are currently wrong on the dashboard.
+
+**Most of the error-monitoring feature.** The two defects buried inside it are mandatory and are
+now 9.5. The health snapshot, row counts, engine counters, idle CPU sampling and export file are
+an incident-response process for an application with no incidents and one user who can already
+read the SQLite file directly.
+
+---
+
+## What was rejected, and why it is worth recording
+
+One reviewer argued the analytics half is a solution looking for a problem, and asked instead for
+an end-of-session receipt comparing a session against the reader's own last twenty: subagent
+share against the median, repeat-read factor, output per hour falling across a long session. The
+argument is good and the measured data supports it — subagent share really does range from 0% to
+82% by project, and nobody could know that without being told.
+
+It is not being built, for a reason that is about cost rather than merit. `toolCounts`,
+`filePaths` and `activityTrail` are not persisted at all: they live in memory, and the trail is
+capped at 24 entries. Every other request in this phase uses data that already exists; this one
+needs a new table, a new write path and a retention policy before the first number appears. It is
+the right thing to reconsider once stages 1 to 4 are done and the numbers can be trusted.
+
+---
+
 ## Risk register
 
 | Risk | Impact | Mitigation |

@@ -8,7 +8,7 @@ TEST_FLAGS := -Xswiftc -F -Xswiftc $(CLT_FW) \
               -Xlinker -rpath -Xlinker $(CLT_FW) \
               -Xlinker -rpath -Xlinker $(CLT_LIB)
 
-.PHONY: build test app run clean
+.PHONY: build test test-only app run install dmg pkg icon clean
 
 build:
 	swift build
@@ -26,5 +26,22 @@ app:
 run: app
 	open Claudence.app
 
+# Copies the bundle into /Applications, which is where launch at login needs it
+# to live. DEST=~/Applications installs for this user only.
+install: app
+	./Scripts/install.sh
+
+# Distributable images. Neither is notarised, so a receiving Mac needs one
+# manual step; both scripts say which.
+dmg: app
+	./Scripts/make-dmg.sh
+
+pkg: app
+	./Scripts/make-pkg.sh
+
+# Only after changing the icon's geometry. Commit Resources/AppIcon.icns.
+icon:
+	./Scripts/make-icon.sh
+
 clean:
-	rm -rf .build Claudence.app
+	rm -rf .build Claudence.app Claudence-*.dmg Claudence-*.pkg

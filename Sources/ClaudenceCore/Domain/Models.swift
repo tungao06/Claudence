@@ -130,6 +130,10 @@ public struct AISession: Sendable, Identifiable, Equatable {
     public var activityTrail: [TimedActivity]
     /// `usage.service_tier` from the most recent record carrying one.
     public var serviceTier: String?
+    /// `gitBranch` from the most recent record carrying one, when the
+    /// transcript records one at all. Nil is ordinary: a directory that is not
+    /// a git working tree has no branch, and the row then shows the path alone.
+    public var gitBranch: String?
     /// Assistant records read from this session's own transcript.
     public var recordsParsed: Int
     /// The newest single request's `message.usage`, not the running total.
@@ -161,6 +165,7 @@ public struct AISession: Sendable, Identifiable, Equatable {
         filePaths: [String] = [],
         activityTrail: [TimedActivity] = [],
         serviceTier: String? = nil,
+        gitBranch: String? = nil,
         recordsParsed: Int = 0,
         lastRequestUsage: TokenUsage? = nil
     ) {
@@ -183,6 +188,7 @@ public struct AISession: Sendable, Identifiable, Equatable {
         self.filePaths = filePaths
         self.activityTrail = activityTrail
         self.serviceTier = serviceTier
+        self.gitBranch = gitBranch
         self.recordsParsed = recordsParsed
         self.lastRequestUsage = lastRequestUsage
     }
@@ -221,6 +227,25 @@ public struct AISession: Sendable, Identifiable, Equatable {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         guard workingDirectory.hasPrefix(home) else { return workingDirectory }
         return "~" + workingDirectory.dropFirst(home.count)
+    }
+}
+
+/// One row of `usage_samples`: a session's running total at an instant.
+///
+/// Cumulative, not incremental. Two consecutive rows for the same session
+/// differ by what that session spent between them, and that difference is the
+/// only thing any caller wants; a single row on its own says nothing about a
+/// period. See `ClaudenceStore.usageSamples(in:)` for why the row before a
+/// range has to be fetched with it.
+public struct UsageSampleRow: Sendable, Equatable {
+    public let sessionID: String
+    public let sampledAt: Date
+    public let usage: TokenUsage
+
+    public init(sessionID: String, sampledAt: Date, usage: TokenUsage) {
+        self.sessionID = sessionID
+        self.sampledAt = sampledAt
+        self.usage = usage
     }
 }
 

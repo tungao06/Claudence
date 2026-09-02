@@ -384,6 +384,20 @@ struct TranscriptTests {
         #expect(delta.latestActivity?.display == "Editing Menu.tsx")
     }
 
+    @Test("The delta carries the git branch of the newest record that names one")
+    func gitBranchIsCarried() {
+        let fixture = TranscriptFixture()
+        fixture.appendLines([fixture.assistantRecord()])
+
+        let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
+
+        // The field was decoded and then dropped on the floor for three
+        // milestones, so the session row rendered a path where the design shows
+        // `path · branch`. It is on the allowlist: a branch name is a label the
+        // tool wrote, not content a person or a model produced.
+        #expect(delta.gitBranch == "main")
+    }
+
     @Test("Tool names map to human phrasing")
     func activityMapping() {
         #expect(ActivityMapper.activity(toolName: "Read", filePath: "/x/y/package.json")

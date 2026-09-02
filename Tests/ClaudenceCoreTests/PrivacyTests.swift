@@ -440,6 +440,91 @@ struct PrivacyTests {
         }
     }
 
+    // MARK: - The account file
+
+    /// `~/.claude.json` is the most sensitive file this application opens: the
+    /// user's email address, full name, organisation name, account UUID and
+    /// every project path they have ever worked in sit two keys away from the
+    /// two fields `AccountPlanReader` is allowed to read. The narrowness of that
+    /// decoder is the entire safeguard, so it is a test rather than a comment.
+    @Test("the plan reader carries nothing out of the account file but the tier")
+    func accountPlanReaderReadsOnlyTheTier() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent(".claude.json")
+        let secrets = [
+            "SENTINEL-EMAIL-4a91c7de@example.com",
+            "SENTINEL-FULLNAME-0b3e88fa",
+            "SENTINEL-ORGNAME-77dc21ab",
+            "SENTINEL-UUID-5e0fa943",
+            "/Users/sentinel/SENTINEL-PROJECT-PATH-1c9b6e20",
+        ]
+        let document = """
+            {
+              "oauthAccount": {
+                "emailAddress": "\(secrets[0])",
+                "fullName": "\(secrets[1])",
+                "displayName": "\(secrets[1])",
+                "organizationName": "\(secrets[2])",
+                "accountUuid": "\(secrets[3])",
+                "organizationUuid": "\(secrets[3])",
+                "organizationType": "claude_max",
+                "organizationRateLimitTier": "default_claude_max_5x",
+                "organizationRole": "admin",
+                "billingType": "stripe_subscription"
+              },
+              "projects": { "\(secrets[4])": { "history": ["\(secrets[0])"] } }
+            }
+            """
+        try Data(document.utf8).write(to: url)
+
+        let plan = try #require(AccountPlanReader.read(from: url))
+        #expect(plan.displayName == "Max 5x")
+
+        // Nothing from the file may reach the value, by field or by content.
+        let fields = PrivacyTests.deepFieldPaths(of: plan).map { "\($0)" }
+        for secret in secrets {
+            #expect(!fields.contains { $0.contains(secret) })
+        }
+        // And the value has exactly one field, so a later addition to
+        // `AccountPlan` has to come past this test.
+        #expect(PrivacyTests.deepLabels(of: plan) == ["displayName"])
+    }
+
+    @Test("an unrecognised tier produces no plan rather than a guess")
+    func accountPlanRefusesToGuess() {
+        #expect(AccountPlanReader.plan(organizationType: nil, rateLimitTier: nil) == nil)
+        #expect(
+            AccountPlanReader.plan(
+                organizationType: "claude_something_new",
+                rateLimitTier: "default_claude_something_new_9x"
+            ) == nil
+        )
+    }
+
+    @Test("the multiplier comes from the rate limit tier, which is the only place it appears")
+    func accountPlanReadsTheMultiplier() {
+        #expect(
+            AccountPlanReader.plan(
+                organizationType: "claude_max", rateLimitTier: "default_claude_max_20x"
+            )?.displayName == "Max 20x"
+        )
+        // A tier with no multiplier still names the plan: "Max" is true.
+        #expect(
+            AccountPlanReader.plan(
+                organizationType: "claude_max", rateLimitTier: "default_claude_max"
+            )?.displayName == "Max"
+        )
+        #expect(
+            AccountPlanReader.plan(
+                organizationType: "claude_pro", rateLimitTier: nil
+            )?.displayName == "Pro"
+        )
+    }
+
     /// Every property label in the value graph.
     static func deepLabels(of value: Any, depth: Int = 0) -> [String] {
         guard depth < 12 else { return [] }

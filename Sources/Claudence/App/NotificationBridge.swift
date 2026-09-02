@@ -214,6 +214,15 @@ final class NotificationBridge: @unchecked Sendable {
             // it is off by default.
             content.sound = nil
             content.interruptionLevel = .active
+        case .sessionNeedsInput:
+            // The only session event that makes a sound. A session waiting on
+            // an answer does no work until it gets one, so the cost of missing
+            // this banner is measured in however long it sits unseen -- which
+            // on a machine running several sessions at once is the whole reason
+            // this application exists. Time sensitive for the same reason the
+            // usage threshold is: it earns the right to break through a Focus.
+            content.sound = .default
+            content.interruptionLevel = .timeSensitive
         }
         return content
     }

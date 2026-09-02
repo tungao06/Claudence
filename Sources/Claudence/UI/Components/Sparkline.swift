@@ -16,6 +16,15 @@ struct Sparkline: View {
     let values: [Double]
     let style: Style
     let height: CGFloat
+    /// The stroke, or the bar fill.
+    ///
+    /// The design strokes each sparkline in the light stop of its row's own
+    /// identity: `0xE0A487` on a coral session, `0xA99BE0` on a lavender one.
+    /// `Theme.SessionIdentity.sparkline` has held exactly those two values
+    /// since the palette was transcribed and had no consumer, because this
+    /// parameter did not exist and every chart was drawn in `textTertiary`.
+    /// The default stays neutral for the callers that have no identity to hand.
+    let stroke: Color
     /// What the series measures, used in the spoken label, e.g. "Token rate".
     let label: String
 
@@ -23,11 +32,13 @@ struct Sparkline: View {
         _ values: [Double],
         style: Style = .line,
         height: CGFloat = Theme.Bar.sparklineHeight,
+        stroke: Color = Theme.textTertiary,
         label: String = "Trend"
     ) {
         self.values = values
         self.style = style
         self.height = height
+        self.stroke = stroke
         self.label = label
     }
 
@@ -44,7 +55,7 @@ struct Sparkline: View {
                 case .line:
                     linePath(in: geo.size)
                         .stroke(
-                            Theme.textTertiary,
+                            stroke,
                             style: StrokeStyle(
                                 lineWidth: Theme.Bar.sparklineStroke,
                                 lineCap: .round,
@@ -104,7 +115,7 @@ struct Sparkline: View {
         return HStack(alignment: .bottom, spacing: spacing) {
             ForEach(Array(values.enumerated()), id: \.offset) { _, value in
                 Capsule(style: .continuous)
-                    .fill(Theme.textTertiary)
+                    .fill(stroke)
                     // Always at least a hairline so a low sample is visible.
                     .frame(
                         width: barWidth,

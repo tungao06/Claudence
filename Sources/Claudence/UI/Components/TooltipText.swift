@@ -9,12 +9,19 @@ import Foundation
 /// tidying of punctuation. The typographic quote in `subagent's`, the em dashes,
 /// and the en dash in `70-85%` are all deliberate and are preserved as written.
 ///
-/// Two of the transcribed strings say something untrue about how this
-/// application works. They are kept here so nobody re-transcribes them later
-/// believing them missing, but they live in `disputed` and the lookups below do
-/// not read it, so no view can attach one. A wrong explanation is worse than no
-/// explanation: it is a fabricated claim about provenance, which is the one
-/// thing this product exists to get right.
+/// Two of the transcribed strings said something untrue about how this
+/// application works, and for a while they sat in `disputed`, reachable from no
+/// lookup, so the two metrics they describe carried no explanation at all. That
+/// was the wrong resolution twice over: it left 2 of the design's 36 tooltips
+/// unreachable, and it left the two figures whose provenance is *least* obvious
+/// — an estimated context percentage and a subagent record count — as the only
+/// two on screen with nothing explaining them.
+///
+/// They are now corrected and live. `disputed` keeps the design's original
+/// wording verbatim beside the correction, so the change is auditable and
+/// nobody re-transcribes the original believing it was simply missed. Each
+/// correction changes exactly the clause that was false and leaves the rest of
+/// the sentence alone; `disputed` says what changed and why.
 enum TooltipText {
 
     /// A tooltip's two parts. The design draws the title in bold above the body.
@@ -36,6 +43,17 @@ enum TooltipText {
     static func fact(_ name: String) -> Entry? { metaTips[name] }
 
     // MARK: - TIPS (17 entries)
+    //
+    // Sixteen are the design's verbatim; `ctx` is corrected. See `disputed`.
+    //
+    // Three of the seventeen are not reachable from any view, and that is
+    // deliberate rather than an oversight: `fresh`, `cw` and `out` describe the
+    // four token-breakdown rows, and those rows are keyed by their visible label
+    // into `breakTips` below, whose wording names the exact `message.usage`
+    // field each figure comes from. The `breakTips` entry is the better answer
+    // at the only place either could appear. They stay because this table is a
+    // transcription of the design's own, and a reader comparing the two should
+    // find it complete.
 
     static let tips: [String: Entry] = [
         "power": Entry(
@@ -102,6 +120,10 @@ enum TooltipText {
             title: "Daily usage",
             body: "Tokens per day for the last 7 days, split into input and output. Measured by tailing each transcript from a stored byte offset instead of re-parsing it."
         ),
+        "ctx": Entry(
+            title: "Context window",
+            body: "How much of the model's context window the newest request used. The used value is measured from that request; the limit is Claudence's own model table, not something the transcript states, so the reading is labelled Estimated. Under 70% Healthy, 70–85% Attention, 85–95% Warning, above 95% Critical."
+        ),
     ]
 
     // MARK: - BREAK_TIPS (4 entries, keyed by breakdown row label)
@@ -127,7 +149,8 @@ enum TooltipText {
 
     // MARK: - META_TIPS (15 entries, keyed by session-fact name)
     //
-    // Fourteen live here; `Records` is disputed and lives below.
+    // Fourteen are the design's verbatim; `Records` is corrected. See
+    // `disputed`.
 
     static let metaTips: [String: Entry] = [
         "PID": Entry(
@@ -186,16 +209,19 @@ enum TooltipText {
             title: "Share of parent",
             body: "This subagent’s tokens as a share of the parent session total, so you can see which branch of work is spending the power."
         ),
+        "Records": Entry(
+            title: "Transcript records",
+            body: "Assistant records attributed to this subagent. They are read from the subagent's own transcript beside the parent's, because the parent transcript contains none of them. Each one carries its own usage block."
+        ),
     ]
 
     // MARK: - Disputed
     //
-    // Transcribed for the record, deliberately unreachable from every lookup.
+    // The design's original wording for the two strings that were wrong about
+    // this application, kept beside the correction now shipping in its place.
+    // Nothing reads this table; it exists so the edit is auditable.
 
-    /// Strings the design supplies that are wrong about this application.
-    ///
-    /// TODO: both need a decision from whoever owns the design copy. Until then
-    /// the metrics they describe carry no tooltip rather than a false one.
+    /// What the design says, for the two strings this file corrects.
     ///
     /// - `Records`: says subagent records live "in the parent transcript". They
     ///   do not. `SubagentLocator` finds them in

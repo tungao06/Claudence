@@ -103,6 +103,10 @@ public struct EventDeriver: Sendable {
         to next: MonitorSnapshot
     ) -> [NotificationEvent] {
         var result = usageEvents(in: next)
+        // Before idle and before completion: this is the only event whose
+        // subject is blocked until the reader acts, so when a snapshot carries
+        // several it is the one that should arrive first.
+        result.append(contentsOf: needsInputEvents(from: previous, to: next))
         result.append(contentsOf: idleEvents(from: previous, to: next))
         result.append(contentsOf: completionEvents(from: previous, to: next))
         return result
@@ -222,6 +226,49 @@ public struct EventDeriver: Sendable {
             guard earlier.status != .idle, earlier.status.isDerivable else { continue }
             guard session.lastActivityAt > earlier.lastActivityAt else { continue }
             events.append(.sessionIdle(session: session))
+        }
+        return events
+    }
+
+    // MARK: - Waiting on the person
+
+    /// A session moved into `.waiting`, which means it has asked something and
+    /// is doing nothing until it is answered.
+    ///
+    /// The rule:
+    ///
+    /// 1. A fresh snapshot (`updatedAt` strictly advanced). A replayed value is
+    ///    not evidence, the same as for idle and completion.
+    /// 2. The session is `.waiting` now and was some other derivable status
+    ///    before. A first sighting is not a transition: a session already
+    ///    waiting when Claudence launched has been waiting for an unknown
+    ///    length of time, and announcing it as news would fire on every start.
+    ///
+    /// **`lastActivityAt` is deliberately not required to advance here, and
+    /// that is the one place this differs from `idleEvents`.** That clause
+    /// exists for idle because `mapStatus` reaches `.idle` by two routes, one
+    /// of them a staleness threshold, and the advance is what tells a registry
+    /// write apart from the passage of time. `.waiting` has no second route: it
+    /// is produced only by a direct read of the literal string `waiting`, never
+    /// by the recency fallback, so there is nothing to disambiguate. Copying
+    /// the clause anyway would risk suppressing a real notification for the one
+    /// event where a missed notification costs the user the most, in exchange
+    /// for a check with no question left to answer.
+    private func needsInputEvents(
+        from previous: MonitorSnapshot,
+        to next: MonitorSnapshot
+    ) -> [NotificationEvent] {
+        guard next.updatedAt > previous.updatedAt else { return [] }
+
+        var before: [String: AISession] = [:]
+        for session in previous.sessions { before[session.id] = session }
+
+        var events: [NotificationEvent] = []
+        for session in next.sessions.sorted(by: { $0.id < $1.id }) {
+            guard session.status == .waiting, session.status.isDerivable else { continue }
+            guard let earlier = before[session.id] else { continue }
+            guard earlier.status != .waiting, earlier.status.isDerivable else { continue }
+            events.append(.sessionNeedsInput(session: session))
         }
         return events
     }

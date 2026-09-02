@@ -132,6 +132,12 @@ struct ProjectBreakdownView: View {
             )
         }
         .padding(.vertical, Theme.Space.xxs)
+        // The row the design names when it defines `hoverTarget`: six columns
+        // read across, where losing your place costs the reading. The lift and
+        // the ground are supplied by `elevates`; the row's own padding is
+        // untouched, so the hover ground covers exactly the area the row
+        // already occupied and no line moves when the pointer arrives.
+        .elevates(.row, cornerRadius: Theme.Radius.hoverTarget)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spokenLabel(row))
     }

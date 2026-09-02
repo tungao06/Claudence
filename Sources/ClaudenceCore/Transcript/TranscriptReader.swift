@@ -181,6 +181,7 @@ final class DeltaBuilder {
     private var serviceTier: String?
     /// The newest record's own usage block, kept apart from the running sum.
     private var lastRequestUsage: TokenUsage?
+    private var gitBranch: String?
 
     /// Bounded so a long-running session cannot grow these without limit. The
     /// interface only ever shows a handful.
@@ -209,6 +210,11 @@ final class DeltaBuilder {
         }
         if let tier = record.message?.usage?.serviceTier, !tier.isEmpty {
             serviceTier = tier
+        }
+        // Newest wins, like the tier above: a session that switches branch
+        // mid-run should read as being on the branch it is on now.
+        if let branch = record.gitBranch, !branch.isEmpty {
+            gitBranch = branch
         }
         // The activity of a delta is the LAST tool_use in the newly read
         // records, so later blocks overwrite earlier ones.
@@ -252,7 +258,8 @@ final class DeltaBuilder {
             filePaths: filePaths,
             activityTrail: trail,
             serviceTier: serviceTier,
-            lastRequestUsage: lastRequestUsage
+            lastRequestUsage: lastRequestUsage,
+            gitBranch: gitBranch
         )
     }
 }

@@ -494,6 +494,90 @@ private struct PreviewFrame<Content: View>: View {
     }
 }
 
+// MARK: - PowerHero
+
+struct PowerHeroSeverityRampPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "PowerHero severity") {
+            VStack(alignment: .leading, spacing: Theme.Space.l) {
+                PowerHero(
+                    title: "Claude Power \u{00B7} 5h window",
+                    percentUsed: PercentFixture.healthy,
+                    resetsAt: ClockFixture.soon
+                )
+                PowerHero(
+                    title: "Claude Power \u{00B7} 5h window",
+                    percentUsed: PercentFixture.attention,
+                    resetsAt: ClockFixture.veryClose
+                )
+                PowerHero(
+                    title: "Claude Power \u{00B7} 5h window",
+                    percentUsed: PercentFixture.warning,
+                    resetsAt: ClockFixture.distant
+                )
+                PowerHero(
+                    title: "Claude Power \u{00B7} 5h window",
+                    percentUsed: PercentFixture.critical,
+                    resetsAt: ClockFixture.soon
+                )
+            }
+        }
+        .previewDisplayName("PowerHero / severity ramp")
+    }
+}
+
+struct PowerHeroExtremesPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "PowerHero extremes") {
+            VStack(alignment: .leading, spacing: Theme.Space.l) {
+                // Exactly zero: an empty track, no minimum dot.
+                PowerHero(title: "Empty", percentUsed: PercentFixture.empty)
+                // Exactly full, and a three-digit number against the pill.
+                PowerHero(
+                    title: "Full",
+                    percentUsed: PercentFixture.full,
+                    resetsAt: ClockFixture.veryClose
+                )
+                // Over 100 from the source: clamps rather than overflowing.
+                PowerHero(title: "Overflowing source", percentUsed: PercentFixture.overflowing)
+                // Reset already passed: no right-hand column at all, not "0s".
+                PowerHero(
+                    title: "Reset already passed",
+                    percentUsed: PercentFixture.attention,
+                    resetsAt: ClockFixture.passed
+                )
+                // A title long enough to have to truncate beside the reset column.
+                PowerHero(
+                    title: "7 Day Claude Opus 4 5 Extended Thinking Window",
+                    percentUsed: PercentFixture.warning,
+                    resetsAt: ClockFixture.soon
+                )
+            }
+        }
+        .previewDisplayName("PowerHero / extremes")
+    }
+}
+
+struct PowerHeroUnavailablePreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "PowerHero unavailable") {
+            VStack(alignment: .leading, spacing: Theme.Space.l) {
+                // No reading and no rollover: the panel keeps its shape and
+                // says so, and draws no track that could read as zero.
+                PowerHero(title: "Claude Power", percentUsed: PercentFixture.unavailable)
+                // The rollover resolved and the percentage did not. One absent
+                // fact is no reason to withhold the other.
+                PowerHero(
+                    title: "Claude Power",
+                    percentUsed: PercentFixture.unavailable,
+                    resetsAt: ClockFixture.soon
+                )
+            }
+        }
+        .previewDisplayName("PowerHero / unavailable")
+    }
+}
+
 // MARK: - PowerBar
 
 struct PowerBarSeverityRampPreview: PreviewProvider {
@@ -608,6 +692,68 @@ struct EnergyRingExtremesAndUnavailablePreview: PreviewProvider {
             .frame(maxWidth: .infinity)
         }
         .previewDisplayName("EnergyRing / extremes and unavailable")
+    }
+}
+
+// MARK: - RingMark
+
+struct RingMarkReadingsPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Ring mark") {
+            // The header size, then the menu bar size, at each reading. The
+            // last column in both rows is the unknown state: a broken ring, so
+            // it is told apart from the measured zero beside it by silhouette
+            // rather than by hue.
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                HStack(spacing: Theme.Space.xl) {
+                    RingMark(percentUsed: PercentFixture.empty, size: Theme.Bar.markHeader, showsCore: true)
+                    RingMark(percentUsed: PercentFixture.healthy, size: Theme.Bar.markHeader, showsCore: true)
+                    RingMark(percentUsed: PercentFixture.warning, size: Theme.Bar.markHeader, showsCore: true)
+                    RingMark(percentUsed: PercentFixture.full, size: Theme.Bar.markHeader, showsCore: true)
+                    RingMark(percentUsed: PercentFixture.unavailable, size: Theme.Bar.markHeader, showsCore: true)
+                }
+                HStack(spacing: Theme.Space.xl) {
+                    RingMark(percentUsed: PercentFixture.empty, size: Theme.MenuBar.glyphSize)
+                    RingMark(percentUsed: PercentFixture.healthy, size: Theme.MenuBar.glyphSize)
+                    RingMark(percentUsed: PercentFixture.warning, size: Theme.MenuBar.glyphSize)
+                    RingMark(percentUsed: PercentFixture.full, size: Theme.MenuBar.glyphSize)
+                    RingMark(percentUsed: PercentFixture.unavailable, size: Theme.MenuBar.glyphSize)
+                }
+            }
+        }
+        .previewDisplayName("RingMark / readings")
+    }
+}
+
+// MARK: - StatusPill
+
+struct StatusPillPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Status pill") {
+            VStack(alignment: .leading, spacing: Theme.Space.l) {
+                // Every severity: four glyph shapes, four words.
+                HStack(spacing: Theme.Space.m) {
+                    ForEach(Severity.allCases, id: \.self) { severity in
+                        StatusPill(severity: severity)
+                    }
+                }
+                // Every session state against one identity, including the one
+                // with no data source behind it.
+                HStack(spacing: Theme.Space.m) {
+                    ForEach(SessionFixture.all) { session in
+                        StatusPill(
+                            status: session.status,
+                            identity: Theme.identity(forSessionID: session.id)
+                        )
+                    }
+                    StatusPill(
+                        status: SessionFixture.underivableStatus.status,
+                        identity: Theme.identity(forSessionID: SessionFixture.underivableStatus.id)
+                    )
+                }
+            }
+        }
+        .previewDisplayName("StatusPill / severities and statuses")
     }
 }
 
@@ -1061,4 +1207,143 @@ struct SessionDetailContextUnknownModelPreview: PreviewProvider {
         }
         .previewDisplayName("SessionDetailView / context, model not in table")
     }
+}
+
+// MARK: - Window identity, caption and label
+
+/// The three usage windows as the design paints them: one identity each, at
+/// readings that are all Healthy, so nothing here separates by severity.
+struct PowerWindowIdentitiesPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Usage windows") {
+            VStack(alignment: .leading, spacing: Theme.Popover.secondaryGap) {
+                PowerHero(
+                    title: "Claude Power \u{00B7} 5h window",
+                    windowName: "five_hour",
+                    percentUsed: 24,
+                    resetsAt: ClockFixture.soon
+                )
+                PowerBar(
+                    title: "7 day",
+                    windowName: "seven_day",
+                    percentUsed: 13,
+                    resetsAt: ClockFixture.distant
+                )
+                PowerBar(
+                    title: "Fable",
+                    caption: "weekly scoped",
+                    windowName: "seven_day_fable",
+                    percentUsed: 1,
+                    resetsAt: ClockFixture.distant
+                )
+            }
+        }
+        .previewDisplayName("PowerBar / three window identities")
+    }
+}
+
+// MARK: - Session row, path line
+
+/// The path line with and without a branch. The second is what actually renders
+/// today: nothing carries `gitBranch` into `AISession` yet, so the branch half
+/// of this line is structure waiting for a source rather than a live feature.
+struct SessionRowBranchPreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session row / path line") {
+            VStack(spacing: Theme.Popover.listGap) {
+                SessionRow(
+                    session: SessionFixture.working,
+                    gitBranch: "main",
+                    tokenScaleMaximum: UsageFixture.mediumScale,
+                    burnRatePerMinute: SeriesFixture.rate,
+                    burnHistory: SeriesFixture.rising,
+                    onOpen: {}
+                )
+                SessionRow(
+                    session: SessionFixture.longPath,
+                    gitBranch: "feat/leave-quota-rounding",
+                    tokenScaleMaximum: UsageFixture.mediumScale,
+                    onOpen: {}
+                )
+                SessionRow(
+                    session: SessionFixture.idle,
+                    tokenScaleMaximum: UsageFixture.mediumScale,
+                    onOpen: {}
+                )
+            }
+        }
+        .previewDisplayName("SessionRow / path with and without a branch")
+    }
+}
+
+/// The meta line's two honest states. A session under two minutes old has fewer
+/// than two burn samples, so the rate reads `Rate unavailable` and no sparkline
+/// draws at all. Neither is a defect and neither is filled in with a zero.
+struct SessionRowMetaLinePreview: PreviewProvider {
+    static var previews: some View {
+        PreviewFrame(title: "Session row / meta line") {
+            VStack(spacing: Theme.Popover.listGap) {
+                SessionRow(
+                    session: SessionFixture.working,
+                    tokenScaleMaximum: UsageFixture.mediumScale,
+                    burnRatePerMinute: SeriesFixture.rate,
+                    burnHistory: SeriesFixture.rising,
+                    onOpen: {}
+                )
+                SessionRow(
+                    session: SessionFixture.working,
+                    tokenScaleMaximum: UsageFixture.mediumScale,
+                    burnRatePerMinute: nil,
+                    burnHistory: SeriesFixture.singlePoint,
+                    onOpen: {}
+                )
+            }
+        }
+        .previewDisplayName("SessionRow / meta line, with and without a series")
+    }
+}
+
+// MARK: - Freshness stamp
+
+/// Every shape the popover header's stamp takes. Rendered from fixed ages so
+/// the preview does not move, which is also the only way to see them together.
+struct FreshnessStampPreview: PreviewProvider {
+    private static let ages: [TimeInterval] = [0, 3, 30, 55, 90, 34 * 60, 2 * 3_600, 3 * 86_400]
+
+    static var previews: some View {
+        PreviewFrame(title: "Freshness stamp") {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                ForEach(ages, id: \.self) { age in
+                    HStack(spacing: Theme.Popover.headerTrailingGap) {
+                        Text("\(Int(age))s old")
+                            .font(Theme.Typography.help)
+                            .foregroundStyle(Theme.textTertiary)
+                        Spacer(minLength: Theme.Space.s)
+                        Text(
+                            MenuBarContent.freshness(
+                                of: Date().addingTimeInterval(-age),
+                                at: Date()
+                            )
+                        )
+                        .font(Theme.Typography.micro)
+                        .foregroundStyle(Theme.textQuaternary)
+                    }
+                }
+            }
+        }
+        .previewDisplayName("Popover header / freshness stamp")
+    }
+}
+
+// MARK: - Render fixtures
+
+/// The session detail the offscreen renderer draws, and the values it needs
+/// alongside it. Same seam as `DashboardRenderFixture`, for the same reason.
+enum DetailRenderFixture {
+    static let session = SessionFixture.withSubagents
+    static let subagents = SubagentFixture.several
+    static let tokenScaleMaximum = UsageFixture.mediumScale
+    static let burnRatePerMinute = SeriesFixture.rate
+    static let burnHistory = SeriesFixture.rising
+    static let windowShare = WindowShareFixture.strong
 }

@@ -28,6 +28,7 @@ struct TokenBar: View {
 
     @State private var localExpanded: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.liveIndicators) private var liveIndicators
 
     init(
         usage: TokenUsage?,
@@ -141,7 +142,7 @@ struct TokenBar: View {
         // happens when the bar would visibly move, which is the only time an
         // animation was ever worth running.
         .animation(
-            Theme.animation(Theme.Motion.valueChange, reduceMotion: reduceMotion),
+            Theme.valueAnimation(reduceMotion: reduceMotion, liveIndicators: liveIndicators),
             value: (fraction * 100).rounded()
         )
         .accessibilityHidden(true)

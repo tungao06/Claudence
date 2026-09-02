@@ -85,4 +85,16 @@ public enum Constants {
         /// Menu bar must stay narrow; it is shared real estate.
         public static let maxMenuBarWidth: CGFloat = 60
     }
+
+    public enum BurnRate {
+        /// The window a burn rate is measured over.
+        ///
+        /// One definition, because the caption beside the figure names it. The
+        /// design's caption reads `rolling 10 min` and the tracker measured
+        /// five, so the interface was naming a window nobody measured. The
+        /// tracker's default and the caption now read the same constant, and a
+        /// change to one cannot silently leave the other lying.
+        public static let window: TimeInterval = 300
+        public static var windowMinutes: Int { Int(window / 60) }
+    }
 }

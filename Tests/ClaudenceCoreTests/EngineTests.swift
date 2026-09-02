@@ -250,7 +250,11 @@ func durationFormatting() {
 
 @Test("an unknown value formats as a dash, never as zero")
 func unavailableFormatting() {
-    #expect(Format.percent(nil) == "--")
+    // The em dash, not two hyphens: that is the glyph the design uses for an
+    // absent value and the one the sessions table prints in its own empty
+    // cells, and having both spellings on one window made a missing figure
+    // look like two different kinds of missing.
+    #expect(Format.percent(nil) == "\u{2014}")
     #expect(Format.cost(nil) == "unavailable")
     #expect(Format.timeUntil(nil) == nil)
     #expect(Format.timeUntil(Date(timeIntervalSince1970: 0)) == nil)

@@ -57,6 +57,12 @@ struct SessionHistoryView: View {
         _range = State(initialValue: initialRange)
     }
 
+    /// Filtered and sorted exactly once per body evaluation.
+    ///
+    /// This used to be a computed property read by the summary line, the
+    /// spoken summary and the table, which meant the sort ran three times for
+    /// one frame, on every frame. It is a parameter now, so a longer history
+    /// costs what it should.
     private var visibleRows: [HistoryRow] {
         let cutoff = range.cutoff(from: now)
         return rows
@@ -64,20 +70,21 @@ struct SessionHistoryView: View {
             .sorted { $0.startedAt > $1.startedAt }
     }
 
-    private var visibleTotal: Int {
-        visibleRows.reduce(0) { $0 + $1.usage.total }
+    private func total(of visible: [HistoryRow]) -> Int {
+        visible.reduce(0) { $0 + $1.usage.total }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            controls
-            content
+        let visible = visibleRows
+        return VStack(alignment: .leading, spacing: Theme.Space.s) {
+            controls(visible)
+            content(visible)
         }
     }
 
     // MARK: - Controls
 
-    private var controls: some View {
+    private func controls(_ visible: [HistoryRow]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.l) {
             Picker("History range", selection: $range) {
                 ForEach(HistoryRange.allCases) { option in
@@ -91,47 +98,48 @@ struct SessionHistoryView: View {
 
             Spacer(minLength: Theme.Space.m)
 
-            Text(summaryText)
+            Text(summaryText(visible))
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
-                .accessibilityLabel(spokenSummary)
+                .accessibilityLabel(spokenSummary(visible))
         }
     }
 
-    private var summaryText: String {
-        let count = visibleRows.count
+    private func summaryText(_ visible: [HistoryRow]) -> String {
+        let count = visible.count
         let sessions = count == 1 ? "1 session" : "\(count) sessions"
         guard count > 0 else { return sessions }
-        return "\(sessions) · \(Format.tokens(visibleTotal)) tokens"
+        return "\(sessions) · \(Format.tokens(total(of: visible))) tokens"
     }
 
-    private var spokenSummary: String {
-        let count = visibleRows.count
+    private func spokenSummary(_ visible: [HistoryRow]) -> String {
+        let count = visible.count
         guard count > 0 else { return "No sessions in \(range.spokenTitle)." }
         let sessions = count == 1 ? "1 session" : "\(count) sessions"
-        return "\(sessions) in \(range.spokenTitle), \(Format.tokens(visibleTotal)) tokens."
+        return "\(sessions) in \(range.spokenTitle), \(Format.tokens(total(of: visible))) tokens."
     }
 
     // MARK: - Content
 
     @ViewBuilder
-    private var content: some View {
+    private func content(_ visible: [HistoryRow]) -> some View {
         if rows.isEmpty {
             // Nothing has ever been recorded. Not an error state.
             UnavailableView(
                 "No session history recorded",
                 reason: "Sessions appear here once they finish"
             )
-        } else if visibleRows.isEmpty {
-            // The store answered; this range is genuinely empty.
+        } else if visible.isEmpty {
+            // The store answered; this range is genuinely empty. A different
+            // statement from having no history at all, and it must stay one.
             UnavailableView("No sessions in \(range.title.lowercased())", compact: true)
         } else {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
                 header
                 Divider().overlay(Theme.separator)
                 LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
-                    ForEach(visibleRows) { row in
+                    ForEach(visible) { row in
                         historyRow(row)
                     }
                 }
@@ -198,6 +206,13 @@ struct SessionHistoryView: View {
                 .minimumScaleFactor(0.8)
                 .frame(width: DashboardMetrics.historyTokensColumn, alignment: .trailing)
         }
+        // A history line is five columns of text and nothing else, so unlike a
+        // session row it has no surface of its own for a shadow to fall from.
+        // `elevates` supplies one, which is also what tells a reader which of
+        // thirty lines the pointer is on when the five values are read across.
+        // The radius is the design's own `hoverTarget`, the corner it cuts a
+        // row-sized hover ground to.
+        .elevates(.row, cornerRadius: Theme.Radius.hoverTarget)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.spokenLabel(row))
     }

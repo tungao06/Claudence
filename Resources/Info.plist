@@ -10,6 +10,12 @@
     <string>com.tungao.claudence</string>
     <key>CFBundleExecutable</key>
     <string>Claudence</string>
+    <!-- Finder, notifications, the Settings window, and the Force Quit list all
+         show this. LSUIElement below keeps it out of the Dock. -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

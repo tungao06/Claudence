@@ -71,6 +71,13 @@ public struct TranscriptDelta: Sendable, Equatable {
     /// limit yields percentages in the thousands. Keeping the newest block
     /// separately is what makes the difference between a meter and a fiction.
     public var lastRequestUsage: TokenUsage?
+    /// `gitBranch` from the most recent record carrying one.
+    ///
+    /// Already on the allowlist and already decoded by `TranscriptRecord`; it
+    /// was simply discarded here, so the session row rendered a path where the
+    /// design shows `path · branch`. A branch name is a label the tool wrote,
+    /// not content a person or a model produced.
+    public var gitBranch: String?
 
     public init(
         usage: TokenUsage = .zero,
@@ -83,7 +90,8 @@ public struct TranscriptDelta: Sendable, Equatable {
         filePaths: [String] = [],
         activityTrail: [TimedActivity] = [],
         serviceTier: String? = nil,
-        lastRequestUsage: TokenUsage? = nil
+        lastRequestUsage: TokenUsage? = nil,
+        gitBranch: String? = nil
     ) {
         self.usage = usage
         self.latestActivity = latestActivity
@@ -96,6 +104,7 @@ public struct TranscriptDelta: Sendable, Equatable {
         self.activityTrail = activityTrail
         self.serviceTier = serviceTier
         self.lastRequestUsage = lastRequestUsage
+        self.gitBranch = gitBranch
     }
 
     public static let empty = TranscriptDelta()

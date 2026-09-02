@@ -25,6 +25,9 @@ private enum DashboardClock {
 }
 
 private enum DashboardPercent {
+    /// The design's own Fable reading, and the one the minimum-fill floor
+    /// exists for: 1% renders as a 2% sliver.
+    static let sliver = 1.0
     static let healthy = 21.0
     static let attention = 66.0
     static let warning = 84.0
@@ -78,7 +81,7 @@ private enum DashboardWindows {
             resetsAt: DashboardClock.ahead(4 * DashboardClock.day)
         ),
         UsageWindow(
-            name: DashboardData.WindowKey.modelScopedPrefix + "claude_opus_4_5",
+            name: DashboardData.WindowKey.modelScopedPrefix + "opus",
             usedPercent: DashboardPercent.healthy,
             resetsAt: DashboardClock.ahead(4 * DashboardClock.day)
         ),
@@ -96,14 +99,35 @@ private enum DashboardWindows {
             resetsAt: DashboardClock.ahead(2 * DashboardClock.day)
         ),
         UsageWindow(
-            name: DashboardData.WindowKey.modelScopedPrefix + "claude_opus_4_5",
+            name: DashboardData.WindowKey.modelScopedPrefix + "opus",
             usedPercent: DashboardPercent.critical,
             resetsAt: DashboardClock.ahead(2 * DashboardClock.day)
         ),
         UsageWindow(
-            name: DashboardData.WindowKey.modelScopedPrefix + "claude_sonnet_5",
+            name: DashboardData.WindowKey.modelScopedPrefix + "sonnet",
             usedPercent: DashboardPercent.attention,
             resetsAt: DashboardClock.ahead(2 * DashboardClock.day)
+        ),
+    ]
+
+    /// A model-scoped cap barely touched, which is where the tube fill has to
+    /// stay inside the tube's own rounded bottom rather than drawing a lens
+    /// across it.
+    static let sliver: [UsageWindow] = [
+        UsageWindow(
+            name: DashboardData.WindowKey.fiveHour,
+            usedPercent: DashboardPercent.healthy,
+            resetsAt: DashboardClock.ahead(2 * DashboardClock.hour)
+        ),
+        UsageWindow(
+            name: DashboardData.WindowKey.sevenDay,
+            usedPercent: DashboardPercent.sliver,
+            resetsAt: DashboardClock.ahead(4 * DashboardClock.day)
+        ),
+        UsageWindow(
+            name: DashboardData.WindowKey.modelScopedPrefix + "opus",
+            usedPercent: DashboardPercent.sliver,
+            resetsAt: DashboardClock.ahead(4 * DashboardClock.day)
         ),
     ]
 
@@ -388,6 +412,38 @@ private enum DashboardFixture {
         unpricedSessionCount: 0
     )
 
+    /// Everything the design's header and stat strip can carry at once: a
+    /// refresh action, a window picker with three windows in it, and the
+    /// `2 / 4 today` denominator the Active-sessions tile only prints when
+    /// something upstream could count the day.
+    static let headerComplete = DashboardData(
+        windows: DashboardWindows.healthy,
+        sessions: DashboardSessions.all,
+        tokenScaleMaximum: DashboardUsage.mediumScale,
+        burnRates: DashboardSessions.burnRates,
+        series: DashboardSeries.healthy,
+        projects: DashboardProjects.healthy,
+        history: DashboardHistory.mixed,
+        todayUsage: DashboardUsage.medium,
+        todayCost: 3.42,
+        unpricedSessionCount: 0,
+        todaySessionCount: 4
+    )
+
+    /// Two windows at 1%, for the minimum-fill floor and the shape it draws.
+    static let sliver = DashboardData(
+        windows: DashboardWindows.sliver,
+        sessions: DashboardSessions.all,
+        tokenScaleMaximum: DashboardUsage.mediumScale,
+        burnRates: DashboardSessions.burnRates,
+        series: DashboardSeries.healthy,
+        projects: DashboardProjects.healthy,
+        history: DashboardHistory.mixed,
+        todayUsage: DashboardUsage.medium,
+        todayCost: 4.82,
+        unpricedSessionCount: 0
+    )
+
     static let critical = DashboardData(
         windows: DashboardWindows.critical,
         sessions: DashboardSessions.all,
@@ -504,9 +560,9 @@ private struct DashboardSectionFrame<Content: View>: View {
                 .foregroundStyle(Theme.textTertiary)
             content
         }
-        .padding(DashboardMetrics.padding)
+        .padding(DashboardMetrics.shellPaddingHorizontal)
         .frame(width: DashboardMetrics.windowWidth, alignment: .leading)
-        .background(Theme.surface)
+        .background(Theme.canvas)
     }
 }
 
@@ -572,6 +628,21 @@ struct DashboardEnormousPreview: PreviewProvider {
             DashboardView(data: DashboardFixture.enormous, now: DashboardClock.now)
         }
         .previewDisplayName("Dashboard / millions of tokens")
+    }
+}
+
+/// The header with every control it can draw, and the one tile figure that is
+/// nil in every other fixture.
+struct DashboardHeaderControlsPreview: PreviewProvider {
+    static var previews: some View {
+        DashboardPreviewFrame {
+            DashboardView(
+                data: DashboardFixture.headerComplete,
+                now: DashboardClock.now,
+                onRefresh: {}
+            )
+        }
+        .previewDisplayName("Dashboard / header controls, today denominator")
     }
 }
 
@@ -678,4 +749,20 @@ struct SessionHistoryPreview: PreviewProvider {
         }
         .previewDisplayName("SessionHistoryView / ranges")
     }
+}
+
+// MARK: - Render fixtures
+
+/// The two dashboards the offscreen renderer draws.
+///
+/// `#Preview` does not compile here and `PreviewProvider` renders nowhere
+/// without Xcode, so `--render-ui` is the only way to look at a layout without
+/// driving the live application by hand. This enum is the seam: the fixtures
+/// above stay private to this file, and the renderer reaches exactly two of
+/// them plus the clock they were written against.
+enum DashboardRenderFixture {
+    static let now = DashboardClock.now
+    static let populated = DashboardFixture.headerComplete
+    static let empty = DashboardFixture.empty
+    static let sliver = DashboardFixture.sliver
 }

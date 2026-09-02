@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFDF9"/>
+      <stop offset="1" stop-color="#F1EADE"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#D2775A"/>
+      <stop offset="1" stop-color="#A32E24"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Plate: the macOS content rect, 824pt inside a 1024pt canvas. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#plate)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" ry="184.5"
+        fill="none" stroke="#E3D9C8" stroke-width="3"/>
+
+  <!-- Power meter: the empty track, then the reading drawn onto it. -->
+  <circle cx="512" cy="512" r="250" fill="none" stroke="#EDE4D6" stroke-width="72"/>
+  <circle cx="512" cy="512" r="250" fill="none" stroke="url(#arc)" stroke-width="72"
+          stroke-linecap="round" stroke-dasharray="1099 1571"
+          transform="rotate(-90 512 512)"/>
+
+  <!-- Sessions: several at once, which is the whole point of the product. -->
+  <g fill="#8A6A57">
+    <rect x="412" y="439" width="200" height="34" rx="17"/>
+    <rect x="437" y="495" width="150" height="34" rx="17" opacity="0.70"/>
+    <rect x="457" y="551" width="110" height="34" rx="17" opacity="0.45"/>
+  </g>
+</svg>

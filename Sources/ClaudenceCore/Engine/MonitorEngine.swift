@@ -179,6 +179,7 @@ public actor MonitorEngine {
             }
 
             if let tier = delta.serviceTier { session.serviceTier = tier }
+            if let branch = delta.gitBranch { session.gitBranch = branch }
             // Carried forward across passes with no new records, so the meter
             // does not blank out whenever the session is briefly quiet.
             if let request = delta.lastRequestUsage {

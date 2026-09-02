@@ -54,6 +54,67 @@ private func makeDerivedSession(
     )
 }
 
+// MARK: - Sessions active today
+
+@Test("sessionsActiveToday counts a session that started yesterday and is still working")
+func sessionsActiveTodayCountsCarryOver() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let startOfToday = derivedUTC.startOfDay(for: now)
+    let yesterday = try #require(derivedUTC.date(byAdding: .day, value: -1, to: now))
+    let twoDaysAgo = try #require(derivedUTC.date(byAdding: .day, value: -2, to: now))
+
+    // Started today.
+    store.upsert(session: makeDerivedSession(id: "today", startedAt: startOfToday))
+    // Started yesterday, still going. This is the row the tile's denominator
+    // exists for: counting by start date would leave it out and print a total
+    // smaller than the live count beside it.
+    store.upsert(session: makeDerivedSession(
+        id: "carry-over", startedAt: yesterday, lastActivityAt: now))
+    // Finished before today and never came back.
+    store.upsert(session: makeDerivedSession(
+        id: "old", startedAt: twoDaysAgo, lastActivityAt: yesterday))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    #expect(service.sessionsActiveToday() == 2)
+}
+
+@Test("an empty store answers zero sessions today rather than nothing")
+func sessionsActiveTodayOnEmptyStore() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let service = AnalyticsService(store: store, calendar: derivedUTC)
+
+    // Zero and nil are different claims: a working store saying "none today" is
+    // an answer, and the tile prints it.
+    #expect(service.sessionsActiveToday() == 0)
+}
+
+// MARK: - Recent sessions
+
+@Test("recentSessions returns finished sessions, which is what a history table is")
+func recentSessionsIncludesEndedSessions() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let threeDaysAgo = try #require(derivedUTC.date(byAdding: .day, value: -3, to: now))
+    let fortyDaysAgo = try #require(derivedUTC.date(byAdding: .day, value: -40, to: now))
+
+    store.upsert(session: makeDerivedSession(
+        id: "recent", startedAt: threeDaysAgo, lastActivityAt: threeDaysAgo))
+    store.markEnded(sessionID: "recent", at: threeDaysAgo)
+    store.upsert(session: makeDerivedSession(
+        id: "ancient", startedAt: fortyDaysAgo, lastActivityAt: fortyDaysAgo))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let window = try #require(derivedUTC.date(byAdding: .day, value: -30, to: now))
+    let sessions = try #require(service.recentSessions(since: window))
+
+    #expect(sessions.map(\.id) == ["recent"])
+    #expect(sessions[0].status == .completed)
+}
+
 // MARK: - Day over day
 
 @Test("dayOverDay compares today's rollup with yesterday's")
@@ -289,4 +350,180 @@ func recentSharesHonourACustomWindow() throws {
     #expect(oneHour.sessions.map(\.sessionID) == ["recent"])
     #expect(oneHour.since == now.addingTimeInterval(-3_600))
     #expect(oneHour.measuredTotal.total == 10)
+}
+
+// MARK: - Hourly series
+
+private func usage(_ total: Int) -> TokenUsage {
+    TokenUsage(freshInput: total, cacheCreation: 0, cacheRead: 0, output: 0, thinking: 0)
+}
+
+/// A fixed instant on the hour, so the buckets a test asserts on are the ones
+/// it names rather than whatever the clock happened to be when it ran.
+private func onTheHour(_ hoursAgo: Int, from now: Date) -> Date {
+    let top = derivedUTC.dateInterval(of: .hour, for: now)!.start
+    return derivedUTC.date(byAdding: .hour, value: -hoursAgo, to: top)!
+}
+
+@Test("hourlySeries differentiates the running totals rather than summing them")
+func hourlySeriesDifferentiatesSamples() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let start = onTheHour(3, from: now)
+
+    // A session running before the range, so its first in-range sample has a
+    // baseline to subtract from. Totals climb 100 -> 300 -> 900.
+    store.upsert(session: makeDerivedSession(
+        id: "long", startedAt: onTheHour(9, from: now), lastActivityAt: now))
+    store.recordUsageSample(
+        sessionID: "long", usage: usage(100), at: onTheHour(4, from: now).addingTimeInterval(600))
+    store.recordUsageSample(
+        sessionID: "long", usage: usage(300), at: start.addingTimeInterval(600))
+    store.recordUsageSample(
+        sessionID: "long", usage: usage(900), at: onTheHour(2, from: now).addingTimeInterval(600))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let points = service.hourlySeries(in: start..<now)
+
+    // 200 in the first hour and 600 in the second: differences, not totals. A
+    // series that summed the samples would report 300 and 900.
+    #expect(points.first(where: { $0.date == start })?.usage?.total == 200)
+    #expect(points.first(where: { $0.date == onTheHour(2, from: now) })?.usage?.total == 600)
+}
+
+@Test("an hour with no sample is a gap, not a zero")
+func hourlySeriesLeavesUnsampledHoursUnmeasured() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let start = onTheHour(3, from: now)
+
+    store.upsert(session: makeDerivedSession(
+        id: "long", startedAt: onTheHour(9, from: now), lastActivityAt: now))
+    store.recordUsageSample(
+        sessionID: "long", usage: usage(100), at: onTheHour(4, from: now))
+    store.recordUsageSample(
+        sessionID: "long", usage: usage(400), at: start.addingTimeInterval(60))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let points = service.hourlySeries(in: start..<now)
+
+    // Claudence cannot tell an hour in which nothing happened from an hour in
+    // which it was not running, so it claims neither.
+    #expect(points.first(where: { $0.date == start })?.usage?.total == 300)
+    #expect(points.first(where: { $0.date == onTheHour(2, from: now) })?.usage == nil)
+    #expect(points.allSatisfy { $0.usage?.total != 0 })
+}
+
+@Test("a session that began inside the range counts its first sample in full")
+func hourlySeriesCountsAFirstSampleForANewSession() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let start = onTheHour(3, from: now)
+
+    // Born inside the range: nothing in its total predates the range, so the
+    // whole of it belongs to the hour it was sampled in.
+    store.upsert(session: makeDerivedSession(
+        id: "fresh", startedAt: start.addingTimeInterval(60), lastActivityAt: now))
+    store.recordUsageSample(
+        sessionID: "fresh", usage: usage(500), at: start.addingTimeInterval(600))
+
+    // Born before it: its first sample carries history from outside the range
+    // and opens no bucket of its own.
+    store.upsert(session: makeDerivedSession(
+        id: "older", startedAt: onTheHour(20, from: now), lastActivityAt: now))
+    store.recordUsageSample(
+        sessionID: "older", usage: usage(9_000), at: start.addingTimeInterval(700))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let points = service.hourlySeries(in: start..<now)
+
+    #expect(points.first(where: { $0.date == start })?.usage?.total == 500)
+}
+
+@Test("the five-hour range ends at the reset rather than at the clock")
+func fiveHourRangeEndsAtTheReset() {
+    let now = Date()
+    let resetsAt = now.addingTimeInterval(-30 * 60)
+
+    let range = AnalyticsService.fiveHourRange(resetsAt: resetsAt, now: now)
+    #expect(range.upperBound == resetsAt)
+    #expect(range.lowerBound == resetsAt.addingTimeInterval(-5 * 60 * 60))
+
+    // A reset still ahead is the ordinary case, and the range stops at now:
+    // hours that have not happened would otherwise draw as silence.
+    let ahead = AnalyticsService.fiveHourRange(resetsAt: now.addingTimeInterval(3600), now: now)
+    #expect(ahead.upperBound == now)
+}
+
+// MARK: - Reset stamps
+
+@Test("a reset later today is stamped with the clock time and no day")
+func resetStampOmitsTheDayWhenItIsToday() throws {
+    let now = Date()
+    let later = now.addingTimeInterval(90 * 60)
+    let stamp = try #require(Format.resetStamp(later, now: now, calendar: derivedUTC))
+
+    // The common case is a five-hour window rolling over the same day, and a
+    // date printed on every reading would make it harder to read for the sake
+    // of the rare one.
+    #expect(!stamp.contains("Tomorrow"))
+    #expect(!stamp.contains(","))
+}
+
+@Test("a reset tomorrow says so")
+func resetStampNamesTomorrow() throws {
+    let now = Date()
+    let tomorrow = try #require(derivedUTC.date(byAdding: .day, value: 1, to: now))
+    let stamp = try #require(Format.resetStamp(tomorrow, now: now, calendar: derivedUTC))
+    #expect(stamp.hasPrefix("Tomorrow "))
+}
+
+@Test("a reset that has already passed still has a time, unlike a countdown to it")
+func resetStampSurvivesAPastReset() throws {
+    let now = Date()
+    let past = now.addingTimeInterval(-30 * 60)
+
+    // `timeUntil` is right to refuse: a countdown to a moment that has gone is
+    // meaningless. A time that has gone is still a time, and the window may
+    // simply not have been re-read yet.
+    #expect(Format.timeUntil(past, now: now) == nil)
+    #expect(Format.resetStamp(past, now: now, calendar: derivedUTC) != nil)
+}
+
+@Test("no reported reset is stamped as nothing rather than as a default")
+func resetStampRefusesToInventOne() {
+    #expect(Format.resetStamp(nil, now: Date(), calendar: derivedUTC) == nil)
+}
+
+@Suite("Share formatting")
+struct ShareFormattingTests {
+
+    /// The case that made this exist. Measured on a live session: 2 k of fresh
+    /// input against a 197.7 M total is 0.001%, and the rounding formatter
+    /// printed `0%` beside a count of `2k` on the same row.
+    @Test("A real but tiny spend is never rounded down to zero")
+    func tinySpendIsNotZero() {
+        #expect(Format.share(2_000 / 197_700_000.0) == "<1%")
+        #expect(Format.share(0.0049) == "<1%")
+    }
+
+    @Test("Nothing spent is zero, because that one is true")
+    func nothingIsZero() {
+        #expect(Format.share(0) == "0%")
+    }
+
+    @Test("Half a point rounds up rather than collapsing")
+    func halfAPointRoundsUp() {
+        #expect(Format.share(0.005) == "1%")
+    }
+
+    @Test("Ordinary shares round to whole percents")
+    func ordinarySharesRound() {
+        #expect(Format.share(0.5) == "50%")
+        #expect(Format.share(0.984) == "98%")
+        #expect(Format.share(1) == "100%")
+    }
 }

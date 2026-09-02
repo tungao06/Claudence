@@ -173,12 +173,13 @@ enum UsageRefreshInterval: String, CaseIterable, Identifiable, Sendable {
 /// ## Notification switches
 ///
 /// The three `notifyOn...` flags are stored intent, read by the notification
-/// bridge rather than by this type. Two of them name a case that
-/// `NotificationEvent` actually has. `notifyOnSessionIdle` does not yet, and it
-/// is stored anyway rather than dropped because `SessionStatus.idle` is
-/// derivable: the source exists, only the event is missing. That is a different
-/// situation from `permission` and `error`, which have no source at all and
-/// therefore have no key here and never will until one is proven.
+/// bridge rather than by this type. Each names a case `NotificationEvent`
+/// actually has and `EventDeriver` actually emits, `notifyOnSessionIdle`
+/// included -- it was the odd one out while the event was still missing, and it
+/// was kept as a key on the grounds that `SessionStatus.idle` was derivable and
+/// only the event was absent. The event landed; nothing here is speculative any
+/// more. `permission` and `error` have no source at all, so they have no key
+/// here and will not get one until one is proven.
 @MainActor
 @Observable
 final class Preferences {
@@ -197,6 +198,7 @@ final class Preferences {
         static let notifyOnSessionCompleted = "com.tungao.claudence.preference.notifyOnSessionCompleted"
         static let notifyOnUsageThreshold = "com.tungao.claudence.preference.notifyOnUsageThreshold"
         static let notifyOnSessionIdle = "com.tungao.claudence.preference.notifyOnSessionIdle"
+        static let notifyOnSessionNeedsInput = "com.tungao.claudence.preference.notifyOnSessionNeedsInput"
     }
 
     // MARK: Dependencies
@@ -270,6 +272,15 @@ final class Preferences {
     /// Notify when a session stops working but stays open. Default off, because
     /// a session that pauses while its human reads the diff is the ordinary
     /// case and interrupting them for it would be noise.
+    /// On by default, unlike `notifyOnSessionIdle`. A session that has stopped
+    /// working is an observation; a session that has asked a question is doing
+    /// nothing at all until it is answered, and the whole point of watching
+    /// several sessions at once is that the one waiting on you is not the one
+    /// you are looking at.
+    var notifyOnSessionNeedsInput: Bool {
+        didSet { defaults.set(notifyOnSessionNeedsInput, forKey: Key.notifyOnSessionNeedsInput) }
+    }
+
     var notifyOnSessionIdle: Bool {
         didSet { defaults.set(notifyOnSessionIdle, forKey: Key.notifyOnSessionIdle) }
     }
@@ -316,6 +327,7 @@ final class Preferences {
             Key.notifyOnSessionCompleted: true,
             Key.notifyOnUsageThreshold: true,
             Key.notifyOnSessionIdle: false,
+            Key.notifyOnSessionNeedsInput: true,
         ])
 
         self.defaults = defaults
@@ -338,6 +350,7 @@ final class Preferences {
         self.notifyOnSessionCompleted = defaults.bool(forKey: Key.notifyOnSessionCompleted)
         self.notifyOnUsageThreshold = defaults.bool(forKey: Key.notifyOnUsageThreshold)
         self.notifyOnSessionIdle = defaults.bool(forKey: Key.notifyOnSessionIdle)
+        self.notifyOnSessionNeedsInput = defaults.bool(forKey: Key.notifyOnSessionNeedsInput)
         self.launchAtLoginState = launchAtLogin.readState()
         self.launchAtLoginFailure = nil
     }

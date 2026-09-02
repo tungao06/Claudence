@@ -105,13 +105,21 @@ public struct CostEstimator: Sendable {
         var unpricedUsage = TokenUsage.zero
         var unpricedModels = Set<String>()
 
+        // `combinedUsage`, not `usage`: a subagent's tokens are billed to the
+        // same account as its parent's, and measured here they are around half
+        // of a working session's true total. Pricing them at the parent's rate
+        // is an approximation — a subagent may have run on a different model,
+        // and the transcript does not say which at the point this is summed —
+        // but a figure that is approximately right beats one that is precisely
+        // half. This is why the figure is labelled Estimated everywhere it is
+        // shown, and why the unpriced portion is reported rather than hidden.
         for session in sessions {
             if let price = pricing.price(for: session.model) {
-                dollars += price.estimatedDollars(for: session.usage)
+                dollars += price.estimatedDollars(for: session.combinedUsage)
                 priced += 1
             } else {
                 unpriced += 1
-                unpricedUsage += session.usage
+                unpricedUsage += session.combinedUsage
                 if let model = session.model, !model.isEmpty { unpricedModels.insert(model) }
             }
         }

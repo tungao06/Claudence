@@ -2,6 +2,39 @@ import Foundation
 
 // MARK: - View-ready aggregates
 
+/// One hour of the hourly series.
+///
+/// The five-hour usage window is shorter than a single column of the daily
+/// chart, so a daily series cannot say anything about it: the whole window
+/// lives inside one bar. This is the finer grain that can.
+///
+/// `usage` is optional for the same reason `DailyPoint`'s is, and the rule for
+/// which it is differs from the daily one because the source differs. Days come
+/// from rollups, which exist for every day the application has ever recorded,
+/// so a missing day is a store failure. Hours come from samples, which exist
+/// only while Claudence is running and a session is active, so an hour with no
+/// sample is a *gap*: the application cannot tell an hour in which nothing
+/// happened from an hour in which it was not there to watch. Rendering that as
+/// a zero would be inventing a measurement, which this project does not do.
+public struct HourPoint: Sendable, Equatable, Identifiable {
+    /// Bucket key, "YYYY-MM-DD HH" in local time.
+    public let hour: String
+    /// Start of that local hour.
+    public let date: Date
+    /// Measured tokens, or nil when no sample covers the hour.
+    public let usage: TokenUsage?
+
+    public var id: String { hour }
+
+    public var isAvailable: Bool { usage != nil }
+
+    public init(hour: String, date: Date, usage: TokenUsage?) {
+        self.hour = hour
+        self.date = date
+        self.usage = usage
+    }
+}
+
 /// One day of the daily series.
 ///
 /// `usage` is optional on purpose. A day with no sessions is a real zero and
@@ -144,6 +177,144 @@ public struct AnalyticsService: Sendable {
         }
     }
 
+    /// The span the five-hour meter is measuring.
+    ///
+    /// Ends at the reset, or at now while the reset is still ahead: drawing
+    /// hours that have not happened yet would put empty columns after the live
+    /// one and read as five hours of silence rather than as the future.
+    ///
+    /// Here rather than in the dashboard adapter because it is a fact about the
+    /// window, not about how a chart draws it, and because the adapter is in the
+    /// application target and nothing there can be tested.
+    public static func fiveHourRange(resetsAt: Date?, now: Date) -> Range<Date> {
+        let end = resetsAt.map { min($0, now) } ?? now
+        let start = end.addingTimeInterval(-fiveHourWindowLength)
+        // A clock that moved backwards, or a reset already five hours behind,
+        // would otherwise produce a range the store reads as empty in a way
+        // that looks like missing data rather than like a bad range.
+        guard start < end else {
+            return now.addingTimeInterval(-fiveHourWindowLength)..<now
+        }
+        return start..<end
+    }
+
+    private static let fiveHourWindowLength: TimeInterval = 5 * 60 * 60
+
+    /// Tokens hour by hour across `range`, oldest first.
+    ///
+    /// Built by differentiating `usage_samples`, which hold each session's
+    /// running total. A sample's delta from the one before it is attributed to
+    /// the hour the *later* sample falls in: that is where the tokens were
+    /// observed, and splitting a delta across the boundary it may straddle
+    /// would be a guess about when inside the interval the work happened.
+    ///
+    /// The first sample a session ever has is a special case with two wrong
+    /// answers available. Counting its whole total puts every token the session
+    /// spent before Claudence started watching into one hour, which draws a
+    /// spike that never happened; discarding it loses everything the session
+    /// spent before its second sample, which for a short session is nearly all
+    /// of it. It is counted only when the session also *started* inside the
+    /// range, which is the case where the total genuinely belongs to the range
+    /// and to no earlier hour.
+    ///
+    /// An hour no sample falls in has no measurement rather than a zero. See
+    /// `HourPoint`.
+    public func hourlySeries(in range: Range<Date>) -> [HourPoint] {
+        let starts = Self.hourStarts(in: range, calendar: calendar)
+        guard !starts.isEmpty else { return [] }
+
+        let before = store.health
+        let rows = store.usageSamples(in: range)
+        let sessions = store.allSessions(since: range.lowerBound)
+        guard Self.answered(before: before, after: store.health) else {
+            return starts.map {
+                HourPoint(hour: Self.hourString(for: $0, calendar: calendar), date: $0, usage: nil)
+            }
+        }
+
+        // A session that began inside the range is the one case where a first
+        // sample carries no history from before it.
+        let startedInRange = Set(
+            sessions.filter { range.contains($0.startedAt) }.map(\.id)
+        )
+
+        var measured: [String: TokenUsage] = [:]
+        var previous: [String: TokenUsage] = [:]
+        for row in rows {
+            defer { previous[row.sessionID] = row.usage }
+
+            let delta: TokenUsage
+            if let earlier = previous[row.sessionID] {
+                delta = Self.increase(from: earlier, to: row.usage)
+            } else if startedInRange.contains(row.sessionID) {
+                delta = row.usage
+            } else {
+                // The baseline row, or a session whose history predates the
+                // range. Either way it establishes a floor and contributes
+                // nothing of its own.
+                continue
+            }
+
+            // The baseline row sits before the range and must not open a bucket
+            // of its own even when it is also a session's first sample.
+            guard range.contains(row.sampledAt) else { continue }
+            let key = Self.hourString(for: row.sampledAt, calendar: calendar)
+            measured[key, default: .zero] += delta
+        }
+
+        return starts.map { start in
+            let key = Self.hourString(for: start, calendar: calendar)
+            return HourPoint(hour: key, date: start, usage: measured[key])
+        }
+    }
+
+    /// Every hour start the range touches, oldest first. A range that begins
+    /// mid-hour still yields that hour: the tokens in it were spent inside the
+    /// window even though the bucket is wider than the window's edge.
+    static func hourStarts(in range: Range<Date>, calendar: Calendar) -> [Date] {
+        guard range.lowerBound < range.upperBound else { return [] }
+        guard var cursor = calendar.dateInterval(of: .hour, for: range.lowerBound)?.start else {
+            return []
+        }
+        var result: [Date] = []
+        // Bounded, so a malformed range or a calendar that refuses to advance
+        // cannot spin here. A week of hours is well past anything this draws.
+        while cursor < range.upperBound, result.count < 24 * 7 {
+            result.append(cursor)
+            guard let next = calendar.date(byAdding: .hour, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return result
+    }
+
+    static func hourString(for date: Date, calendar: Calendar) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day, .hour], from: date)
+        return String(
+            format: "%04d-%02d-%02d %02d",
+            parts.year ?? 0,
+            parts.month ?? 0,
+            parts.day ?? 0,
+            parts.hour ?? 0
+        )
+    }
+
+    /// The rise from one running total to the next, floored at zero per field.
+    ///
+    /// Totals only ever climb while a session lives, so a fall means the
+    /// session's transcript was rotated or its cursor reset. Clamping keeps
+    /// that from subtracting a real hour's work out of the chart; the lost
+    /// tokens are already unrecoverable at that point, and a negative bar would
+    /// be a second, louder wrong answer.
+    private static func increase(from earlier: TokenUsage, to later: TokenUsage) -> TokenUsage {
+        TokenUsage(
+            freshInput: max(0, later.freshInput - earlier.freshInput),
+            cacheCreation: max(0, later.cacheCreation - earlier.cacheCreation),
+            cacheRead: max(0, later.cacheRead - earlier.cacheRead),
+            output: max(0, later.output - earlier.output),
+            thinking: max(0, later.thinking - earlier.thinking)
+        )
+    }
+
     // MARK: Project breakdown
 
     /// Per-project totals, heaviest first by `TokenUsage.total`, ties broken by
@@ -210,6 +381,40 @@ public struct AnalyticsService: Sendable {
         let sessions = store.allSessions(since: start)
             .filter { ClaudenceStore.dayString(for: $0.startedAt, calendar: calendar) == day }
         return estimator.estimate(sessions: sessions)
+    }
+
+    /// How many sessions were active at any point today, or nil when the store
+    /// could not answer.
+    ///
+    /// This is the denominator the dashboard's Active-sessions tile prints as
+    /// `2 / 4 today`, and it is deliberately not a count of sessions that
+    /// *started* today: a session opened last night and still running is part of
+    /// today, and bucketing it by start date would print a denominator smaller
+    /// than the live count sitting next to it. `allSessions(since:)` filters on
+    /// last activity, which is the definition that makes the pair legible.
+    ///
+    /// Nil rather than zero when the store failed: an empty answer from a
+    /// working store is "no sessions", and the tile prints the numerator with no
+    /// denominator rather than claiming a day with none.
+    public func sessionsActiveToday() -> Int? {
+        let before = store.health
+        let sessions = store.allSessions(since: calendar.startOfDay(for: now()))
+        guard Self.answered(before: before, after: store.health) else { return nil }
+        return sessions.count
+    }
+
+    /// Sessions that did something at or after `since`, newest activity first,
+    /// or nil when the store could not answer.
+    ///
+    /// The session history table is built from this rather than from the live
+    /// set. Live sessions alone made the table's Today / 7 days / 30 days filter
+    /// inert: every range held the same handful of rows, because a session that
+    /// ended left the registry and therefore left the table.
+    public func recentSessions(since: Date) -> [AISession]? {
+        let before = store.health
+        let sessions = store.allSessions(since: since)
+        guard Self.answered(before: before, after: store.health) else { return nil }
+        return sessions
     }
 
     // MARK: Day over day

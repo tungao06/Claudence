@@ -542,8 +542,15 @@ clickable (opens the detail sheet).
 5. Meta row: mono 10 px duration · mono 10 px burn rate · sparkline (svg 90×16, polyline,
    stroke 1.6, identity sparkline color). **Graphic.**
 
-Rows 4 and 5 are what the `Compact rows` setting hides
-("Hide duration, rate and sparkline until a row is opened").
+Row 5 is what the `Compact rows` setting hides. The design's own label for the
+setting is "Hide duration, rate and sparkline until a row is opened", which names
+the three things in row 5 and nothing in row 4.
+
+An earlier revision of this line said rows 4 **and** 5, which contradicted the
+label two lines below it. Row 4 is the energy bar, and the energy bar is the one
+thing a power meter cannot hide: a session list with no energy in it is a list of
+names. `SessionRow.isCompact` therefore hides row 5 only, matching the label
+rather than the earlier reading of the markup.
 
 ### 5.6 Session row — expanded (dashboard table)
 

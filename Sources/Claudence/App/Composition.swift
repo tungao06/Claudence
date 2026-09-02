@@ -28,6 +28,7 @@ enum Composition {
                     preferences.notifyOnUsageThreshold ? NotificationEvent.Kind.usageThreshold : nil,
                     preferences.notifyOnSessionCompleted ? .sessionCompleted : nil,
                     preferences.notifyOnSessionIdle ? .sessionIdle : nil,
+                    preferences.notifyOnSessionNeedsInput ? .sessionNeedsInput : nil,
                 ].compactMap { $0 }
             )
         )

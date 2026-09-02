@@ -424,12 +424,126 @@ struct DerivableStateTests {
     @Test("The shipped event set carries no permission or failure case")
     func shippedEventSetIsMinimal() {
         // Spec section 10 lists four events. Two of them describe states that
-        // section 6 marks as not derivable, so they are not modelled at all.
-        // `sessionIdle` is the fifth, which the table does not list; the reason
-        // it is allowed to exist is on `NotificationEvent` itself.
-        #expect(NotificationEvent.Kind.allCases.count == 3)
+        // section 6 marks as not derivable, so they are not modelled at all:
+        // `permission` and `error` both return false from `isDerivable`, and
+        // this test exists to keep them out.
+        //
+        // Two kinds the table does not list are here anyway, and both earn it
+        // from the same source. Claude Code 2.1.258 writes real status strings
+        // into `~/.claude/sessions/<pid>.json`, observed as
+        // `busy -> waiting -> busy -> idle`, and `mapStatus` maps `waiting` and
+        // `idle` directly from those strings rather than from a clock. The
+        // reasoning for each is on `NotificationEvent` itself.
+        #expect(NotificationEvent.Kind.allCases.count == 4)
         #expect(Set(NotificationEvent.Kind.allCases.map(\.rawValue))
-            == ["usageThreshold", "sessionCompleted", "sessionIdle"])
+            == ["usageThreshold", "sessionCompleted", "sessionIdle", "sessionNeedsInput"])
+    }
+}
+
+// MARK: - Session needs an answer
+
+@Suite("Session needs input events")
+struct SessionNeedsInputTests {
+
+    private func reported(_ id: String, _ status: SessionStatus, at instant: Date) -> AISession {
+        makeSession(id, status: status, lastActivityAt: instant)
+    }
+
+    @Test("A session that starts waiting on the person fires exactly once")
+    func waitingFiresOnce() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .waiting, at: at(30))]),
+            makeSnapshot(at: at(60), sessions: [reported("alpha", .waiting, at: at(30))]),
+            makeSnapshot(at: at(90), sessions: [reported("alpha", .waiting, at: at(30))]),
+        ], with: &deriver)
+
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .sessionNeedsInput)
+        #expect(events.first?.subjectID == "alpha")
+    }
+
+    @Test("A session first seen already waiting is history, not a transition")
+    func firstSightingIsNotATransition() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: []),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .waiting, at: at(30))]),
+            makeSnapshot(at: at(60), sessions: [reported("alpha", .waiting, at: at(30))]),
+        ], with: &deriver)
+
+        #expect(events.isEmpty)
+    }
+
+    @Test("Answering and being asked again is a second real transition")
+    func waitingAfterResumingFiresAgain() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .waiting, at: at(30))]),
+            makeSnapshot(at: at(60), sessions: [reported("alpha", .running, at: at(60))]),
+            makeSnapshot(at: at(90), sessions: [reported("alpha", .waiting, at: at(90))]),
+        ], with: &deriver)
+
+        #expect(events.count == 2)
+        #expect(events.allSatisfy { $0.kind == .sessionNeedsInput })
+    }
+
+    /// The one deliberate difference from `idleEvents`, pinned so nobody
+    /// "fixes" it into symmetry later. `.waiting` is produced only by a direct
+    /// read of the literal registry string, never by the recency fallback, so
+    /// there is no clock-derived case to fence off and requiring an advanced
+    /// `lastActivityAt` could only suppress a real notification.
+    @Test("A waiting whose lastActivityAt did not move still fires")
+    func waitingWithUnchangedActivityStillFires() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(0), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .waiting, at: at(0))]),
+        ], with: &deriver)
+
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .sessionNeedsInput)
+    }
+
+    @Test("A replayed snapshot is not evidence")
+    func staleSnapshotDoesNotFire() {
+        var deriver = makeDeriver()
+        let events = derive([
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .running, at: at(0))]),
+            makeSnapshot(at: at(30), sessions: [reported("alpha", .waiting, at: at(30))]),
+        ], with: &deriver)
+
+        #expect(events.isEmpty)
+    }
+
+    @Test("The switch for it suppresses it and nothing else")
+    func filterSuppressesOnlyThisKind() {
+        let session = makeSession("alpha", status: .waiting)
+        let needsInput = NotificationEvent.sessionNeedsInput(session: session)
+        let completed = NotificationEvent.sessionCompleted(session: session)
+
+        let filter = NotificationFilter(
+            isEnabled: true,
+            allowedKinds: Set(NotificationEvent.Kind.allCases).subtracting([.sessionNeedsInput])
+        )
+
+        #expect(filter.allows(needsInput) == false)
+        #expect(filter.allows(completed))
+    }
+
+    /// The body names the project and states that an answer is owed. It must
+    /// never carry the question: that lives in `content[].text`, which the
+    /// privacy allowlist keeps out of this application entirely.
+    @Test("The wording names the project and asks for nothing else")
+    func wordingStaysInsideTheAllowlist() {
+        let session = makeSession("alpha", status: .waiting)
+        let event = NotificationEvent.sessionNeedsInput(session: session)
+
+        #expect(event.title == "Session needs you")
+        #expect(event.body().contains(session.projectName))
+        #expect(event.body().contains("waiting for your answer"))
     }
 }
 
@@ -663,6 +777,7 @@ struct NotificationFilterTests {
             .usageThreshold(window: window("five_hour", 92)),
             .sessionCompleted(session: makeSession("alpha")),
             .sessionIdle(session: makeSession("beta", status: .idle)),
+            .sessionNeedsInput(session: makeSession("gamma", status: .waiting)),
         ]
     }
 

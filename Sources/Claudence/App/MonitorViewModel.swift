@@ -17,11 +17,16 @@ final class MonitorViewModel {
     struct MenuBarState: Equatable {
         var text: String = "Claude"
         var severity: Severity?
-        var hasPercent = false
         var accessibilityLabel: String = "Claudence, usage unavailable, 0 active sessions"
     }
 
     private(set) var snapshot: MonitorSnapshot = .empty
+
+    /// The newest snapshot held back by the publish interval, and the task that
+    /// will deliver it. Nil means nothing is waiting.
+    @ObservationIgnored private var pendingSnapshot: MonitorSnapshot?
+    @ObservationIgnored private var pendingPublish: Task<Void, Never>?
+    @ObservationIgnored private var lastPublishedAt = Date.distantPast
     private(set) var burnRates: [String: BurnRate] = [:]
     private(set) var isRunning = false
 
@@ -67,11 +72,29 @@ final class MonitorViewModel {
         self.analytics = analytics
     }
 
+    /// Which subscription the usage limits belong to, or nil when Claude Code's
+    /// account file is absent or names a tier this does not recognise.
+    ///
+    /// Read for one reason: every percentage in this application is a share of
+    /// a limit whose size it never states, and 62% of a Max 20x window is four
+    /// times the work of 62% of a Max 5x one. Naming the plan is what turns the
+    /// headline number from a ratio into a quantity the reader can place.
+    ///
+    /// Nil draws nothing. See `AccountPlanReader` for the privacy argument and
+    /// for why an unrecognised tier is never guessed at.
+    private(set) var accountPlan: AccountPlan?
+
     // MARK: - Lifecycle
 
     func start() async {
         guard !isRunning else { return }
         isRunning = true
+
+        // Read once, off the main actor, and never again. A subscription does
+        // not change while the application is open, and the file it comes from
+        // is 86 KB of JSON that would otherwise be decoded on every render of
+        // the popover header.
+        accountPlan = await Task.detached { AccountPlanReader.read() }.value
 
         observerToken = await engine.observe { [weak self] snapshot in
             Task { @MainActor in self?.apply(snapshot) }
@@ -213,8 +236,6 @@ final class MonitorViewModel {
 
     var menuBarSeverity: Severity? { menuBarState.severity }
 
-    var menuBarHasPercent: Bool { menuBarState.hasPercent }
-
     var menuBarAccessibilityLabel: String { menuBarState.accessibilityLabel }
 
     /// Derives the label's inputs from a snapshot. Pure, so it is testable
@@ -234,7 +255,6 @@ final class MonitorViewModel {
         return MenuBarState(
             text: percent.map(Format.percent) ?? (active > 0 ? "\(active)" : "Claude"),
             severity: snapshot.severity,
-            hasPercent: percent != nil,
             accessibilityLabel: parts.joined(separator: ", ")
         )
     }
@@ -249,6 +269,56 @@ final class MonitorViewModel {
     /// The engine already drops unchanged snapshots; these guards keep the
     /// split properties honest when only one of the three moved.
     private func apply(_ snapshot: MonitorSnapshot) {
+        // Coalesced to at most one publish a second, which is the fix for a
+        // measured regression rather than a precaution.
+        //
+        // `MenuBarExtra(style: .window)` keeps the popover's whole view tree
+        // mounted for the life of the process, so every assignment here costs a
+        // full SwiftUI layout pass over that tree whether or not anyone has the
+        // popover open. Three sessions streaming tokens push a changed snapshot
+        // through the 250 ms filesystem debounce several times a second, and
+        // `sample` showed the resulting cost as `LayoutEngineBox.sizeThatFits`
+        // and `StackLayout.placeChildren` dominating an app that was, from the
+        // user's point of view, doing nothing at all: 1.8% of a core against a
+        // 0.5% budget.
+        //
+        // A second of latency is invisible on a monitor whose numbers are read,
+        // not acted on, and the trailing publish means the last state of a burst
+        // always lands. Nothing is dropped, only deferred.
+        let now = Date()
+        let sinceLast = now.timeIntervalSince(lastPublishedAt)
+        guard sinceLast >= MonitorViewModel.publishInterval else {
+            pendingSnapshot = snapshot
+            schedulePendingPublish(after: MonitorViewModel.publishInterval - sinceLast)
+            return
+        }
+        publish(snapshot, at: now)
+    }
+
+    /// How often the view tree may be invalidated by a new snapshot.
+    private static let publishInterval: TimeInterval = 1
+
+    private func schedulePendingPublish(after delay: TimeInterval) {
+        guard pendingPublish == nil else { return }
+        pendingPublish = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self else { return }
+            self.pendingPublish = nil
+            guard let pending = self.pendingSnapshot else { return }
+            self.pendingSnapshot = nil
+            self.publish(pending, at: Date())
+        }
+    }
+
+    /// Fans a snapshot out to the three observable properties, assigning each
+    /// only when its own value moved.
+    ///
+    /// `@Observable` invalidates on assignment, not on change, so an assignment
+    /// of an equal value still re-renders every view that read the property.
+    /// The engine already drops unchanged snapshots; these guards keep the
+    /// split properties honest when only one of the three moved.
+    private func publish(_ snapshot: MonitorSnapshot, at date: Date) {
+        lastPublishedAt = date
         if self.snapshot != snapshot {
             self.snapshot = snapshot
         }

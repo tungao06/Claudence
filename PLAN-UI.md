@@ -187,3 +187,43 @@ What ships is the sum of tokens across sessions active in the last five hours, a
 
 - **Nine repeating animations**, listed in `Design/UI-CONTRACT.md` section 4.1. One of them, `arcHeadBreathe`, is bound to the menu bar label itself, which is mounted for the life of the process. This is the exact shape of the defect that measured 6.9% of a core against a 0.5% budget.
 - **The privacy paragraph**, which reads "One request ever leaves this app". Two do: the usage GET, and a conditional token refresh when the access token has expired. The settings pane discloses both.
+
+---
+
+## U9: four layout defects, and the tool that found them
+
+Reported as "UI still looks wrong in the dashboard and in an agent's detail". The
+first thing built was a way to see the thing: `Claudence --render-ui <dir>`
+draws `DashboardView` (populated and empty) and `SessionDetailView` through
+`ImageRenderer` in both appearances and writes PNGs. Without Xcode there was no
+other way to look at a layout except to launch the app and drive it by hand,
+which cannot reach a sheet, an empty state, or the light appearance at all.
+
+Two things had to be given a seam for that to work, both no-ops in the running
+application:
+
+- `ImageRenderer` draws **nothing** inside a `ScrollView` on this platform. The
+  header rendered and the whole body came back blank. Verified with a four-line
+  probe before concluding it. `RenderableScrollView` is a `ScrollView` in the app
+  and a plain stack while rendering.
+- The detail's `.frame(maxHeight: 520)` is what makes it scroll in a popover.
+  Applied to a flattened stack it clipped a 1 300 pt view to 520 and centred it,
+  which reads exactly like a layout defect. `scrollHeightCap` lifts it offscreen.
+
+What the shots then showed, and what each one was:
+
+| Defect | Cause | Fix |
+|---|---|---|
+| The detail sheet's title, bars and buttons sat flush against both window edges | The detail draws no gutters of its own; the popover host supplies `popoverPadding` and the dashboard's sheet supplied neither padding nor width, so the sheet took the content's ideal width | `detailSheetChrome()`, one modifier both window hosts apply: the design's 760 pt column and its 26 pt gutters |
+| A tooltip was painted under the card below it and cut off mid-word, and its title wrapped onto two lines | The bubble was an overlay on its trigger, so it was painted in its own container's turn and proposed the trigger's width | Triggers publish a `TooltipPresentation` through a preference; one `tooltipLayer()` per window draws it last, clamped against the window |
+| `SESSIONS` rendered as `SESSI...` in the projects table | A 60 pt column wide enough for every count it will ever print, but not for its own heading | 76 pt |
+| The four stat tiles ended on four different baselines whenever their contents differed in height | Tiles sized to their own content inside the grid row | Tiles stretch to the row's height |
+| A tube fill at 1% drew a flat lens lying *across* the tube's rounded bottom, poking out both sides | The fill was a `Capsule` rounded to its own height, not to the tube's | One shape clipped once: the fill is a rectangle, the tube clips it |
+| The same 1% reading then became a hairline | The design's 2% floor is 3.7 pt of 186, which lands where the tube is still curving | The floor is 8 pt of rendered height, where the clipped fill is 39 pt of the tube's 56 |
+| The detail sheet's close button sat under the scroller, and scrolled away with the header, so closing meant scrolling back to the top | It was the last item in the header, which is the first item in the scroll | Pinned outside the scroll at the top trailing corner, inset clear of the scroller; the header reserves the space it used to occupy |
+
+Two things that looked like defects in a shot and were not, recorded so they are
+not "fixed" later: the yellow block in the history card is `ImageRenderer`
+failing to draw a segmented `Picker`, and `Claude Opus 4 5` came from a fixture
+inventing a versioned window key. The API's model scopes are `seven_day_opus`,
+`_sonnet`, `_cowork`, `_oauth_apps`, `_omelette`; the fixture now uses those.

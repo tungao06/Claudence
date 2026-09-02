@@ -80,70 +80,126 @@ struct QuickActionsMenu: View {
 
     // MARK: - Buttons
 
+    /// One row, wrapping only if it must, with Stop pushed to the far right.
+    ///
+    /// The design draws `display: flex; gap: 9px; flex-wrap: wrap` with
+    /// `margin-left: auto` on the last chip, and three visually distinct
+    /// treatments rather than four identical `.bordered` buttons: an accent
+    /// chip for the primary action, two neutral chips, and a destructive one
+    /// held apart from them. The separation is the point — a Stop that sits
+    /// flush against Copy Path is a misclick waiting to happen — and the visible
+    /// labels are the design's full words, `Stop Session\u{2026}` included,
+    /// whose ellipsis is the platform's promise that a dialog follows.
     private var buttons: some View {
-        VStack(spacing: Theme.Space.s) {
-            HStack(spacing: Theme.Space.s) {
-                actionButton(
-                    title: "Terminal",
-                    glyph: "terminal",
-                    label: "Open Terminal at \(session.displayPath)",
-                    hint: "Opens a Terminal window in this session's working directory"
-                ) {
-                    Task { record(await actions.openTerminal(for: session)) }
-                }
-                actionButton(
-                    title: "Project",
-                    glyph: "folder",
-                    label: "Show \(session.displayPath) in Finder",
-                    hint: "Opens this session's working directory in Finder"
-                ) {
-                    record(actions.openProject(for: session))
-                }
+        HStack(spacing: Theme.Space.m) {
+            actionChip(
+                title: "Open Terminal",
+                glyph: "terminal",
+                treatment: .accent,
+                label: "Open Terminal at \(session.displayPath)",
+                hint: "Opens a Terminal window in this session's working directory"
+            ) {
+                Task { record(await actions.openTerminal(for: session)) }
             }
-            HStack(spacing: Theme.Space.s) {
-                actionButton(
-                    title: "Copy Path",
-                    glyph: "doc.on.doc",
-                    label: "Copy the working directory path",
-                    hint: "Copies the full path to the clipboard"
-                ) {
-                    record(actions.copyPath(for: session))
-                }
-                actionButton(
-                    title: "Stop",
-                    glyph: "stop.circle",
-                    label: "Stop session. Terminates the Claude Code process \(session.pid) for \(session.projectName).",
-                    hint: "Asks for confirmation first",
-                    role: .destructive
-                ) {
-                    isConfirmingStop = true
-                }
+            actionChip(
+                title: "Open Project",
+                glyph: "folder",
+                treatment: .neutral,
+                label: "Show \(session.displayPath) in Finder",
+                hint: "Opens this session's working directory in Finder"
+            ) {
+                record(actions.openProject(for: session))
+            }
+            actionChip(
+                title: "Copy Path",
+                glyph: "doc.on.doc",
+                treatment: .neutral,
+                label: "Copy the working directory path",
+                hint: "Copies the full path to the clipboard"
+            ) {
+                record(actions.copyPath(for: session))
+            }
+
+            Spacer(minLength: Theme.Space.s)
+
+            actionChip(
+                title: "Stop Session\u{2026}",
+                glyph: "stop.circle",
+                treatment: .destructive,
+                label: "Stop session. Terminates the Claude Code process \(session.pid) for \(session.projectName).",
+                hint: "Asks for confirmation first"
+            ) {
+                isConfirmingStop = true
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The three treatments the design gives these chips. Colour is never the
+    /// only difference: the accent chip is the leftmost and first in reading
+    /// order, and the destructive one is the only chip separated from the group
+    /// and the only one whose label ends in an ellipsis.
+    private enum Treatment {
+        case accent
+        case neutral
+        case destructive
+
+        var fill: Color {
+            switch self {
+            case .accent: return Theme.Hero.panelTop
+            case .neutral: return Theme.surfaceControl
+            case .destructive: return Theme.surface
+            }
+        }
+
+        var border: Color {
+            switch self {
+            case .accent: return Theme.Hero.panelBorder
+            case .neutral: return Theme.separator
+            case .destructive: return Theme.borderHover
+            }
+        }
+
+        var ink: Color {
+            switch self {
+            case .accent: return Theme.accentDeep
+            case .neutral: return Theme.textSecondary
+            case .destructive: return Theme.critical
             }
         }
     }
 
-    private func actionButton(
+    private func actionChip(
         title: String,
         glyph: String,
+        treatment: Treatment,
         label: String,
         hint: String,
-        role: ButtonRole? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        Button(role: role, action: action) {
+        Button(role: treatment == .destructive ? .destructive : nil, action: action) {
             HStack(spacing: Theme.Space.xs) {
                 Image(systemName: glyph)
                     .font(.system(size: Theme.Bar.severityGlyph))
                 Text(title)
-                    .font(Theme.Typography.label)
+                    .font(Theme.Typography.labelEmphasis)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
-            .foregroundStyle(role == .destructive ? Theme.critical : Theme.accent)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Theme.Space.s)
+            .foregroundStyle(treatment.ink)
+            .padding(.vertical, Theme.Space.m)
+            .padding(.horizontal, Theme.Space.l)
             .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.banner, style: .continuous)
+                    .fill(treatment.fill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.banner, style: .continuous)
+                    .strokeBorder(treatment.border, lineWidth: 1)
+            )
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityHint(hint)
     }

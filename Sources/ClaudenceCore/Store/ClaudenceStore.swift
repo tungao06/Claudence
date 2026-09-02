@@ -346,6 +346,60 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         }
     }
 
+    /// Every session's samples inside `range`, plus, for each session, the last
+    /// sample taken *before* it.
+    ///
+    /// The trailing baseline is the whole point. Samples hold a session's
+    /// running total, so a bucket's consumption is the difference between
+    /// consecutive samples; without the sample that precedes the range, the
+    /// first sample inside it has nothing to subtract from and its bucket
+    /// silently loses everything spent between the two. Fetching it here rather
+    /// than widening the range keeps the extra work at one row per session
+    /// instead of one row per sampling interval.
+    ///
+    /// Ordered by session and then by time, which is the order the caller
+    /// differentiates in.
+    public func usageSamples(in range: Range<Date>) -> [UsageSampleRow] {
+        let lower = range.lowerBound.timeIntervalSince1970
+        let upper = range.upperBound.timeIntervalSince1970
+
+        return perform("read usage samples in range", default: []) { database in
+            try database.query(
+                """
+                SELECT session_id, sampled_at,
+                       fresh_input, cache_creation, cache_read, output, thinking
+                  FROM usage_samples
+                 WHERE sampled_at >= ? AND sampled_at < ?
+                 UNION ALL
+                SELECT s.session_id, s.sampled_at,
+                       s.fresh_input, s.cache_creation, s.cache_read, s.output, s.thinking
+                  FROM usage_samples s
+                  JOIN (
+                        SELECT session_id, MAX(sampled_at) AS baseline
+                          FROM usage_samples
+                         WHERE sampled_at < ?
+                         GROUP BY session_id
+                       ) p
+                    ON s.session_id = p.session_id AND s.sampled_at = p.baseline
+                 ORDER BY session_id ASC, sampled_at ASC
+                """,
+                [.real(lower), .real(upper), .real(lower)]
+            ) { row in
+                UsageSampleRow(
+                    sessionID: row.string(0),
+                    sampledAt: Date(timeIntervalSince1970: row.double(1)),
+                    usage: TokenUsage(
+                        freshInput: row.int(2),
+                        cacheCreation: row.int(3),
+                        cacheRead: row.int(4),
+                        output: row.int(5),
+                        thinking: row.int(6)
+                    )
+                )
+            }
+        }
+    }
+
     // MARK: - Aggregates
 
     /// Token totals per local day, oldest first, covering the last `days` days

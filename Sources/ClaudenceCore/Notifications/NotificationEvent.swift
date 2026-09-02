@@ -61,6 +61,17 @@ public enum NotificationEvent: Sendable, Equatable {
     /// A session the registry reported as working now reports itself idle, and
     /// said so by rewriting its own record rather than by going stale.
     case sessionIdle(session: AISession)
+    /// A session is waiting on the person: it has asked something and cannot
+    /// continue until it is answered.
+    ///
+    /// This is the one event where an unread notification costs the user real
+    /// time, because the session does no work at all until it is answered. It
+    /// is also the best evidenced: `waiting` is a literal string Claude Code
+    /// 2.1.258 writes into `~/.claude/sessions/<pid>.json`, observed in the
+    /// sequence `busy -> waiting -> busy -> idle` while watching a live
+    /// session, and `SessionRegistryAdapter.mapStatus` maps it directly with no
+    /// clock involved on either branch.
+    case sessionNeedsInput(session: AISession)
 
     // MARK: - Identity
 
@@ -70,6 +81,7 @@ public enum NotificationEvent: Sendable, Equatable {
         case usageThreshold
         case sessionCompleted
         case sessionIdle
+        case sessionNeedsInput
     }
 
     public var kind: Kind {
@@ -77,6 +89,7 @@ public enum NotificationEvent: Sendable, Equatable {
         case .usageThreshold: return .usageThreshold
         case .sessionCompleted: return .sessionCompleted
         case .sessionIdle: return .sessionIdle
+        case .sessionNeedsInput: return .sessionNeedsInput
         }
     }
 
@@ -86,6 +99,7 @@ public enum NotificationEvent: Sendable, Equatable {
         case .usageThreshold(let window): return window.name
         case .sessionCompleted(let session): return session.id
         case .sessionIdle(let session): return session.id
+        case .sessionNeedsInput(let session): return session.id
         }
     }
 
@@ -99,11 +113,19 @@ public enum NotificationEvent: Sendable, Equatable {
     /// not the instance, so Notification Center groups them sensibly.
     public var title: String {
         switch self {
-        case .usageThreshold: return "Usage at 90%"
+        // Built from the constant the deriver fires on, so the notification and
+        // the settings row that switches it on cannot name different numbers.
+        case .usageThreshold:
+            return "Usage at \(Int(Constants.UsageThreshold.critical))%"
         case .sessionCompleted: return "Session completed"
         // Not in the section 10 table, so it is named to sit beside the row
         // that is: the state, not the instance, in the same two words.
         case .sessionIdle: return "Session idle"
+        // Names who is being waited on rather than what the session is doing,
+        // for the same reason `Theme.name(for:)` renders this state as
+        // "Needs you": a title reading "Session waiting" sits directly above
+        // "Session idle" in Notification Center and the two would not separate.
+        case .sessionNeedsInput: return "Session needs you"
         }
     }
 
@@ -150,6 +172,17 @@ public enum NotificationEvent: Sendable, Equatable {
                     + "and \(Format.tokens(tokens)) tokens."
             }
             return "\(session.projectName) stopped working after \(Format.duration(elapsed))."
+
+        case .sessionNeedsInput(let session):
+            // The one thing a reader wants here is what was asked, and that is
+            // exactly what the privacy allowlist keeps out: the question lives
+            // in `content[].text`, which this application never reads. So the
+            // sentence says that an answer is owed and which project owes it,
+            // and stops. Time elapsed is deliberately omitted -- the interval
+            // since the session started says nothing about how long the
+            // question has been sitting there, and printing it would invite
+            // exactly that reading.
+            return "\(session.projectName) is waiting for your answer."
         }
     }
 }

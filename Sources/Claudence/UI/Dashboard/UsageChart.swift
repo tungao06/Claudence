@@ -19,13 +19,19 @@ import ClaudenceCore
 /// Drawn with `Path` and `Canvas` rather than a charting framework, so it has
 /// no dependency to resolve and every pixel is accounted for here.
 ///
-/// The design grows the columns from the baseline on first paint. That is a
-/// one-shot and therefore permitted, but `Canvas` does not interpolate the
-/// state its closure reads, so it would need a per-frame animatable driver
-/// pushing redraws through a hand-drawn chart. In a process measured against a
-/// 0.5% idle budget that is not a trade worth making for an effect seen once,
-/// so the columns arrive at their height. Nothing here repeats, by construction
-/// rather than by a flag being right.
+/// The design grows the columns from the baseline, once per series, and that is
+/// what `growth` drives. `Canvas` does not interpolate the state its closure
+/// reads, so the number reaches the drawing through `ColumnCanvas`, which
+/// conforms to `Animatable` and therefore does get re-evaluated per frame.
+///
+/// The per-frame redraw is the reason this is a one-shot and never a repeat.
+/// `MenuBarExtra(style: .window)` keeps its content mounted after the popover is
+/// dismissed, so a repeating animation would drive that redraw at the refresh
+/// rate for the life of the process, against a 0.5% idle budget. Firing once
+/// when the series changes means an idle chart costs nothing by construction,
+/// not because a visibility flag happened to be right. Reduce Motion and the
+/// Live indicators preference both leave `growth` settled at 1, which is also
+/// its initial value, so a chart that never animates is simply drawn.
 struct UsageChart: View {
     let points: [ChartPoint]
     /// Output tokens per point, keyed by `ChartPoint.id`.
@@ -37,17 +43,39 @@ struct UsageChart: View {
     let outputTokens: [String: Double]
     /// What the series measures, spoken in the accessibility summary.
     let title: String
+    /// The quiet line under the title, where the design says what the figures
+    /// were measured from. Nil leaves the chart's own summary there.
+    let caption: String?
+    /// What to print on the final column's axis cell in place of its own label.
+    ///
+    /// The chart cannot prove that the last bucket is the current day: it is
+    /// handed labels, not dates. So the word arrives from the caller that built
+    /// the series and knows, and a caller that does not know passes nothing and
+    /// gets the label it supplied.
+    let latestLabel: String?
     let unavailableMessage: String
     let unavailableReason: String?
     let height: CGFloat
 
     @State private var selectedIndex: Int?
+    /// How far the columns have grown out of the baseline, 0 to 1.
+    ///
+    /// Starts settled rather than at zero. A chart that will not animate at all
+    /// (Reduce Motion, Live indicators off, or a preview that never runs its
+    /// task) then draws its real heights on the first pass instead of drawing an
+    /// empty plot and waiting for something to move it.
+    @State private var growth: Double = 1
     @FocusState private var isFocused: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.liveIndicators) private var liveIndicators
 
     init(
         points: [ChartPoint],
         outputTokens: [String: Double] = [:],
         title: String = "Usage over time",
+        caption: String? = nil,
+        latestLabel: String? = nil,
         unavailableMessage: String = "No usage history",
         unavailableReason: String? = nil,
         height: CGFloat = DashboardMetrics.chartHeight
@@ -55,6 +83,8 @@ struct UsageChart: View {
         self.points = points
         self.outputTokens = outputTokens
         self.title = title
+        self.caption = caption
+        self.latestLabel = latestLabel
         self.unavailableMessage = unavailableMessage
         self.unavailableReason = unavailableReason
         self.height = height
@@ -74,6 +104,17 @@ struct UsageChart: View {
     /// anywhere the legend would name a band that is not drawn.
     private var hasSplit: Bool {
         points.contains { !$0.isMissing && outputTokens[$0.id] != nil }
+    }
+
+    /// Identity of the series, and the only thing that restarts the growth.
+    ///
+    /// The ids and the count, not the values: a range the reader switched to is
+    /// a new chart and earns the sweep, where the same range ticking up as
+    /// tokens are spent is the same chart and must not replay it. The count is
+    /// carried explicitly so that two different series whose ids happen to
+    /// concatenate to the same string still differ.
+    private var seriesKey: String {
+        "\(points.count):" + points.map(\.id).joined(separator: "|")
     }
 
     private var selectedPoint: ChartPoint? {
@@ -113,6 +154,14 @@ struct UsageChart: View {
                     .font(Theme.Typography.label)
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
+                    // The design gives every metric an explanation on hover and
+                    // the text for this one was already written; nothing was
+                    // attached to it, so the chart was the one card on the
+                    // dashboard that could not say where its figures came from.
+                    // Only while no column is selected: with one selected this
+                    // line is that column's readout, which the tip does not
+                    // describe.
+                    .tooltip(selectedPoint == nil ? TooltipText.tip("chart") : nil)
                 Spacer(minLength: Theme.Space.m)
                 if hasSplit { legend }
             }
@@ -130,7 +179,10 @@ struct UsageChart: View {
     private var legend: some View {
         HStack(spacing: Theme.Space.m) {
             legendKey("input", color: Theme.Chart.inputBandLatest)
-            legendKey("output", color: Theme.Chart.outputBandLatest)
+            // The legend takes the band's own colour, not the emphasis the
+            // most recent column is painted in: a key drawn in the Today
+            // column's ink was naming a colour that appears on one column.
+            legendKey("output", color: Theme.Chart.outputBand)
         }
     }
 
@@ -158,7 +210,9 @@ struct UsageChart: View {
 
     private var readoutSecondary: String {
         if selectedPoint != nil { return "Arrow keys to move, Escape to clear" }
-        var parts = ["\(points.count) days"]
+        var parts: [String] = []
+        if let caption { parts.append(caption) }
+        parts.append("\(points.count) days")
         if let peak = measured.max(by: { $0.value < $1.value }) {
             parts.append("peak \(Format.tokens(Int(peak.value.rounded()))) on \(peak.label)")
         }
@@ -184,16 +238,15 @@ struct UsageChart: View {
     private var plot: some View {
         GeometryReader { geo in
             let geometry = ChartGeometry(size: geo.size, points: points)
-            Canvas(rendersAsynchronously: false) { context, _ in
-                UsageChart.render(
-                    points: points,
-                    splits: outputTokens,
-                    geometry: geometry,
-                    latest: latestMeasuredIndex,
-                    selected: selectedIndex,
-                    in: &context
-                )
-            }
+            ColumnCanvas(
+                points: points,
+                splits: outputTokens,
+                geometry: geometry,
+                latest: latestMeasuredIndex,
+                latestLabel: latestLabel,
+                selected: selectedIndex,
+                growth: growth
+            )
             .contentShape(Rectangle())
             .onContinuousHover { phase in
                 switch phase {
@@ -207,6 +260,7 @@ struct UsageChart: View {
             }
         }
         .frame(height: height)
+        .task(id: seriesKey) { await grow() }
         .focusable()
         .focused($isFocused)
         .onMoveCommand { move($0) }
@@ -225,6 +279,31 @@ struct UsageChart: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spokenSummary)
         .accessibilityChildren { pointElements }
+    }
+
+    /// Runs the columns out of the baseline, once, whenever the series changes.
+    ///
+    /// The reset to zero is deliberately committed as its own frame before the
+    /// animated change is made. Setting 0 and 1 in the same run loop turn would
+    /// collapse into a single transaction whose starting value is already the
+    /// final one, and the columns would appear at full height with no sweep at
+    /// all. Yielding is not enough on its own to guarantee a rendered frame, so
+    /// this waits roughly one of them.
+    ///
+    /// Nothing here loops. The task is bound to `seriesKey`, so it runs when the
+    /// series it draws is replaced and not otherwise.
+    private func grow() async {
+        // Both preferences fully still the chart, and stillness means the real
+        // heights, not a zero that never leaves the floor.
+        guard Theme.valueAnimation(reduceMotion: reduceMotion, liveIndicators: liveIndicators) != nil
+        else {
+            growth = 1
+            return
+        }
+        growth = 0
+        try? await Task.sleep(for: .milliseconds(16))
+        guard !Task.isCancelled else { return }
+        withAnimation(Theme.Motion.chartGrow) { growth = 1 }
     }
 
     private func move(_ direction: MoveCommandDirection) {
@@ -293,25 +372,75 @@ struct UsageChart: View {
     }
 }
 
+// MARK: - Drawing surface
+
+/// The chart's `Canvas`, wrapped so the growth can actually be interpolated.
+///
+/// `Canvas` hands its drawing closure a `GraphicsContext`, and that closure is
+/// not an animatable attribute: under `withAnimation` SwiftUI would swap one
+/// closure for another and the columns would jump from the floor to full height
+/// in a single frame. Conforming the view that carries the number to
+/// `Animatable` is what turns `growth` into a per-frame driver, because SwiftUI
+/// interpolates `animatableData` and re-evaluates this body at every step.
+///
+/// A separate view rather than `UsageChart` itself conforming: `Animatable`
+/// re-runs the body it is attached to at the refresh rate while the animation
+/// lasts, and the chart's body also builds the readout, the legend and the
+/// accessibility children, none of which move. Only the surface that redraws
+/// should pay for the redraw.
+private struct ColumnCanvas: View, Animatable {
+    let points: [ChartPoint]
+    let splits: [String: Double]
+    let geometry: ChartGeometry
+    let latest: Int?
+    let latestLabel: String?
+    let selected: Int?
+    var growth: Double
+
+    /// `nonisolated` because `View` carries main actor isolation onto everything
+    /// declared here, while `Animatable` does not: the interpolation is a plain
+    /// read and write of one `Double` on a value type, and the conformance will
+    /// not compile under Swift 6 without saying so.
+    nonisolated var animatableData: Double {
+        get { growth }
+        set { growth = newValue }
+    }
+
+    var body: some View {
+        Canvas(rendersAsynchronously: false) { context, _ in
+            UsageChart.render(
+                points: points,
+                splits: splits,
+                geometry: geometry,
+                latest: latest,
+                latestLabel: latestLabel,
+                selected: selected,
+                growth: growth,
+                in: &context
+            )
+        }
+    }
+}
+
 // MARK: - Column metrics
 //
 // Geometry the chart owns and nothing else needs. `DashboardMetrics` holds the
 // plot's frame; these are the shape of a single column inside it.
 
 private enum ColumnMetrics {
-    /// The design gives a column 74.6 pt of a 90 pt band, so a fifth of the
-    /// band is air.
-    static let gapRatio: CGFloat = 0.2
+    /// The design gives a column 74.6 pt of a 90 pt band, so a sixth of the
+    /// band is air: `1 - 74.6 / 90`, not the fifth an earlier rounding used.
+    static let gapRatio: CGFloat = 0.17
     /// A column wider than the design's own stops reading as a column and
     /// starts reading as a slab, which happens as soon as the series is short.
     static let maximumWidth: CGFloat = 74
-    static let topRadius: CGFloat = 10
-    static let bottomRadius: CGFloat = 4
+    static let topRadius: CGFloat = Theme.Radius.ChartColumn.top
+    static let bottomRadius: CGFloat = Theme.Radius.ChartColumn.bottom
     /// Outline drawn around the column under the pointer.
     static let selectionStroke: CGFloat = 1.5
     /// The ring on the most recent column: a gap punched in the card colour,
     /// then a hairline outside it.
-    static let ringGap: CGFloat = 2.5
+    static let ringGap: CGFloat = 2
     static let ringStroke: CGFloat = 1
     static let legendSwatch: CGFloat = 9
 }
@@ -321,15 +450,25 @@ private enum ColumnMetrics {
 extension UsageChart {
 
     /// All drawing lives here, off the view's isolation, taking only values.
+    ///
+    /// `growth` runs 0 to 1: 0 leaves every column flat on the floor, 1 draws
+    /// the measured heights. It is a drawing instruction and nothing else, so no
+    /// figure the chart reports is affected by it.
     fileprivate static func render(
         points: [ChartPoint],
         splits: [String: Double],
         geometry: ChartGeometry,
         latest: Int?,
+        latestLabel: String?,
         selected: Int?,
+        growth: Double,
         in context: inout GraphicsContext
     ) {
         guard geometry.plot.width > 0, geometry.plot.height > 0 else { return }
+        // The frame the chart is measured against does not move: the grid, the
+        // floor, the gap markers and the axis are drawn at full strength from
+        // the first frame, so the columns grow into a scale that is already
+        // readable rather than into an empty rectangle.
         drawGrid(geometry, in: &context)
         drawBaseline(points: points, geometry: geometry, in: &context)
         drawMissingMarkers(points: points, geometry: geometry, selected: selected, in: &context)
@@ -339,9 +478,16 @@ extension UsageChart {
             geometry: geometry,
             latest: latest,
             selected: selected,
+            growth: growth,
             in: &context
         )
-        drawXLabels(points: points, geometry: geometry, latest: latest, in: &context)
+        drawXLabels(
+            points: points,
+            geometry: geometry,
+            latest: latest,
+            latestLabel: latestLabel,
+            in: &context
+        )
     }
 
     // MARK: Grid and y axis
@@ -434,6 +580,7 @@ extension UsageChart {
         geometry: ChartGeometry,
         latest: Int?,
         selected: Int?,
+        growth: Double,
         in context: inout GraphicsContext
     ) {
         for (index, point) in points.enumerated() where !point.isMissing {
@@ -441,7 +588,15 @@ extension UsageChart {
             // A measured zero sits on the floor and draws nothing. Giving it a
             // stub would make it look like a small day; the unbroken baseline
             // already says it was measured.
-            guard total > 0, let rect = geometry.columnRect(index, value: total) else { continue }
+            guard total > 0, let full = geometry.columnRect(index, value: total) else { continue }
+
+            // A column that has not started yet draws nothing at all, exactly
+            // like the measured zero above. A hairline waiting on the floor
+            // would be indistinguishable from a real, very small day for as
+            // long as it sat there.
+            let progress = columnProgress(index, count: points.count, growth: growth)
+            guard progress > 0 else { continue }
+            let rect = grown(full, to: progress, baseline: geometry.plot.maxY)
 
             let isLatest = index == latest
             let body = columnPath(rect)
@@ -479,6 +634,49 @@ extension UsageChart {
                 )
             }
         }
+    }
+
+    /// How far one column has travelled, given how far the whole sweep has.
+    ///
+    /// The columns do not arrive together. Each one starts a little after the
+    /// one to its left, which walks the eye across the range in the direction
+    /// the axis is read: oldest day first, most recent day last, so the column
+    /// the reader is looking for is the one that lands under their attention.
+    /// Landing them simultaneously says nothing about the order of the days.
+    ///
+    /// `chartGrowStagger` is the share of the sweep spent handing out those
+    /// start times; what is left, `1 - stagger`, is how long any single column
+    /// takes. So the last column starts at `stagger` and finishes exactly with
+    /// the animation, and no column is still moving after the sweep is over.
+    ///
+    /// A single point has no left-to-right to express and takes the sweep whole.
+    static func columnProgress(_ index: Int, count: Int, growth: Double) -> Double {
+        guard count > 1 else { return growth }
+        let stagger = Theme.Motion.chartGrowStagger
+        // A stagger of 1 would leave a column no time to travel in, and the
+        // division below no denominator. Guarded rather than assumed, because
+        // the value is a token somebody may reasonably retune.
+        guard stagger < 1 else { return growth >= 1 ? 1 : 0 }
+        let start = stagger * Double(index) / Double(count - 1)
+        return min(1, max(0, (growth - start) / (1 - stagger)))
+    }
+
+    /// The column as drawn part way through its growth.
+    ///
+    /// Scaled from the baseline rather than from the top, so the column rises
+    /// out of the floor instead of sliding down onto it. Everything keyed off
+    /// `rect.height` follows for free: the output band keeps its share of a
+    /// shorter column, and the ring on the most recent day is drawn around the
+    /// height the column actually has, so it never hangs in the air above one
+    /// that has not arrived.
+    private static func grown(
+        _ rect: CGRect,
+        to progress: Double,
+        baseline: CGFloat
+    ) -> CGRect {
+        guard progress < 1 else { return rect }
+        let height = rect.height * CGFloat(progress)
+        return CGRect(x: rect.minX, y: baseline - height, width: rect.width, height: height)
     }
 
     /// The design rings the most recent column with a gap in the card colour and
@@ -545,18 +743,24 @@ extension UsageChart {
         points: [ChartPoint],
         geometry: ChartGeometry,
         latest: Int?,
+        latestLabel: String?,
         in context: inout GraphicsContext
     ) {
         let y = geometry.plot.maxY + Theme.Space.xs
         for index in labelledIndices(count: points.count) {
+            let isLatest = index == latest
+            // The design's final cell reads `Today`. This view cannot verify
+            // that the series ends today, so it prints the word only when the
+            // caller supplied it and prints the point's own label otherwise.
+            let text = isLatest ? (latestLabel ?? points[index].label) : points[index].label
             var label = context.resolve(
-                Text(points[index].label).font(Theme.Typography.micro)
+                Text(text).font(
+                    isLatest ? Theme.Typography.microEmphasis : Theme.Typography.micro
+                )
             )
             // The most recent day is the one the eye is looking for, so its
-            // label is inked rather than muted. The label itself stays whatever
-            // the caller supplied: this view cannot verify that the series ends
-            // today, so it does not write the word.
-            label.shading = .color(index == latest ? Theme.textPrimary : Theme.textQuaternary)
+            // label is inked rather than muted.
+            label.shading = .color(isLatest ? Theme.textPrimary : Theme.textQuaternary)
             context.draw(label, at: CGPoint(x: geometry.x(index), y: y), anchor: .top)
         }
     }

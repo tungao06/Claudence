@@ -96,7 +96,7 @@ public struct BurnRateTracker: Sendable {
     private let window: TimeInterval
     private let capacity: Int
 
-    public init(window: TimeInterval = 300, capacity: Int = 60) {
+    public init(window: TimeInterval = Constants.BurnRate.window, capacity: Int = 60) {
         self.window = window
         self.capacity = capacity
     }

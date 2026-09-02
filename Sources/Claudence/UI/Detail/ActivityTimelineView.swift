@@ -21,11 +21,21 @@ struct ActivityTimelineView: View {
     let limit: Int
     /// Rendering clock, so the relative times in a preview are deterministic.
     let now: Date
+    /// What to say when there is nothing. A session with an empty trail and a
+    /// subagent that keeps no trail at all are different absences, and the line
+    /// should say which one it is.
+    let emptyMessage: String
 
-    init(trail: [TimedActivity], limit: Int = 8, now: Date = Date()) {
+    init(
+        trail: [TimedActivity],
+        limit: Int = 8,
+        now: Date = Date(),
+        emptyMessage: String = "No activity recorded yet"
+    ) {
         self.trail = trail
         self.limit = limit
         self.now = now
+        self.emptyMessage = emptyMessage
     }
 
     static let footnote =
@@ -38,13 +48,13 @@ struct ActivityTimelineView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             SectionEyebrow("RECENT ACTIVITY")
-                .tooltip(tip: "activity")
+                .tooltip(tip: "activity", edge: .leading)
 
             if rows.isEmpty {
                 // A session that has done nothing we could read is ordinary:
                 // a fresh session, or one whose transcript has not been
                 // written to since Claudence started watching.
-                UnavailableView("No activity recorded yet", compact: true)
+                UnavailableView(emptyMessage, compact: true)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { index, entry in
@@ -65,15 +75,29 @@ struct ActivityTimelineView: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// Fixed so every verb starts on the same left edge, which is what makes
+    /// the list scannable.
+    ///
+    /// The design's 34 pt was measured against a 420 pt popover and truncated
+    /// the moment a duration reached six characters, which is most of them:
+    /// `1m 12s` renders `1m 1...`, and the elapsed time is half of what a
+    /// timeline row says. `Format.duration`'s widest output is seven
+    /// characters -- `12m 34s`, `12h 34m` and `12d 23h` all measure 43.3 pt at
+    /// 10 pt monospaced -- so this is that measurement with a little slack, not
+    /// a guess. The detail is 760 pt wide now and the column it sits in has the
+    /// room.
+    private static let timeColumn: CGFloat = 46
+
     private func row(_ entry: TimedActivity) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
             Text(elapsed(entry.at))
-                .font(Theme.Typography.numeric)
-                .foregroundStyle(Theme.textTertiary)
+                .font(Theme.Typography.micro)
+                .foregroundStyle(Theme.textQuaternary)
                 .lineLimit(1)
+                .frame(width: Self.timeColumn, alignment: .leading)
             Text(entry.activity.display)
-                .font(Theme.Typography.body)
-                .foregroundStyle(Theme.textSecondary)
+                .font(Theme.Typography.eventBody)
+                .foregroundStyle(Theme.textPrimarySoft)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 0)
