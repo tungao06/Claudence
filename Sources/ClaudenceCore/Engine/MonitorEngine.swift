@@ -151,6 +151,22 @@ public actor MonitorEngine {
                 sessionID: session.id,
                 workingDirectory: session.workingDirectory
             )
+            // The same rule as the seed above, from the other end of the pair.
+            // A cursor that could not be read leaves the reader with no idea
+            // where the accumulated total stops, and the old answer was to
+            // start at zero: up to 19.9 MB of already-counted records added to
+            // an accumulator that already holds what they came to, then the
+            // doubled figure written back to the session row and the rollup.
+            // Nothing was opened and nothing was parsed, so there is nothing
+            // to accumulate and nothing to write; the pass is skipped and the
+            // next one retries.
+            guard delta.outcome == .read else {
+                EngineCounters.shared.countSkippedUnreadCursor()
+                if let previous = snapshot.sessions.first(where: { $0.id == session.id }) {
+                    live.append(previous)
+                }
+                continue
+            }
             EngineCounters.shared.countTranscriptRead(
                 withData: delta.recordsParsed > 0 || delta.recordsSkipped > 0
             )

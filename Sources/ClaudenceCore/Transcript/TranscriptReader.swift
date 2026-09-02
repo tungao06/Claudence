@@ -45,7 +45,15 @@ public struct TranscriptReader: TranscriptReading {
     // MARK: - TranscriptReading
 
     public func readIncremental(sessionID: String, workingDirectory: String) -> TranscriptDelta {
-        let cursor = cursorStore.cursor(forSession: sessionID)
+        let read = cursorStore.readCursor(forSession: sessionID)
+        // A cursor that could not be read is not a cursor at zero. Starting at
+        // zero here re-parses records the caller's accumulator already holds,
+        // and the doubled figure is written straight back over the session row
+        // and the daily rollup. Nothing is opened, nothing is parsed and no
+        // cursor is saved; the caller skips the session and the next pass
+        // retries.
+        if case .unavailable = read { return .cursorUnavailable }
+        let cursor = read.cursor
 
         guard let url = resolveURL(sessionID: sessionID, workingDirectory: workingDirectory, cursor: cursor),
               let status = FileStatus(path: url.path) else {
@@ -81,7 +89,12 @@ public struct TranscriptReader: TranscriptReading {
     /// session id, so they arrive as a path. `cursorKey` namespaces the stored
     /// offset; a subagent's key must not collide with its parent's session id.
     public func readIncremental(atPath path: String, cursorKey: String) -> TranscriptDelta {
-        let cursor = cursorStore.cursor(forSession: cursorKey)
+        // Same rule as the overload above, and the same consequence: a
+        // subagent's stored total is written back from its accumulator, so a
+        // re-scan from zero doubles that row too.
+        let read = cursorStore.readCursor(forSession: cursorKey)
+        if case .unavailable = read { return .cursorUnavailable }
+        let cursor = read.cursor
         guard let status = FileStatus(path: path) else { return .empty }
 
         let resumable = cursor.map {
@@ -355,6 +368,11 @@ public final class TranscriptMemoryCursorStore: CursorStoring, @unchecked Sendab
     private let lock = NSLock()
 
     public init() {}
+
+    /// Nothing here can fail, so the count never moves and every read this
+    /// store performs is an answer.
+    public var health: StoreHealth { .healthy }
+    public var unansweredQueries: UInt64 { 0 }
 
     public func cursor(forSession sessionID: String) -> ReadCursor? {
         lock.lock()

@@ -364,6 +364,8 @@ private final class ReadFailingStore: ClaudenceStoring, @unchecked Sendable {
     private var _failDailyTotals = false
     private var _recomputeCalls = 0
     private var _unanswered: UInt64 = 0
+    private var _failingCursorKeys: Set<String> = []
+    private var _cursorSaves = 0
 
     init(inner: ClaudenceStore, failSessionReads: Bool) {
         self.inner = inner
@@ -446,10 +448,42 @@ private final class ReadFailingStore: ClaudenceStoring, @unchecked Sendable {
         lock.unlock()
         inner.recomputeRollups()
     }
-    func cursor(forSession sessionID: String) -> ReadCursor? {
-        inner.cursor(forSession: sessionID)
+    /// Cursor keys whose read must fail. A set rather than a flag because a
+    /// session's own key and its subagents' keys travel through the same
+    /// store, and the two skips are different code paths.
+    var failingCursorKeys: Set<String> {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _failingCursorKeys
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _failingCursorKeys = newValue
+        }
     }
+
+    /// How many cursors were written. A pass that opened no transcript writes
+    /// none, which is how a test sees that the file was never read.
+    var cursorSaves: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _cursorSaves
+    }
+
+    func cursor(forSession sessionID: String) -> ReadCursor? {
+        lock.lock()
+        let failing = _failingCursorKeys.contains(sessionID)
+        if failing { _unanswered &+= 1 }
+        lock.unlock()
+        // A failed read and a key that has never been stored return the same
+        // nil, exactly as in the real store.
+        guard !failing else { return nil }
+        return inner.cursor(forSession: sessionID)
+    }
+
     func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) {
+        lock.lock()
+        _cursorSaves += 1
+        lock.unlock()
         inner.saveCursor(cursor, forSession: sessionID)
     }
 }
@@ -631,4 +665,234 @@ func rollupRepairIsThrottled() async throws {
     // this repair is not allowed to have.
     await engine.refreshSessions()
     #expect(store.recomputeCalls == 1)
+}
+
+// MARK: - A cursor read that does not answer
+
+/// A parent transcript and one subagent transcript under a throwaway projects
+/// directory, laid out the way Claude Code lays them out.
+///
+/// Real files, because the defect lives in the reader: a cursor read that did
+/// not answer used to be taken as "start at zero", and only a file with bytes
+/// already counted behind that offset shows the double count it produced.
+private final class CursorFixture {
+    let root: URL
+    let projectsDirectory: URL
+    let sessionID = UUID().uuidString.lowercased()
+    let projectName = "cursors"
+    let agentID = "agent-01"
+
+    init() {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("claudence-cursor-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        projectsDirectory = root.appendingPathComponent("projects", isDirectory: true)
+        try? FileManager.default.createDirectory(at: subagentsDirectory, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: parentTranscript.path, contents: Data())
+        FileManager.default.createFile(atPath: subagentTranscript.path, contents: Data())
+        let meta = """
+            {"agentType":"general-purpose","description":"a task label",\
+            "toolUseId":"toolu_1","spawnDepth":1}
+            """
+        try? Data(meta.utf8).write(
+            to: subagentsDirectory.appendingPathComponent("\(agentID).meta.json")
+        )
+    }
+
+    deinit { try? FileManager.default.removeItem(at: root) }
+
+    /// Matches what `makeSession` builds, so the locator's slug hint resolves.
+    var workingDirectory: String { "/Users/someone/project/\(projectName)" }
+
+    var projectDirectory: URL {
+        projectsDirectory.appendingPathComponent(
+            TranscriptLocator.slug(forWorkingDirectory: workingDirectory),
+            isDirectory: true
+        )
+    }
+    var parentTranscript: URL { projectDirectory.appendingPathComponent("\(sessionID).jsonl") }
+    var subagentsDirectory: URL {
+        projectDirectory
+            .appendingPathComponent(sessionID, isDirectory: true)
+            .appendingPathComponent("subagents", isDirectory: true)
+    }
+    var subagentTranscript: URL { subagentsDirectory.appendingPathComponent("\(agentID).jsonl") }
+    var databaseURL: URL { root.appendingPathComponent("claudence.db") }
+
+    /// Taken from the tracker rather than spelled out, so the test and the
+    /// production key cannot drift apart.
+    var subagentCursorKey: String {
+        let descriptor = SubagentLocator(projectsDirectory: projectsDirectory)
+            .subagents(forSession: sessionID, workingDirectory: workingDirectory)
+            .first { $0.id == agentID }
+        return SubagentTracker.cursorKey(for: descriptor!)
+    }
+
+    func appendParent(_ lines: [String]) { append(lines, to: parentTranscript) }
+    func appendSubagent(_ lines: [String]) { append(lines, to: subagentTranscript) }
+
+    private func append(_ lines: [String], to url: URL) {
+        guard !lines.isEmpty, let handle = try? FileHandle(forWritingTo: url) else { return }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data(lines.map { $0 + "\n" }.joined().utf8))
+        try? handle.close()
+    }
+
+    /// A record shaped like a real Claude Code assistant line.
+    func record(input: Int, cacheRead: Int = 0, output: Int = 0, sidechain: Bool = false) -> String {
+        """
+        {"parentUuid":"\(UUID().uuidString.lowercased())","isSidechain":\(sidechain),\
+        "userType":"external","cwd":"\(workingDirectory)","sessionId":"\(sessionID)",\
+        "version":"2.1.257","gitBranch":"main","type":"assistant",\
+        "message":{"id":"msg_01Abc","type":"message","role":"assistant",\
+        "model":"claude-sonnet-5","content":[{"type":"text","text":"ordinary response text"}],\
+        "usage":{"input_tokens":\(input),"cache_creation_input_tokens":0,\
+        "cache_read_input_tokens":\(cacheRead),"output_tokens":\(output),\
+        "output_tokens_details":{"thinking_tokens":0},"service_tier":"standard"}},\
+        "uuid":"\(UUID().uuidString.lowercased())","timestamp":"2026-09-03T07:39:02.837Z"}
+        """
+    }
+}
+
+@Test("a cursor read that does not answer never re-scans the transcript")
+func failedCursorReadDoesNotRescanTranscript() async throws {
+    let fixture = CursorFixture()
+    let inner = ClaudenceStore(url: fixture.databaseURL)
+    let store = ReadFailingStore(inner: inner, failSessionReads: false)
+    let session = makeSession(id: fixture.sessionID, name: fixture.projectName, startedAt: Date())
+
+    func makeEngine() -> MonitorEngine {
+        let reader = TranscriptReader(
+            cursorStore: store,
+            locator: TranscriptLocator(projectsDirectory: fixture.projectsDirectory)
+        )
+        return MonitorEngine(
+            discovery: FakeDiscovery(sessions: [session]),
+            transcripts: reader,
+            store: store,
+            subagents: SubagentTracker(
+                locator: SubagentLocator(projectsDirectory: fixture.projectsDirectory),
+                reader: reader,
+                store: inner
+            )
+        )
+    }
+
+    fixture.appendParent([fixture.record(input: 400_000, cacheRead: 100_000, output: 50_000)])
+    fixture.appendSubagent([fixture.record(input: 200_000, output: 20_000, sidechain: true)])
+
+    // The pair the defect needs is built by running a pass rather than written
+    // by hand: a stored total, and the cursor at the offset that total
+    // corresponds to.
+    await makeEngine().refreshSessions()
+
+    let storedTotal = try #require(inner.session(id: fixture.sessionID)).usage.total
+    let storedSubagent = try #require(
+        inner.subagentTotals(forSession: fixture.sessionID).first
+    ).usage.total
+    let rollupBefore = inner.dailyTotals(days: 1).first?.usage.total
+    let parentOffset = try #require(inner.cursor(forSession: fixture.sessionID)).byteOffset
+    let subagentOffset = try #require(inner.cursor(forSession: fixture.subagentCursorKey)).byteOffset
+    #expect(storedTotal == 550_000)
+    #expect(storedSubagent == 220_000)
+    #expect(parentOffset > 0)
+    #expect(subagentOffset > 0)
+
+    fixture.appendParent([fixture.record(input: 1_000, output: 100)])
+    fixture.appendSubagent([fixture.record(input: 500, output: 50, sidechain: true)])
+
+    // A relaunch: the accumulators are empty and are seeded from the store,
+    // which answers. Only the cursor read fails.
+    let engine = makeEngine()
+    store.failingCursorKeys = [fixture.sessionID]
+    let savesBefore = store.cursorSaves
+    let skipsBefore = EngineCounters.shared.snapshot.skippedUnreadCursors
+
+    await engine.refreshSessions()
+
+    // The skip is counted rather than silent, so `--diagnose --counters` can
+    // see a store that is failing this read.
+    #expect(EngineCounters.shared.snapshot.skippedUnreadCursors == skipsBefore + 1)
+
+    // Nothing was read, so nothing moved: not the cursor, not the session row,
+    // not the subagent row, not the rollup.
+    #expect(store.cursorSaves == savesBefore)
+    #expect(inner.cursor(forSession: fixture.sessionID)?.byteOffset == parentOffset)
+    #expect(inner.cursor(forSession: fixture.subagentCursorKey)?.byteOffset == subagentOffset)
+    #expect(try #require(inner.session(id: fixture.sessionID)).usage.total == storedTotal)
+    #expect(
+        inner.subagentTotals(forSession: fixture.sessionID).first?.usage.total == storedSubagent
+    )
+    #expect(inner.dailyTotals(days: 1).first?.usage.total == rollupBefore)
+
+    // The retry resumes from the offset already stored: the stored total plus
+    // the appended records, never the whole file added to itself.
+    store.failingCursorKeys = []
+    await engine.refreshSessions()
+
+    #expect(try #require(inner.session(id: fixture.sessionID)).usage.total == storedTotal + 1_100)
+    #expect(
+        inner.subagentTotals(forSession: fixture.sessionID).first?.usage.total
+            == storedSubagent + 550
+    )
+    let live = try #require(await engine.current().sessions.first)
+    #expect(live.usage.total == storedTotal + 1_100)
+}
+
+@Test("a subagent cursor read that does not answer leaves the parent read alone")
+func failedSubagentCursorReadSkipsOnlyThatSubagent() async throws {
+    let fixture = CursorFixture()
+    let inner = ClaudenceStore(url: fixture.databaseURL)
+    let store = ReadFailingStore(inner: inner, failSessionReads: false)
+    let session = makeSession(id: fixture.sessionID, name: fixture.projectName, startedAt: Date())
+
+    let reader = TranscriptReader(
+        cursorStore: store,
+        locator: TranscriptLocator(projectsDirectory: fixture.projectsDirectory)
+    )
+    let engine = MonitorEngine(
+        discovery: FakeDiscovery(sessions: [session]),
+        transcripts: reader,
+        store: store,
+        subagents: SubagentTracker(
+            locator: SubagentLocator(projectsDirectory: fixture.projectsDirectory),
+            reader: reader,
+            store: inner
+        )
+    )
+
+    fixture.appendParent([fixture.record(input: 10_000, output: 1_000)])
+    fixture.appendSubagent([fixture.record(input: 20_000, output: 2_000, sidechain: true)])
+    await engine.refreshSessions()
+
+    let storedSubagent = try #require(
+        inner.subagentTotals(forSession: fixture.sessionID).first
+    ).usage.total
+    let subagentOffset = try #require(inner.cursor(forSession: fixture.subagentCursorKey)).byteOffset
+    #expect(storedSubagent == 22_000)
+
+    fixture.appendParent([fixture.record(input: 7, output: 3)])
+    fixture.appendSubagent([fixture.record(input: 500, output: 50, sidechain: true)])
+    store.failingCursorKeys = [fixture.subagentCursorKey]
+    let skipsBefore = EngineCounters.shared.snapshot.skippedUnreadSubagentCursors
+
+    await engine.refreshSessions()
+
+    #expect(EngineCounters.shared.snapshot.skippedUnreadSubagentCursors == skipsBefore + 1)
+
+    // The parent is a different cursor and reads normally. The subagent's row
+    // and its offset are exactly where they were: a figure withheld for a pass
+    // is a smaller fault than one written back doubled.
+    #expect(try #require(inner.session(id: fixture.sessionID)).usage.total == 11_010)
+    #expect(
+        inner.subagentTotals(forSession: fixture.sessionID).first?.usage.total == storedSubagent
+    )
+    #expect(inner.cursor(forSession: fixture.subagentCursorKey)?.byteOffset == subagentOffset)
+
+    store.failingCursorKeys = []
+    await engine.refreshSessions()
+    #expect(
+        inner.subagentTotals(forSession: fixture.sessionID).first?.usage.total
+            == storedSubagent + 550
+    )
 }

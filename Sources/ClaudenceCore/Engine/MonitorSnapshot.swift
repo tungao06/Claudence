@@ -32,8 +32,41 @@ public struct MonitorSnapshot: Sendable, Equatable {
 
     public static let empty = MonitorSnapshot()
 
+    /// **The one definition of "active".** A session is active when it is doing
+    /// work now, which is `status == .running`.
+    ///
+    /// A session with a live process that is waiting on its user is *live*, not
+    /// active, and `liveCount` below is the count of those. The distinction is
+    /// the honest reading of the word, and it is the whole of defect 9.7's first
+    /// case: three surfaces printed a count under the word "active" and only
+    /// this one meant it, so with one busy session and one idle one VoiceOver
+    /// said one and two other places said two. Every surface that prints the
+    /// word now prints this number, and every surface that counts the whole live
+    /// set says "live".
+    ///
+    /// `.running` itself is derived in `SessionRegistryAdapter`: a live process
+    /// whose transcript moved recently. It is not a claim about what the model
+    /// is doing this instant, and nothing here pretends otherwise.
     public var activeCount: Int {
+        MonitorSnapshot.activeCount(of: sessions)
+    }
+
+    /// The same count over a bare list, for the surfaces that hold sessions
+    /// without a snapshot around them. One implementation, so a second filter
+    /// spelled `.running` cannot appear somewhere and drift.
+    public static func activeCount(of sessions: [AISession]) -> Int {
         sessions.filter { $0.status == .running }.count
+    }
+
+    /// Every session with a live process, busy or waiting.
+    ///
+    /// This is what the popover lists and what the dashboard's sessions card
+    /// draws, so it is the denominator the Active-sessions tile divides into:
+    /// active is a subset of live by construction, which is the only way a tile
+    /// rendering the two as a fraction can be prevented from printing a
+    /// numerator larger than its denominator.
+    public var liveCount: Int {
+        sessions.count
     }
 
     /// The window the menu bar summarizes. Five hours is the one that runs out.

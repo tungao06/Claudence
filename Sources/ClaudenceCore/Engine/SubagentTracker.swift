@@ -216,6 +216,18 @@ public actor SubagentTracker {
                 atPath: descriptor.transcriptPath,
                 cursorKey: Self.cursorKey(for: descriptor)
             )
+            // A cursor read that did not answer says nothing about where this
+            // subagent's total stops, and the accumulator below is written
+            // back to its row. Re-reading from zero would add a transcript
+            // already counted to the figure it produced and persist the double.
+            // The id stays in `ids`, so the subagent is not mistaken for one
+            // that vanished; only this pass is skipped. The accumulator keeps
+            // the last figure it knew, which is the honest one until the store
+            // answers again.
+            guard delta.outcome == .read else {
+                EngineCounters.shared.countSkippedUnreadSubagentCursor()
+                continue
+            }
 
             // The descriptor is the authority on labels and the accumulator on
             // figures. A `meta.json` that has gone unreadable this pass leaves

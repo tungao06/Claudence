@@ -41,6 +41,16 @@ public final class EngineCounters: @unchecked Sendable {
         /// report could not say which half of the pipeline the store is
         /// failing.
         public var skippedUnseededSubagents = 0
+        /// Sessions left untouched for a pass because the store did not answer
+        /// the read that says where the transcript reader left off. A cursor
+        /// taken as zero re-scans a file whose records are already counted, so
+        /// this skip prevents an overcount where the two above prevent an
+        /// undercount. Expected to be zero.
+        public var skippedUnreadCursors = 0
+        /// The same skip on a subagent's own cursor, counted apart for the
+        /// same reason the seeds are: one number could not say which half of
+        /// the pipeline the store is failing.
+        public var skippedUnreadSubagentCursors = 0
 
         public init() {}
     }
@@ -79,6 +89,8 @@ public final class EngineCounters: @unchecked Sendable {
     func countUsageFetch() { bump { $0.usageFetches += 1 } }
     func countSkippedUnseededSession() { bump { $0.skippedUnseededSessions += 1 } }
     func countSkippedUnseededSubagents() { bump { $0.skippedUnseededSubagents += 1 } }
+    func countSkippedUnreadCursor() { bump { $0.skippedUnreadCursors += 1 } }
+    func countSkippedUnreadSubagentCursor() { bump { $0.skippedUnreadSubagentCursors += 1 } }
 
     private func bump(_ mutate: (inout Reading) -> Void) {
         lock.lock(); defer { lock.unlock() }
@@ -105,6 +117,9 @@ extension EngineCounters.Reading {
         result.usageFetches = usageFetches - earlier.usageFetches
         result.skippedUnseededSessions = skippedUnseededSessions - earlier.skippedUnseededSessions
         result.skippedUnseededSubagents = skippedUnseededSubagents - earlier.skippedUnseededSubagents
+        result.skippedUnreadCursors = skippedUnreadCursors - earlier.skippedUnreadCursors
+        result.skippedUnreadSubagentCursors =
+            skippedUnreadSubagentCursors - earlier.skippedUnreadSubagentCursors
         return result
     }
 
@@ -125,6 +140,8 @@ extension EngineCounters.Reading {
             ("usage fetches", usageFetches),
             ("skipped unseeded", skippedUnseededSessions),
             ("  subagent seeds", skippedUnseededSubagents),
+            ("skipped cursors", skippedUnreadCursors),
+            ("  subagent cursors", skippedUnreadSubagentCursors),
         ]
         return rows.map { name, count in
             let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)

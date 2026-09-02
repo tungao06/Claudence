@@ -513,3 +513,148 @@ struct TranscriptTests {
         #expect(worst < 0.050)
     }
 }
+
+// MARK: - The cursor read itself
+
+/// A cursor store whose read fails on demand, with health pinned at
+/// `.degraded` the way an earlier unrelated failure leaves it. That is the
+/// condition a health transition cannot see through, so only the store's count
+/// of unanswered queries separates a failed read from an absent cursor.
+private final class FailingCursorStore: CursorStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var cursors: [String: ReadCursor] = [:]
+    private var _failingKeys: Set<String> = []
+    private var _unanswered: UInt64 = 0
+    private var _saves = 0
+
+    var failingKeys: Set<String> {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _failingKeys
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _failingKeys = newValue
+        }
+    }
+
+    /// How many cursors were written. A pass that opened no file writes none.
+    var saves: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _saves
+    }
+
+    /// The stored cursor whether or not reads are failing, so a test can see
+    /// that a skipped pass left the offset exactly where it was.
+    func stored(_ key: String) -> ReadCursor? {
+        lock.lock(); defer { lock.unlock() }
+        return cursors[key]
+    }
+
+    var health: StoreHealth { .degraded(reason: "an earlier unrelated failure") }
+
+    var unansweredQueries: UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return _unanswered
+    }
+
+    func cursor(forSession sessionID: String) -> ReadCursor? {
+        lock.lock()
+        let failing = _failingKeys.contains(sessionID)
+        if failing { _unanswered &+= 1 }
+        let stored = cursors[sessionID]
+        lock.unlock()
+        // A failed read and a key never written return the same nil, exactly
+        // as in the real store.
+        return failing ? nil : stored
+    }
+
+    func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) {
+        lock.lock(); defer { lock.unlock() }
+        cursors[sessionID] = cursor
+        _saves += 1
+    }
+}
+
+@Suite("A cursor read that does not answer")
+struct CursorOutcomeTests {
+
+    @Test("Nothing is read, parsed, or persisted, and the next pass resumes")
+    func failedCursorReadReadsNothing() {
+        let fixture = TranscriptFixture()
+        let store = FailingCursorStore()
+        let reader = fixture.makeReader(store: store)
+
+        fixture.appendLines([
+            fixture.assistantRecord(input: 50, cacheCreation: 0, cacheRead: 0, output: 0, thinking: 0)
+        ])
+        let first = fixture.read(with: reader)
+        #expect(first.outcome == .read)
+        #expect(first.usage.freshInput == 50)
+        let offset = store.stored(fixture.sessionID)?.byteOffset
+        let savesAfterFirst = store.saves
+        #expect((offset ?? 0) > 0)
+
+        fixture.appendLines([
+            fixture.assistantRecord(input: 7, cacheCreation: 0, cacheRead: 0, output: 0, thinking: 0)
+        ])
+        store.failingKeys = [fixture.sessionID]
+        let blocked = fixture.read(with: reader)
+
+        // Not `.empty`: an empty delta is a real reading of a file that has not
+        // grown, and this one is a refusal to take a reading at all.
+        #expect(blocked == .cursorUnavailable)
+        #expect(blocked.outcome == .cursorUnavailable)
+        #expect(blocked.usage == .zero)
+        #expect(blocked.recordsParsed == 0)
+        // The file was never opened, so no cursor was written and the offset is
+        // exactly where the answering pass left it.
+        #expect(store.saves == savesAfterFirst)
+        #expect(store.stored(fixture.sessionID)?.byteOffset == offset)
+
+        store.failingKeys = []
+        let resumed = fixture.read(with: reader)
+
+        // The appended record alone. Starting at zero would report 57 here and
+        // hand the caller a total it has already counted.
+        #expect(resumed.outcome == .read)
+        #expect(resumed.usage.freshInput == 7)
+        #expect(resumed.recordsParsed == 1)
+        #expect(store.stored(fixture.sessionID)?.byteOffset == fixture.size)
+    }
+
+    @Test("A rotation after a skipped pass still restarts at zero")
+    func rotationAfterSkippedPassStillResetsOffset() {
+        let fixture = TranscriptFixture()
+        let store = FailingCursorStore()
+        let reader = fixture.makeReader(store: store)
+
+        fixture.appendLines([
+            fixture.assistantRecord(input: 50, cacheCreation: 0, cacheRead: 0, output: 0, thinking: 0)
+        ])
+        _ = fixture.read(with: reader)
+        let firstInode = store.stored(fixture.sessionID)?.inode
+
+        // One pass that could not read the cursor, then the file rotates. The
+        // skip must not have taught the reader to distrust a real answer: a
+        // changed inode is still a rotation and still restarts at zero.
+        store.failingKeys = [fixture.sessionID]
+        #expect(fixture.read(with: reader).outcome == .cursorUnavailable)
+        store.failingKeys = []
+
+        fixture.rotate(withLines: [
+            fixture.assistantRecord(input: 11, cacheCreation: 0, cacheRead: 0, output: 0, thinking: 0),
+            fixture.assistantRecord(input: 22, cacheCreation: 0, cacheRead: 0, output: 0, thinking: 0),
+        ])
+        #expect(fixture.inode != firstInode)
+
+        let delta = fixture.read(with: reader)
+
+        // Both records of the rotated file, not the tail past the old offset.
+        #expect(delta.outcome == .read)
+        #expect(delta.usage.freshInput == 33)
+        #expect(delta.recordsParsed == 2)
+        #expect(store.stored(fixture.sessionID)?.inode == fixture.inode)
+        #expect(store.stored(fixture.sessionID)?.byteOffset == fixture.size)
+    }
+}

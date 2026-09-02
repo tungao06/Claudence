@@ -284,6 +284,10 @@ private final class CountingCursorStore: CursorStoring, @unchecked Sendable {
 
     var saves: Int { lock.lock(); defer { lock.unlock() }; return writes }
 
+    /// Nothing here can fail, so every read is an answer.
+    var health: StoreHealth { .healthy }
+    var unansweredQueries: UInt64 { 0 }
+
     func cursor(forSession sessionID: String) -> ReadCursor? {
         lock.lock(); defer { lock.unlock() }
         return cursors[sessionID]

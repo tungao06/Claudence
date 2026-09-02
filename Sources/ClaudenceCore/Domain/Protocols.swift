@@ -42,6 +42,21 @@ extension UsageProviding {
 
 // MARK: - Transcript delta
 
+/// Whether a read happened at all.
+///
+/// A delta that carries nothing because the file has not grown and a delta
+/// that carries nothing because the reader never learned where to resume are
+/// the same value otherwise, and the second must not be accumulated, written
+/// back, or taken as "this session spent nothing".
+public enum TranscriptReadOutcome: Sendable, Equatable {
+    /// The transcript was read from a known offset. An empty delta means the
+    /// file has nothing new in it.
+    case read
+    /// The stored cursor could not be read, so nothing was opened, parsed or
+    /// persisted. The caller skips this session for the pass and retries.
+    case cursorUnavailable
+}
+
 /// The only shape a transcript parser may emit. Anything outside these fields
 /// is a privacy violation and is covered by tests. See spec section 3.1.
 public struct TranscriptDelta: Sendable, Equatable {
@@ -78,6 +93,9 @@ public struct TranscriptDelta: Sendable, Equatable {
     /// design shows `path · branch`. A branch name is a label the tool wrote,
     /// not content a person or a model produced.
     public var gitBranch: String?
+    /// Whether this delta is a reading or a refusal to take one. See
+    /// `TranscriptReadOutcome`.
+    public var outcome: TranscriptReadOutcome
 
     public init(
         usage: TokenUsage = .zero,
@@ -91,7 +109,8 @@ public struct TranscriptDelta: Sendable, Equatable {
         activityTrail: [TimedActivity] = [],
         serviceTier: String? = nil,
         lastRequestUsage: TokenUsage? = nil,
-        gitBranch: String? = nil
+        gitBranch: String? = nil,
+        outcome: TranscriptReadOutcome = .read
     ) {
         self.usage = usage
         self.latestActivity = latestActivity
@@ -105,9 +124,15 @@ public struct TranscriptDelta: Sendable, Equatable {
         self.serviceTier = serviceTier
         self.lastRequestUsage = lastRequestUsage
         self.gitBranch = gitBranch
+        self.outcome = outcome
     }
 
     public static let empty = TranscriptDelta()
+
+    /// Nothing was read because the reader could not find out where to resume.
+    /// Distinct from `.empty`, which is a real reading of a file that has not
+    /// grown.
+    public static let cursorUnavailable = TranscriptDelta(outcome: .cursorUnavailable)
 }
 
 /// An activity with the moment it happened, for the session timeline.
@@ -137,8 +162,65 @@ public struct ReadCursor: Sendable, Equatable, Codable {
     }
 }
 
+/// What the store said when asked where a reader left off.
+///
+/// `cursor(forSession:)` returns nil for a key that has never been read and
+/// for a query that threw, and those two are opposites. The first means "start
+/// at zero". The second means "where to resume is unknown", and taking it for
+/// the first re-parses a file whose records have already been counted, adds the
+/// whole thing to an accumulator already seeded with the stored total, and
+/// writes the doubled figure back to the session row, the subagent row and the
+/// daily rollup. A cursor and its total are only correct together, and that
+/// holds in both directions: the undercount this project shipped once came
+/// from a total lost against a live cursor, this is a cursor lost against a
+/// live total.
+public enum CursorRead: Sendable, Equatable {
+    /// Nothing stored for this key. Reading starts at zero.
+    case none
+    /// Where the previous read stopped.
+    case at(ReadCursor)
+    /// The store did not answer. Nothing may be read, accumulated, or written
+    /// for this key on this pass; the next pass tries again.
+    case unavailable
+
+    /// The offset to resume from, or nil when there is none.
+    ///
+    /// `unavailable` deliberately collapses to nil here, so this is reachable
+    /// only after a caller has handled that case: it is a convenience for the
+    /// two answering outcomes, not a way to ask the ambiguous question again.
+    var cursor: ReadCursor? {
+        if case .at(let cursor) = self { return cursor }
+        return nil
+    }
+}
+
 /// Persistence seam. The store implementation owns the SQLite schema.
-public protocol CursorStoring: Sendable {
+///
+/// It reports its own outcomes through `StoreOutcomeReporting` because the nil
+/// above is ambiguous and only the store can say which nil it is.
+public protocol CursorStoring: Sendable, StoreOutcomeReporting {
     func cursor(forSession sessionID: String) -> ReadCursor?
     func saveCursor(_ cursor: ReadCursor, forSession sessionID: String)
+}
+
+extension CursorStoring {
+    /// `cursor(forSession:)` with its ambiguity resolved.
+    ///
+    /// The signal is the store's own count of queries that did not answer, the
+    /// same one the engine, the analytics layer and the subagent tracker read.
+    /// A health transition is the wrong question: health latches once it is
+    /// degraded and has nowhere left to move.
+    public func readCursor(forSession sessionID: String) -> CursorRead {
+        // An unavailable store has no database behind it at all: it never
+        // answers and never persists, and that is permanent for the life of
+        // the process. There is no stored offset to strand and no stored total
+        // to double, so it is treated as no store rather than as a read worth
+        // retrying, which would otherwise freeze every session forever on a
+        // machine whose only fault is that it cannot open a database file.
+        if case .unavailable = health { return .none }
+        let before = unansweredQueries
+        let stored = cursor(forSession: sessionID)
+        guard unansweredQueries == before else { return .unavailable }
+        return stored.map(CursorRead.at) ?? .none
+    }
 }
