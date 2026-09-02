@@ -41,6 +41,17 @@ public struct TranscriptDelta: Sendable, Equatable {
     public var latestTimestamp: Date?
     public var recordsParsed: Int
     public var recordsSkipped: Int
+    /// Tool-use counts by tool name, for this delta only. Names, never
+    /// arguments. See spec section 3.1.
+    public var toolCounts: [String: Int]
+    /// Distinct `input.file_path` values seen in this delta, newest last.
+    /// Paths only: the file is never opened and its contents are never read.
+    public var filePaths: [String]
+    /// Activities in the order they occurred, so a timeline can be built
+    /// rather than only the newest state.
+    public var activityTrail: [TimedActivity]
+    /// `usage.service_tier` from the most recent record carrying one.
+    public var serviceTier: String?
 
     public init(
         usage: TokenUsage = .zero,
@@ -48,7 +59,11 @@ public struct TranscriptDelta: Sendable, Equatable {
         latestModel: String? = nil,
         latestTimestamp: Date? = nil,
         recordsParsed: Int = 0,
-        recordsSkipped: Int = 0
+        recordsSkipped: Int = 0,
+        toolCounts: [String: Int] = [:],
+        filePaths: [String] = [],
+        activityTrail: [TimedActivity] = [],
+        serviceTier: String? = nil
     ) {
         self.usage = usage
         self.latestActivity = latestActivity
@@ -56,9 +71,24 @@ public struct TranscriptDelta: Sendable, Equatable {
         self.latestTimestamp = latestTimestamp
         self.recordsParsed = recordsParsed
         self.recordsSkipped = recordsSkipped
+        self.toolCounts = toolCounts
+        self.filePaths = filePaths
+        self.activityTrail = activityTrail
+        self.serviceTier = serviceTier
     }
 
     public static let empty = TranscriptDelta()
+}
+
+/// An activity with the moment it happened, for the session timeline.
+public struct TimedActivity: Sendable, Equatable {
+    public let at: Date
+    public let activity: Activity
+
+    public init(at: Date, activity: Activity) {
+        self.at = at
+        self.activity = activity
+    }
 }
 
 // MARK: - Offset persistence

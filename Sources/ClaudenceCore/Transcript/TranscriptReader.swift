@@ -175,6 +175,15 @@ final class DeltaBuilder {
     private var timestamp: Date?
     private var parsed = 0
     private var skipped = 0
+    private var toolCounts: [String: Int] = [:]
+    private var filePaths: [String] = []
+    private var trail: [TimedActivity] = []
+    private var serviceTier: String?
+
+    /// Bounded so a long-running session cannot grow these without limit. The
+    /// interface only ever shows a handful.
+    private static let maxFilePaths = 12
+    private static let maxTrail = 24
 
     /// `recordsParsed` counts assistant records only. A `user`, `system`, or
     /// `attachment` line is neither parsed nor skipped: it simply contributes
@@ -191,11 +200,33 @@ final class DeltaBuilder {
         if let date = record.date {
             timestamp = date
         }
+        if let tier = record.message?.usage?.serviceTier, !tier.isEmpty {
+            serviceTier = tier
+        }
         // The activity of a delta is the LAST tool_use in the newly read
         // records, so later blocks overwrite earlier ones.
         for block in record.message?.content ?? [] {
+            guard block.isToolUse else { continue }
+
+            if let name = block.name, !name.isEmpty {
+                toolCounts[name, default: 0] += 1
+            }
+            // Path only. The file is never opened.
+            if let path = block.input?.filePath, !path.isEmpty {
+                filePaths.removeAll { $0 == path }
+                filePaths.append(path)
+                if filePaths.count > DeltaBuilder.maxFilePaths {
+                    filePaths.removeFirst(filePaths.count - DeltaBuilder.maxFilePaths)
+                }
+            }
             if let next = ActivityMapper.activity(for: block) {
                 activity = next
+                if let date = record.date {
+                    trail.append(TimedActivity(at: date, activity: next))
+                    if trail.count > DeltaBuilder.maxTrail {
+                        trail.removeFirst(trail.count - DeltaBuilder.maxTrail)
+                    }
+                }
             }
         }
     }
@@ -209,7 +240,11 @@ final class DeltaBuilder {
             latestModel: model,
             latestTimestamp: timestamp,
             recordsParsed: parsed,
-            recordsSkipped: skipped
+            recordsSkipped: skipped,
+            toolCounts: toolCounts,
+            filePaths: filePaths,
+            activityTrail: trail,
+            serviceTier: serviceTier
         )
     }
 }

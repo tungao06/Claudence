@@ -126,9 +126,9 @@ Correctness first, then the data the interface needs, then the interface.
 
 | Step | Work | Why this position |
 |---|---|---|
-| **U0** | Fix the idle CPU regression from the two new scenes | Every later measurement is meaningless until this is clean |
-| **U1** | Subagent source, rolled into parent totals | The numbers on screen are 48% wrong until this lands |
-| **U2** | Parser extensions: tool mix, files touched, activity timeline, transcript diagnostics | Everything in the detail view depends on these |
+| **U0** `DONE` | Idle CPU back under budget: 0.491% over 171 s warm. The cost was `PresentationReader`, left in place as documentation after the animation it gated was removed. It observed key and occlusion notifications and pushed a state change through the view tree for a flag nothing read. Deleted. | Every later measurement is meaningless until this is clean |
+| **U1** `DONE` | `SubagentLocator` + `SubagentTracker`, rolled into `AISession.combinedUsage`. Verified live: 10 subagents, 77.43M tokens, 41% of the session's true total. | The numbers on screen were 41% low until this landed |
+| **U2** `DONE` | Tool mix, files touched, activity timeline, records parsed, service tier. Verified live: `Bash 180  Agent 10  Write 7  DesignSync 3  Edit 3`. Privacy tests still pass unchanged. | Everything in the detail view depends on these |
 | **U3** | Derived metrics: cache-served, per-hour, window share, day-over-day, input/output split | Cheap once U2 exists |
 | **U4** | Theme change to the design's palette and type scale | Single file; do it before building views on the old tokens |
 | **U5** | Session detail overlay, subagent drill-down, facts panel, tooltips | The bulk of the interface work |

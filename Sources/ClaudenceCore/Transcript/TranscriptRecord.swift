@@ -101,6 +101,8 @@ struct TranscriptUsage: Decodable {
     let cacheReadInputTokens: Int
     let outputTokens: Int
     let thinkingTokens: Int
+    /// `standard`, `priority`, and so on. A billing attribute, not content.
+    let serviceTier: String?
 
     private enum CodingKeys: String, CodingKey {
         case inputTokens = "input_tokens"
@@ -108,6 +110,7 @@ struct TranscriptUsage: Decodable {
         case cacheReadInputTokens = "cache_read_input_tokens"
         case outputTokens = "output_tokens"
         case outputTokensDetails = "output_tokens_details"
+        case serviceTier = "service_tier"
     }
 
     private struct OutputTokensDetails: Decodable {
@@ -133,6 +136,7 @@ struct TranscriptUsage: Decodable {
         outputTokens = (try? container.decodeIfPresent(Int.self, forKey: .outputTokens)) ?? 0
         let details = try? container.decodeIfPresent(OutputTokensDetails.self, forKey: .outputTokensDetails)
         thinkingTokens = details?.thinkingTokens ?? 0
+        serviceTier = try? container.decodeIfPresent(String.self, forKey: .serviceTier)
     }
 
     /// Maps into the one shared token type. Totals are derived there.

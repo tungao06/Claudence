@@ -118,6 +118,17 @@ public struct AISession: Sendable, Identifiable, Equatable {
     public var subagentCount: Int
     public var model: String?
     public let claudeCodeVersion: String?
+    /// Tool-use counts by name, accumulated across the session. Names only.
+    public var toolCounts: [String: Int]
+    /// Distinct file paths this session has touched, newest last. Paths only:
+    /// no file is opened and no content is read.
+    public var filePaths: [String]
+    /// Recent activities in order, for the session timeline.
+    public var activityTrail: [TimedActivity]
+    /// `usage.service_tier` from the most recent record carrying one.
+    public var serviceTier: String?
+    /// Assistant records read from this session's own transcript.
+    public var recordsParsed: Int
 
     public init(
         id: String,
@@ -134,7 +145,12 @@ public struct AISession: Sendable, Identifiable, Equatable {
         subagentUsage: TokenUsage = .zero,
         subagentCount: Int = 0,
         model: String? = nil,
-        claudeCodeVersion: String? = nil
+        claudeCodeVersion: String? = nil,
+        toolCounts: [String: Int] = [:],
+        filePaths: [String] = [],
+        activityTrail: [TimedActivity] = [],
+        serviceTier: String? = nil,
+        recordsParsed: Int = 0
     ) {
         self.id = id
         self.provider = provider
@@ -151,11 +167,39 @@ public struct AISession: Sendable, Identifiable, Equatable {
         self.subagentCount = subagentCount
         self.model = model
         self.claudeCodeVersion = claudeCodeVersion
+        self.toolCounts = toolCounts
+        self.filePaths = filePaths
+        self.activityTrail = activityTrail
+        self.serviceTier = serviceTier
+        self.recordsParsed = recordsParsed
     }
 
     /// What this session actually cost: its own transcript plus every subagent
     /// it spawned. Every total shown to the user uses this.
     public var combinedUsage: TokenUsage { usage + subagentUsage }
+
+    /// Tool mix, busiest first. The interface shows the top few.
+    public var toolMix: [(name: String, count: Int)] {
+        toolCounts
+            .map { (name: $0.key, count: $0.value) }
+            .sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
+    }
+
+    /// Share of billable input served from cache. Nil when nothing billable has
+    /// been read yet, because a ratio of nothing is undefined, not zero.
+    public var cacheServedFraction: Double? {
+        let billable = combinedUsage.billableInput
+        guard billable > 0 else { return nil }
+        return Double(combinedUsage.cacheRead) / Double(billable)
+    }
+
+    /// Tokens per hour over the session's whole life. Nil until enough time has
+    /// passed for the figure to mean anything.
+    public func tokensPerHour(now: Date = Date()) -> Double? {
+        let elapsed = now.timeIntervalSince(startedAt)
+        guard elapsed >= 60 else { return nil }
+        return Double(combinedUsage.total) / (elapsed / 3_600)
+    }
 
     public var duration: TimeInterval { Date().timeIntervalSince(startedAt) }
 

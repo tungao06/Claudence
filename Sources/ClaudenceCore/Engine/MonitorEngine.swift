@@ -17,6 +17,10 @@ public actor MonitorEngine {
     private var burnTrackers: [String: BurnRateTracker] = [:]
     private var accumulated: [String: TokenUsage] = [:]
     private var subagentsBySession: [String: [AISubagent]] = [:]
+    private var accumulatedTools: [String: [String: Int]] = [:]
+    private var accumulatedPaths: [String: [String]] = [:]
+    private var accumulatedTrail: [String: [TimedActivity]] = [:]
+    private var accumulatedRecords: [String: Int] = [:]
     private var lastUsageFetch: Date?
     private var observers: [UUID: @Sendable (MonitorSnapshot) -> Void] = [:]
     private var lastUpserted: [String: AISession] = [:]
@@ -86,6 +90,34 @@ public actor MonitorEngine {
             if let activity = delta.latestActivity {
                 session.currentActivity = activity
             }
+
+            // Accumulated across the session, not just this delta.
+            var counts = accumulatedTools[session.id] ?? [:]
+            for (name, count) in delta.toolCounts { counts[name, default: 0] += count }
+            accumulatedTools[session.id] = counts
+            session.toolCounts = counts
+
+            var paths = accumulatedPaths[session.id] ?? []
+            for path in delta.filePaths {
+                paths.removeAll { $0 == path }
+                paths.append(path)
+            }
+            if paths.count > 12 { paths.removeFirst(paths.count - 12) }
+            accumulatedPaths[session.id] = paths
+            session.filePaths = paths
+
+            var trail = accumulatedTrail[session.id] ?? []
+            trail.append(contentsOf: delta.activityTrail)
+            if trail.count > 24 { trail.removeFirst(trail.count - 24) }
+            accumulatedTrail[session.id] = trail
+            session.activityTrail = trail
+
+            var records = accumulatedRecords[session.id] ?? 0
+            records += delta.recordsParsed
+            accumulatedRecords[session.id] = records
+            session.recordsParsed = records
+
+            if let tier = delta.serviceTier { session.serviceTier = tier }
             if let model = delta.latestModel {
                 session.model = model
             }

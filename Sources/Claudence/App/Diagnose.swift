@@ -92,6 +92,20 @@ enum Diagnose {
             if let activity = delta.latestActivity {
                 print("  activity:   \(activity.display)")
             }
+            let mix = delta.toolCounts
+                .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+                .prefix(6)
+                .map { "\($0.key) \($0.value)" }
+                .joined(separator: "  ")
+            if !mix.isEmpty { print("  tool mix:   \(mix)") }
+            if !delta.filePaths.isEmpty {
+                let names = delta.filePaths.suffix(5).map { ($0 as NSString).lastPathComponent }
+                print("  files:      \(names.joined(separator: "  "))")
+            }
+            if let tier = delta.serviceTier { print("  tier:       \(tier)") }
+            if !delta.activityTrail.isEmpty {
+                print("  timeline:   \(delta.activityTrail.count) entries, newest: \(delta.activityTrail.last?.activity.display ?? "")")
+            }
             if let model = delta.latestModel {
                 print("  model:      \(model)")
             }
