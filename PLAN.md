@@ -348,7 +348,28 @@ building.
 
 ---
 
-## Stage 1 — Correctness
+## Stage 1 — Correctness  `DONE 2026-09-03`
+
+Every item in this stage is closed, and four defects of one class were found by the work rather
+than by the audits: 9.5b in the engine, 9.5c in the subagent tracker, 9.5d in the transcript
+reader and 9.5e in the menu bar header. Three of the four wrote a wrong figure to disk. The
+common shape is a store read whose failure is indistinguishable from an empty result, and the
+common fix is that a read now reports its own outcome and a caller that did not get an answer
+skips the pass rather than substituting a default.
+
+Two operational notes from the run, recorded because they will recur.
+
+The machine ran out of disk. Eight concurrent agents each building into their own
+`--scratch-path`, as CLAUDE.md requires for concurrency, cost several gigabytes apiece on a disk
+that was already 93% full, and at zero bytes free every tool that needs a temporary file fails,
+including the ones that would delete the build directories. Recovery was possible only through a
+tool that streams. Concurrency in this repository is bounded by disk, not by CPU: two agents at
+a time, and clear the scratch paths between waves.
+
+The executable target is not unit-testable. `ClaudenceCoreTests` does not depend on it, so every
+change to a view was verified by reading its call sites. That is why three of the stage 1 items
+found defects the audits had not, and it is the argument for leaning on `RenderShots` in stage 2.5
+rather than adding a test target late.
 
 Nothing in stage 2 or 3 starts until this stage is done. The application currently prints
 several figures that are confidently wrong, and a monitoring tool that cannot be trusted is
@@ -542,7 +563,7 @@ failed". Subagent tokens are 36.3% of this machine's month and 82% on one projec
 undercount it wrote back is not a rounding error. Fixed the same way, with its own counter,
 because a frozen session and a withheld subagent figure are different faults.
 
-### 9.5d A failed cursor read re-scans the whole transcript  `FOUND 2026-09-03`
+### 9.5d A failed cursor read re-scans the whole transcript  `DONE 2026-09-03`
 
 The same ambiguity in the opposite direction, and the more expensive one.
 `CursorStoring.cursor(forSession:)` returns nil for both "no cursor stored" and "the read threw"
@@ -551,9 +572,9 @@ The same ambiguity in the opposite direction, and the more expensive one.
 whole file to an accumulator already seeded with the stored total, then writes the doubled figure
 back to the session row, the subagent row and the rollup.
 
-- [ ] The reader distinguishes "no cursor" from "the cursor could not be read"
-- [ ] A cursor read that did not answer skips the session for the pass rather than starting at zero
-- [ ] Test: a failing cursor read against a stored total and a non-zero offset leaves both alone
+- [x] The reader distinguishes "no cursor" from "the cursor could not be read"
+- [x] A cursor read that did not answer skips the session for the pass rather than starting at zero
+- [x] Test: a failing cursor read against a stored total and a non-zero offset leaves both alone
 
 ### 9.5e The menu bar prints a failed aggregate as zero  `FOUND 2026-09-03`
 
@@ -607,7 +628,7 @@ Carry into 9.12: the repair reads every session and every sample inside one tran
 cheap against a 484 KB database and unmeasured against the database the history import will
 produce. Time it on the imported database before trusting the 60 second throttle.
 
-### 9.7 Counting and labelling  `CONFIRMED`
+### 9.7 Counting and labelling  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -631,10 +652,27 @@ Smaller, all of them cases where the screen states something untrue.
 - **`TokenBreakdownCard` prints `(0%)` beside a non-zero count.** `Format.share` exists for
   exactly this and emits `<1%`; the session detail uses it, this card does not.
 
-- [ ] One definition of "active", used everywhere the word appears
-- [ ] One definition of "today", used everywhere the word appears
-- [ ] Label both cost ranges, or make them the same range
-- [ ] Route the card's percentage through `Format.share`
+- [x] One definition of "active", used everywhere the word appears
+- [x] One definition of "today", used everywhere the word appears
+- [x] Label both cost ranges, or make them the same range
+- [x] Route the card's percentage through `Format.share`
+
+Active means doing work now (`status == .running`); live means the process exists, busy or
+waiting. The tile reads `Active sessions 1 / 2 live`, the popover band reads `LIVE SESSIONS`, and
+a numerator can no longer exceed its denominator because both come from one array. Today means
+the day the work happened, `lastActivityAt >= startOfDay`, the same argument 9.6 settled in the
+store.
+
+Four things the item did not name, all found by the work. `todayCost()` carried a *third*
+definition of today, an exact start-day match, so after 9.6 the cost tile could read `$0.00`
+beside a non-zero Tokens today whenever the day's work came from an overnight session. The `(0%)`
+reached VoiceOver as well as the tooltip. `Tooltip.breakdownEntry` is shared with the session
+detail sheet, so that sheet had the same defect behind a correct visible column. And
+`DashboardData.activeProjectCount` was a fourth use of the word over the live set.
+
+Carry into 9.13: `AnalyticsService.projectBreakdown(since:)` still filters on `startedAt`. It is
+called only with `nil` today, so no surface prints a wrong "today" off it, but the monthly table
+passes a real range and would inherit the pre-9.6 keying the moment it does.
 
 ### 9.8 Settings that do not reach every surface  `DONE 2026-09-03`
 
