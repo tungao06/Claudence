@@ -114,20 +114,35 @@ public struct BurnRateTracker: Sendable {
         }
     }
 
+    /// - Parameter now: the moment the rate is read at. It is not decoration:
+    ///   the window is measured backward from it, so a session that stopped
+    ///   spending decays instead of reporting its last busy average forever.
+    ///
+    /// Eviction has to happen here as well as in `record`, because `record` is
+    /// only called when the combined total actually moves. A quiet session
+    /// records nothing at all, so a tracker that only expired samples on write
+    /// never expired any.
     public func rate(now: Date = Date()) -> BurnRate {
-        guard let first = samples.first, let last = samples.last, samples.count >= 2 else {
+        let cutoff = now.addingTimeInterval(-window)
+        let live = samples.filter { $0.at >= cutoff }
+        guard let first = live.first, let last = live.last, live.count >= 2 else {
             return .zero
         }
-        let elapsed = last.at.timeIntervalSince(first.at)
+        // Measured to `now`, not to the newest sample. The idle tail is part of
+        // the span the tokens were spent over, and leaving it out is what let a
+        // five-minute burst still read as a burst four hours later. A `now`
+        // behind the newest sample would shorten the span instead, so the
+        // newest sample floors it.
+        let elapsed = max(now, last.at).timeIntervalSince(first.at)
         guard elapsed > 1 else { return .zero }
         let delta = max(0, last.cumulativeTokens - first.cumulativeTokens)
         let perMinute = Double(delta) / (elapsed / 60)
 
         // Successive deltas make the sparkline show change, not a rising total.
         var series: [Double] = []
-        series.reserveCapacity(max(0, samples.count - 1))
-        for index in 1..<samples.count {
-            series.append(Double(max(0, samples[index].cumulativeTokens - samples[index - 1].cumulativeTokens)))
+        series.reserveCapacity(max(0, live.count - 1))
+        for index in 1..<live.count {
+            series.append(Double(max(0, live[index].cumulativeTokens - live[index - 1].cumulativeTokens)))
         }
         return BurnRate(tokensPerMinute: perMinute, samples: series)
     }

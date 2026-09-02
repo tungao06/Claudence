@@ -228,6 +228,41 @@ func burnRateWindowing() {
     #expect(tracker.rate(now: start.addingTimeInterval(500)).tokensPerMinute == 0)
 }
 
+@Test("a tracker with no new samples reports a falling rate and then zero")
+func burnRateDecaysWithoutNewSamples() {
+    var tracker = BurnRateTracker(window: 300)
+    let start = Date(timeIntervalSince1970: 0)
+    tracker.record(tokens: 0, at: start)
+    tracker.record(tokens: 60_000, at: start.addingTimeInterval(60))
+
+    // Nothing is recorded after this point. Only `now` moves, and it is the
+    // caller's clock that has to make the figure fall.
+    let whileSpending = tracker.rate(now: start.addingTimeInterval(60)).tokensPerMinute
+    let twoMinutesIn = tracker.rate(now: start.addingTimeInterval(120)).tokensPerMinute
+    let fourMinutesIn = tracker.rate(now: start.addingTimeInterval(240)).tokensPerMinute
+    #expect(abs(whileSpending - 60_000) < 0.001)
+    #expect(twoMinutesIn < whileSpending)
+    #expect(fourMinutesIn < twoMinutesIn)
+
+    // A whole window later nothing observed remains, so there is no span left
+    // to divide by and the rate is zero rather than the stale average.
+    #expect(tracker.rate(now: start.addingTimeInterval(600)).tokensPerMinute == 0)
+}
+
+@Test("a read drops expired samples from the sparkline as well as the rate")
+func burnRateReadEvictsSeries() {
+    var tracker = BurnRateTracker(window: 100)
+    let start = Date(timeIntervalSince1970: 0)
+    tracker.record(tokens: 0, at: start)
+    tracker.record(tokens: 500, at: start.addingTimeInterval(20))
+    tracker.record(tokens: 900, at: start.addingTimeInterval(60))
+    // At t=110 the first sample has left the 100 s window, so neither the rate
+    // nor the sparkline may still count its delta.
+    let rate = tracker.rate(now: start.addingTimeInterval(110))
+    #expect(rate.samples == [400])
+    #expect(abs(rate.tokensPerMinute - 400 / (90.0 / 60)) < 0.001)
+}
+
 // MARK: - Formatting
 
 @Test("token formatting matches the spec table")
