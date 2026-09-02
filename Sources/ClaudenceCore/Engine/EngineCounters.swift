@@ -32,6 +32,15 @@ public final class EngineCounters: @unchecked Sendable {
         /// non-zero value is a store fault made visible rather than a silent
         /// skip.
         public var skippedUnseededSessions = 0
+        /// Sessions whose subagents were left untouched for a pass because the
+        /// store did not answer the read that seeds their totals. Counted apart
+        /// from `skippedUnseededSessions` because the two skips are different
+        /// faults with different consequences: that one freezes the whole
+        /// session row, this one leaves the parent read normally while its
+        /// subagent figure is withheld. Summed into one number, a diagnostic
+        /// report could not say which half of the pipeline the store is
+        /// failing.
+        public var skippedUnseededSubagents = 0
 
         public init() {}
     }
@@ -69,6 +78,7 @@ public final class EngineCounters: @unchecked Sendable {
     }
     func countUsageFetch() { bump { $0.usageFetches += 1 } }
     func countSkippedUnseededSession() { bump { $0.skippedUnseededSessions += 1 } }
+    func countSkippedUnseededSubagents() { bump { $0.skippedUnseededSubagents += 1 } }
 
     private func bump(_ mutate: (inout Reading) -> Void) {
         lock.lock(); defer { lock.unlock() }
@@ -94,6 +104,7 @@ extension EngineCounters.Reading {
         result.transcriptReadsWithData = transcriptReadsWithData - earlier.transcriptReadsWithData
         result.usageFetches = usageFetches - earlier.usageFetches
         result.skippedUnseededSessions = skippedUnseededSessions - earlier.skippedUnseededSessions
+        result.skippedUnseededSubagents = skippedUnseededSubagents - earlier.skippedUnseededSubagents
         return result
     }
 
@@ -113,6 +124,7 @@ extension EngineCounters.Reading {
             ("suppressed publishes", suppressedPublishes),
             ("usage fetches", usageFetches),
             ("skipped unseeded", skippedUnseededSessions),
+            ("  subagent seeds", skippedUnseededSubagents),
         ]
         return rows.map { name, count in
             let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)

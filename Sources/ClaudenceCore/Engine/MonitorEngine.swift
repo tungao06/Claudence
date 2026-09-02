@@ -419,9 +419,15 @@ public actor MonitorEngine {
     }
 }
 
-/// The engine's view of persistence. The store module implements this; keeping
-/// it here means the engine compiles without knowing which database is behind it.
-public protocol ClaudenceStoring: CursorStoring {
+/// What every persistence seam has to say about its own outcomes.
+///
+/// Declared once and refined by both store protocols rather than spelled out in
+/// each, because the two seams have already drifted once: the parent side
+/// learned to tell a failed read from an absent row while the subagent side
+/// still could not, and a subagent seed that read `[]` from a failed query
+/// pinned an accumulator at zero against a cursor already at byte N. A third
+/// seam should not be able to repeat that by forgetting to declare these.
+public protocol StoreOutcomeReporting {
     /// The store's condition. Read only to recognise `.unavailable`, which is
     /// permanent and means there is no database at all, so there is nothing to
     /// resume from and nothing to corrupt.
@@ -429,9 +435,15 @@ public protocol ClaudenceStoring: CursorStoring {
     /// Monotonic count of queries that failed or never ran. A caller that reads
     /// it either side of its own query learns whether that query answered,
     /// which health cannot say once it has settled and has nowhere left to
-    /// move. A failed read and an absent row are the same nil, and the engine
-    /// must not mistake one for the other when seeding a session's total.
+    /// move. A failed read and an empty result are indistinguishable in the
+    /// return value, and no caller may mistake one for the other when seeding
+    /// an accumulated total.
     var unansweredQueries: UInt64 { get }
+}
+
+/// The engine's view of persistence. The store module implements this; keeping
+/// it here means the engine compiles without knowing which database is behind it.
+public protocol ClaudenceStoring: CursorStoring, StoreOutcomeReporting {
     /// The last persisted view of a session, used to seed the engine's
     /// accumulators so a resumed read cursor does not restart its total.
     func session(id: String) -> AISession?

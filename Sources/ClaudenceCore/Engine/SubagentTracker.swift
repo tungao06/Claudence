@@ -132,7 +132,12 @@ extension SubagentTotal {
 /// A protocol rather than the store itself so the tracker stays testable with a
 /// fake and so persistence keeps knowing nothing about the engine. `Sendable`
 /// because the tracker is an actor and holds this across suspension points.
-public protocol SubagentTotalStoring: Sendable {
+///
+/// It reports its own outcomes through `StoreOutcomeReporting`, because
+/// `subagentTotals(forSession:)` returns the same empty array for a session
+/// with no subagents and for a query that threw, and the seed below must not
+/// take the second for the first.
+public protocol SubagentTotalStoring: Sendable, StoreOutcomeReporting {
     func subagentTotals(forSession sessionID: String) -> [SubagentTotal]
     func upsertSubagentTotal(_ total: SubagentTotal)
     func deleteSubagentTotals(forSession sessionID: String)
@@ -179,7 +184,24 @@ public actor SubagentTracker {
     /// Reads new records for every subagent of a session and returns the full
     /// current set, newest activity first.
     public func refresh(sessionID: String, workingDirectory: String) -> [AISubagent] {
-        seedIfNeeded(sessionID: sessionID)
+        // A seed that did not answer means the stored totals are unknown, and
+        // the transcript reads below are what would advance every subagent
+        // cursor past records the accumulators have no baseline for. The cursor
+        // and the total are only correct together, so the whole session is
+        // skipped and retried on the next pass rather than being read,
+        // undercounted, and written back over good rows. The undercount here is
+        // the larger one: subagents were 36.3% of this machine's month and 82%
+        // on one project.
+        //
+        // The last known view is returned so a set already on screen keeps its
+        // figure. Before the first successful seed there is nothing known, and
+        // an empty list is the honest answer: the engine reports no subagent
+        // tokens for the pass, which is what it does for any session whose
+        // subagents it has not read yet, and nothing durable is written.
+        guard seedIfNeeded(sessionID: sessionID) else {
+            EngineCounters.shared.countSkippedUnseededSubagents()
+            return subagents(forSession: sessionID)
+        }
 
         let listing = locator.listSubagents(forSession: sessionID, workingDirectory: workingDirectory)
         let descriptors = listing ?? []
@@ -296,10 +318,39 @@ public actor SubagentTracker {
     ///
     /// Seeded ids join `byParent` as well, so a subagent whose transcript is
     /// gone is detected as stale on this very pass instead of lingering.
-    private func seedIfNeeded(sessionID: String) {
-        guard let store, seeded.insert(sessionID).inserted else { return }
+    /// - Returns: whether this session's subagents may be processed this pass.
+    ///   False means the store did not answer, so nothing is known about the
+    ///   stored totals and the caller must leave the session alone until the
+    ///   next pass.
+    private func seedIfNeeded(sessionID: String) -> Bool {
+        guard let store else { return true }
+        guard !seeded.contains(sessionID) else { return true }
+        // An unavailable store has no database behind it at all: it never
+        // answers and never persists, and that is permanent for the life of the
+        // process. There is therefore no stored total to lose and no cursor to
+        // strand, so it is treated as no store rather than as a read to retry,
+        // which would otherwise hide every subagent forever on a machine whose
+        // only fault is that it cannot open a database file.
+        if case .unavailable = store.health {
+            seeded.insert(sessionID)
+            return true
+        }
+        // Marked seeded only once the store is known to have answered. A failed
+        // read and a session with no subagents both return `[]`, and treating a
+        // failure as "none stored" would pin every accumulator at zero for the
+        // life of the process while the cursors are already at byte N, then
+        // write that collapsed figure back through `upsertSubagentTotal` on the
+        // next pass that reads anything.
+        //
+        // The signal is the store's own count of queries that did not answer,
+        // the same one the engine and the analytics layer read. A health
+        // transition is the wrong question: health latches once it is degraded
+        // and has nowhere left to move.
+        let before = store.unansweredQueries
         let totals = store.subagentTotals(forSession: sessionID)
-        guard !totals.isEmpty else { return }
+        guard store.unansweredQueries == before else { return false }
+        seeded.insert(sessionID)
+        guard !totals.isEmpty else { return true }
 
         var ids = byParent[sessionID] ?? []
         for total in totals {
@@ -311,6 +362,7 @@ public actor SubagentTracker {
             }
         }
         byParent[sessionID] = ids
+        return true
     }
 
     public func subagents(forSession sessionID: String) -> [AISubagent] {

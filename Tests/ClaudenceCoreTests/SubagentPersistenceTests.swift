@@ -151,6 +151,11 @@ private final class FakeTotalStore: SubagentTotalStoring, @unchecked Sendable {
         _deletes = 0
     }
 
+    /// Answering, always. Nothing here can fail, so the count never moves and
+    /// every read this store performs is an answer.
+    var health: StoreHealth { .healthy }
+    var unansweredQueries: UInt64 { 0 }
+
     func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
         lock.lock()
         defer { lock.unlock() }
@@ -182,6 +187,9 @@ private final class FakeTotalStore: SubagentTotalStoring, @unchecked Sendable {
 private struct StoreTotals: SubagentTotalStoring {
     let store: ClaudenceStore
 
+    var health: StoreHealth { store.health }
+    var unansweredQueries: UInt64 { store.unansweredQueries }
+
     func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
         store.subagentTotals(forSession: sessionID)
     }
@@ -193,6 +201,90 @@ private struct StoreTotals: SubagentTotalStoring {
     func deleteSubagentTotals(forSession sessionID: String) {
         store.deleteSubagentTotals(forSession: sessionID)
     }
+}
+
+/// The real store with its subagent-totals read made to fail on demand, and
+/// health pinned at `.degraded` the way an earlier unrelated failure leaves it.
+///
+/// The read has to fail while the writes still work. The defect under test is a
+/// collapsed total written back over a good row, and a store broken end to end
+/// has nothing to overwrite and so shows nothing.
+private final class ReadFailingTotalStore: SubagentTotalStoring, @unchecked Sendable {
+    let inner: ClaudenceStore
+    private let lock = NSLock()
+    private var _failTotalReads: Bool
+    private var _unanswered: UInt64 = 0
+
+    init(inner: ClaudenceStore, failTotalReads: Bool) {
+        self.inner = inner
+        self._failTotalReads = failTotalReads
+    }
+
+    var failTotalReads: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _failTotalReads
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _failTotalReads = newValue
+        }
+    }
+
+    /// Already degraded when this pass begins, and with nowhere left to move.
+    /// That is the condition a health transition cannot see through.
+    var health: StoreHealth { .degraded(reason: "an earlier unrelated failure") }
+
+    var unansweredQueries: UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return inner.unansweredQueries &+ _unanswered
+    }
+
+    func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
+        lock.lock()
+        let failing = _failTotalReads
+        if failing { _unanswered &+= 1 }
+        lock.unlock()
+        // A session with no subagents and a query that threw both come back as
+        // the same empty array, because that is this read's own default inside
+        // `perform`. The count is the only thing that separates them, exactly
+        // as in the real store.
+        guard !failing else { return [] }
+        return inner.subagentTotals(forSession: sessionID)
+    }
+
+    func upsertSubagentTotal(_ total: SubagentTotal) { inner.upsertSubagentTotal(total) }
+
+    func deleteSubagentTotals(forSession sessionID: String) {
+        inner.deleteSubagentTotals(forSession: sessionID)
+    }
+}
+
+/// A subagent store with no database behind it: every call is a no-op, every
+/// query counts as unanswered, and health says `.unavailable` permanently.
+private final class UnavailableTotalStore: SubagentTotalStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _unanswered: UInt64 = 0
+
+    var health: StoreHealth { .unavailable(reason: "no database") }
+
+    var unansweredQueries: UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return _unanswered
+    }
+
+    private func countUnanswered() {
+        lock.lock(); defer { lock.unlock() }
+        _unanswered &+= 1
+    }
+
+    func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
+        countUnanswered()
+        return []
+    }
+
+    func upsertSubagentTotal(_ total: SubagentTotal) { countUnanswered() }
+    func deleteSubagentTotals(forSession sessionID: String) { countUnanswered() }
 }
 
 // MARK: - Seeding
@@ -433,5 +525,109 @@ struct SubagentPersistenceTests {
         #expect(agent.agentType == "general-purpose")
         #expect(agent.taskDescription == "do the work")
         #expect(store.subagentTotals(forSession: fixture.sessionID).first?.usage == agent.usage)
+    }
+
+    // MARK: - Seeding against a store that does not answer
+
+    /// The sibling of `failedSeedReadDoesNotCollapseStoredTotal` in
+    /// `EngineTests`, one source along. The parent side was fixed first; this
+    /// side is the larger figure. Subagents were 36.3% of this machine's month
+    /// and 82% on one project, so a seed that reads zero and writes it back
+    /// loses more than the parent path ever could.
+    @Test("a subagent seed read that does not answer never collapses a stored total")
+    func failedSubagentSeedReadDoesNotCollapseStoredTotal() async throws {
+        let fixture = SubagentFixture()
+        let firstRun = fixture.record(input: 1_000, cacheRead: 4_000, output: 200)
+        let offsetAfterFirstRun = fixture.create(
+            "agent-a", agentType: "Explore", description: "map the store", lines: [firstRun]
+        )
+        #expect(offsetAfterFirstRun > 0)
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudenceSubagentSeedFailure", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inner = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+
+        // What a previous process left behind: a cursor at the end of the first
+        // record, and the total that offset stands for. The pair is only
+        // correct together.
+        let persisted = SubagentTotal(
+            parentSessionID: fixture.sessionID,
+            subagentID: "agent-a",
+            agentType: "Explore",
+            taskDescription: "map the store",
+            usage: TokenUsage(freshInput: 1_000, cacheRead: 4_000, output: 200),
+            recordsParsed: 1,
+            lastActivityAt: Date(timeIntervalSince1970: 1_772_000_000),
+            spawnDepth: 1,
+            model: "claude-sonnet-5"
+        )
+        inner.upsertSubagentTotal(persisted)
+        inner.saveCursor(fixture.cursorAtEnd("agent-a"), forSession: fixture.cursorKey("agent-a"))
+
+        // This run has a second record waiting to be read.
+        fixture.append("agent-a", lines: [fixture.record(input: 7, cacheRead: 11, output: 3)])
+
+        let store = ReadFailingTotalStore(inner: inner, failTotalReads: true)
+        let tracker = fixture.makeTracker(store: store, cursors: inner)
+
+        let skipsBefore = EngineCounters.shared.snapshot.skippedUnseededSubagents
+        let skipped = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+
+        // Nothing is known about this session's subagents yet, and inventing a
+        // zero would be the undercount itself.
+        #expect(skipped.isEmpty)
+        // Visible, not silent.
+        #expect(EngineCounters.shared.snapshot.skippedUnseededSubagents == skipsBefore + 1)
+        // No transcript was read, so the cursor is still where the previous run
+        // left it, and no row was written, so the stored total is still the
+        // figure that offset stands for.
+        #expect(inner.cursor(forSession: fixture.cursorKey("agent-a"))?.byteOffset == offsetAfterFirstRun)
+        let intact = try #require(inner.subagentTotals(forSession: fixture.sessionID).first)
+        #expect(intact.usage == TokenUsage(freshInput: 1_000, cacheRead: 4_000, output: 200))
+        #expect(intact.recordsParsed == 1)
+        // The collapsed figure the defect wrote back.
+        #expect(intact.usage != TokenUsage(freshInput: 7, cacheRead: 11, output: 3))
+
+        // The retry, once the store answers again, resumes from where the
+        // cursor already is: the stored total plus the delta, never the delta
+        // alone.
+        store.failTotalReads = false
+        let resumed = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+
+        let agent = try #require(resumed.first { $0.id == "agent-a" })
+        #expect(agent.usage == TokenUsage(freshInput: 1_007, cacheRead: 4_011, output: 203))
+        #expect(agent.recordsParsed == 2)
+        #expect(agent.taskDescription == "map the store")
+        let saved = try #require(inner.subagentTotals(forSession: fixture.sessionID).first)
+        #expect(saved.usage == agent.usage)
+        #expect(saved.recordsParsed == 2)
+    }
+
+    @Test("a permanently unavailable subagent store is no store, not a read worth retrying")
+    func unavailableTotalStoreStillAccumulates() async throws {
+        let fixture = SubagentFixture()
+        fixture.create("agent-a", lines: [fixture.record(input: 5, output: 1)])
+        let tracker = fixture.makeTracker(
+            store: UnavailableTotalStore(),
+            cursors: TranscriptMemoryCursorStore()
+        )
+
+        // Nothing was ever persisted, so there is no stored total to lose and
+        // no cursor to strand. Skipping here would hide every subagent forever
+        // on a machine whose only fault is that it cannot open a database.
+        let subagents = await tracker.refresh(
+            sessionID: fixture.sessionID,
+            workingDirectory: fixture.workingDirectory
+        )
+        #expect(subagents.map(\.id) == ["agent-a"])
+        #expect(subagents.first?.usage == TokenUsage(freshInput: 5, output: 1))
     }
 }
