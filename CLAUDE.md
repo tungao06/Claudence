@@ -36,7 +36,24 @@ Security.framework      Keychain read for the OAuth token
 Swift Testing           parser and privacy tests
 ```
 
-Distribution is single-machine personal use. No notarization, no Apple Developer account, no CI, no release pipeline.
+Distribution was single-machine personal use through 2026-09-02. On 2026-09-03 it became a
+product: a notarized `.dmg` self-distributed to a round of friends on Pro and Team plans, free,
+and possibly sold with a subscription afterwards. Consequences that are decided, not open:
+
+- An Apple Developer account will exist. `Scripts/make-app.sh` signs with a Developer ID and
+  notarizes when the identity is present, and falls back to the self-signed certificate until
+  then.
+- Updates are manual: a new `.dmg` each time. The app displays its version and nothing more.
+  No Sparkle, no update check, no third outbound request.
+- Problem reports are a local file the user sends by hand. No telemetry, nothing automatic.
+- First launch shows what is read and what is never read *before* the Keychain prompt, then
+  imports the user's existing history.
+- Thai and English, complete, before anyone outside this machine runs it.
+- A single `Entitlement` seam exists so a paid tier can be gated later; it answers "everything
+  on" and makes no request. A licence check, if one is ever built, is the third outbound
+  request and this document is amended before it is written, not after.
+- Claude Code only, permanently. There is no second provider to design for.
+- Still no CI. Tests run locally with `make test`.
 
 ### Consequences of having no Xcode
 

@@ -17,7 +17,7 @@ Update the checkboxes as work lands. A milestone is done only when every line of
 | Stack | Swift 6.3.3 + SwiftUI `MenuBarExtra` | native menu bar, meets the CPU and memory budget |
 | Build | Swift Package Manager, manual `.app` assembly | Xcode is not installed; only Command Line Tools |
 | Usage source | Keychain OAuth token + `api.anthropic.com/api/oauth/usage` | pulls on demand, does not contend for the status line slot |
-| Distribution | Personal, single machine | no notarization, no Apple Developer account, no CI |
+| Distribution | Notarized `.dmg`, self-distributed, friends first (decided 2026-09-03; was single-machine) | Apple Developer account; no App Store, no auto-update, no telemetry, no CI |
 | Privacy depth | Metadata plus file path; command as SHA256 only | activity labels stay at tool-name granularity for Bash |
 
 Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
@@ -593,6 +593,80 @@ each other's answers.
 
 ---
 
+## Stage 2.5 — Ready for other people's machines
+
+Added 2026-09-03 after the requirements interview that turned this from a personal tool into a
+product. The first users are friends on Pro and Team plans, running a notarized `.dmg`, for
+free. Three items parked earlier in this phase come back here, because the argument against
+each was "there is one user and it is the maintainer", and that is no longer true.
+
+Ordered before the gauge and the ledger on purpose: the friends' feedback is the best evidence
+available for what those two should be, and a build with wrong numbers on it is not a build to
+collect feedback with. That is why Stage 1 precedes this.
+
+### 9.10a First launch
+
+**~1.5 days**
+
+- [ ] An onboarding screen, before the Keychain prompt, stating what is read (`message.usage`,
+      tool names, file paths, a hash of commands, the plan tier) and what is never read (message
+      text, tool results, command strings). The Keychain request arrives with its reason already
+      given; today it arrives cold, and a friend who clicks Deny sees an app that looks broken.
+- [ ] Detect an absent Claude Code and say what to install, rather than showing an empty meter.
+- [ ] Import the user's existing `~/.claude/projects` history immediately after consent
+      (this pulls 9.12 forward into this stage), with a visible report of what was read and what
+      could not be.
+- [ ] Language choice on the first screen, defaulting to the system language.
+
+### 9.10b Thai and English  `UN-PARKED`
+
+**~3 days**
+
+The plan as written under 9.5 in the previous revision stands: a `Phrase { en, th }` value type
+in Core so an untranslated string is a compile error; Gregorian year forced twice; a lint test
+against raw user-facing literals; render shots in both languages. The two measured traps — a
+Thai locale supplying the Buddhist calendar, and the system monospaced font carrying no Thai
+glyphs — are recorded under *Parked* below and apply unchanged.
+
+### 9.10c A report the friend can send
+
+**~1 day**
+
+The two defects that were inside the error-monitoring request are already Stage 1 work (9.5).
+What returns here is the part the sceptic rejected for a single user: a button that writes one
+file — recent errors with the home directory and project paths abbreviated, the app version,
+macOS version, database size and row counts, the engine's counters — for the friend to send by
+hand. Nothing is sent automatically. The file is English regardless of the interface language,
+because it is read by the maintainer against the source.
+
+### 9.10d Clear stored data  `UN-PARKED, REDUCED`
+
+**~0.5 day**
+
+One button in the privacy settings: delete everything and `VACUUM`, behind a confirmation that
+names the real row counts. Not the date-range delete; a friend who wants the app to forget wants
+it to forget, and a friend who wants to keep some history is not the person pressing this. The
+invariant recorded under *Parked* still binds: session rows and their cursors go together.
+
+### 9.10e Ship
+
+**~1 day**
+
+- [ ] `Scripts/make-app.sh` signs with a Developer ID and notarizes with `notarytool` when
+      `CODESIGN_IDENTITY` names one, and falls back to the self-signed certificate otherwise.
+      The account does not exist yet; the script must not wait for it.
+- [ ] The version is visible in Settings and in the report file. There is no update check.
+- [ ] An `Entitlement` type with one implementation that answers "everything on" and makes no
+      request. It exists so a paid tier can be gated later without a refactor, and so the privacy
+      contract can name the third outbound request before anyone writes it.
+- [ ] Remove `AIProviderType`. Claude Code is the only provider, permanently, and a seam with one
+      implementation and no planned second is a claim the code makes that the product does not.
+- [ ] The Pro plan's windows are five to twenty times smaller than the maintainer's. Verify the
+      thresholds, the menu bar reading and the notifications against a Pro account before the
+      first friend does.
+
+---
+
 ## Stage 3 — The gauge
 
 The application's stated priority is `power meter -> active sessions -> analytics`, and the
@@ -666,7 +740,7 @@ and the question it actually answers is whether the subscription is earning its 
 
 ---
 
-## Parked, with the argument recorded
+## Parked, with the argument recorded (two of three un-parked in Stage 2.5 the same day)
 
 Both of these were previously agreed and are being deferred rather than dropped. The case against
 them was made by a reviewer briefed to argue against additions, and it is recorded here so that
