@@ -103,6 +103,7 @@ public final class RegistryWatcher: @unchecked Sendable {
                 let watcher = Unmanaged<RegistryWatcher>
                     .fromOpaque(info)
                     .takeUnretainedValue()
+                EngineCounters.shared.countFSEventCallback()
                 watcher.scheduleDebouncedCallback()
             },
             &context,
@@ -174,6 +175,7 @@ public final class RegistryWatcher: @unchecked Sendable {
             self.pendingWork = nil
             self.lock.unlock()
             guard let callback else { return }
+            EngineCounters.shared.countDebouncedRefresh()
             Task { await callback() }
         }
         pendingWork = work

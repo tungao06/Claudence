@@ -25,16 +25,26 @@ public struct SessionRegistryAdapter: SessionDiscovering {
         clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.directory = directory
-        self.livenessCheck = livenessCheck ?? { record in
-            SessionRegistryAdapter.isAlive(pid: record.pid, procStart: record.procStart)
-        }
         self.clock = clock
         self.diagnostics = Diagnostics()
+        if let livenessCheck {
+            self.livenessCheck = livenessCheck
+        } else {
+            // The default check is cached, because `kill` plus `sysctl` plus a
+            // `DateFormatter` parse per record per filesystem event is pure
+            // repetition: a burst of registry writes asks the same question of
+            // the same processes several times inside a quarter of a second.
+            let cache = LivenessCache()
+            self.livenessCheck = { record in
+                cache.isAlive(pid: record.pid, procStart: record.procStart)
+            }
+        }
     }
 
     // MARK: - Discovery
 
     public func discover() -> [AISession] {
+        EngineCounters.shared.countDiscovery()
         let records = loadRecords()
         let now = clock()
         return records
@@ -341,5 +351,74 @@ private final class Diagnostics: @unchecked Sendable {
     var observedStatusOrder: [String] {
         lock.lock(); defer { lock.unlock() }
         return statusOrder
+    }
+}
+
+// MARK: - Liveness cache
+
+/// Memoizes `isAlive` for a short window.
+///
+/// A process that answered `kill(pid, 0)` with a matching `procStart` a moment
+/// ago is still the same process: pids are not recycled inside the TTL while
+/// the original holder is running, and `procStart` is re-checked the moment the
+/// entry expires. The TTL is `livenessTTL` — long enough to collapse an FSEvents
+/// burst (the watcher's debounce is 250 ms, so a burst asks at most a couple of
+/// times) into one syscall pair, short enough that an exit is noticed within a
+/// second. Exit is normally detected sooner than that anyway: Claude Code
+/// removes the registry file on exit, and a record that is not on disk is never
+/// asked about.
+///
+/// The cache key includes `procStart`, so a recycled pid whose start time
+/// differs is a cache miss rather than a stale "alive".
+final class LivenessCache: @unchecked Sendable {
+
+    /// Justified above. One second is four times the watcher's 250 ms debounce,
+    /// so a burst collapses to a single probe, and it is the whole staleness
+    /// bound: an exited process can never be reported live for longer.
+    static let livenessTTL: TimeInterval = 1.0
+
+    private struct Key: Hashable {
+        let pid: Int32
+        let procStart: String
+    }
+
+    private let lock = NSLock()
+    private var entries: [Key: (alive: Bool, at: Date)] = [:]
+    private let now: @Sendable () -> Date
+    private let probe: @Sendable (Int32, String) -> Bool
+
+    init(
+        now: @escaping @Sendable () -> Date = { Date() },
+        probe: @escaping @Sendable (Int32, String) -> Bool = { pid, procStart in
+            SessionRegistryAdapter.isAlive(pid: pid, procStart: procStart)
+        }
+    ) {
+        self.now = now
+        self.probe = probe
+    }
+
+    func isAlive(pid: Int32, procStart: String) -> Bool {
+        let key = Key(pid: pid, procStart: procStart)
+        let instant = now()
+
+        lock.lock()
+        if let entry = entries[key],
+           instant.timeIntervalSince(entry.at) < LivenessCache.livenessTTL {
+            lock.unlock()
+            EngineCounters.shared.countLivenessCacheHit()
+            return entry.alive
+        }
+        lock.unlock()
+
+        EngineCounters.shared.countLivenessCheck()
+        let alive = probe(pid, procStart)
+
+        lock.lock()
+        entries[key] = (alive, instant)
+        // The registry holds a handful of records; anything older than the TTL
+        // is dead weight and is dropped rather than accumulated.
+        entries = entries.filter { instant.timeIntervalSince($0.value.at) < LivenessCache.livenessTTL }
+        lock.unlock()
+        return alive
     }
 }

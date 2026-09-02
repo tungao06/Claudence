@@ -41,10 +41,14 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 - Quit works and leaves no process behind
 - Rebuilding and relaunching does **not** re-prompt for Keychain access — pending, blocked on the signing identity above
 
-**Measured at M0:** the empty SwiftUI shell already sits at 69 MB resident, above the 60 MB
-budget in the spec. That is SwiftUI's own baseline, not application code. Re-measure at M8 and
-either justify the number or raise the budget to a figure the framework can actually meet.
-Do not quietly drop the budget.
+**Measured at M0, corrected after integration:** the 69 MB first reported was taken seconds after
+launch and included bootstrap memory not yet released. The settled figure for the full application
+with both adapters live is **29 to 32 MB**, comfortably inside the 60 MB budget. The earlier number
+was wrong, not the budget.
+
+**Idle CPU is NOT within budget.** Measured as a delta rather than the lifetime average `ps` reports:
+16.84 s of CPU over 236 s of wall time is **7.14%**, against a 0.5% budget. This is a real defect,
+not a budget that needs raising. Tracked as M-perf below.
 
 **Why signing is here and not at M4:** an ad-hoc signature changes every build, so macOS treats each build as a new application and re-prompts for Keychain access. One stable certificate makes "Always Allow" persist.
 
@@ -238,6 +242,52 @@ Permission-required notifications ship only if M1 proved that state derivable.
 - [ ] Settings, including the plain-language privacy disclosure
 - [ ] Empty states: Claude Code absent, zero sessions, Keychain denied, network down
 - [ ] Verify the performance budget: idle CPU under 0.5%, resident memory under 60 MB, cold start under 1 s
+
+---
+
+## M-perf — Idle CPU regression  `CAUSE FOUND, FIX IN PLACE, RE-MEASURING`
+
+The application burned 7.14% CPU while idle, 14x the budget in spec section 13. Measured with two
+`ps -o time=` samples 236 s apart on the signed release build, with two live Claude Code sessions
+present. `ps -o %cpu` reports a lifetime average and hides this entirely.
+
+- [x] Instrument how often `refreshSessions()` runs and what triggers it
+- [x] Determine whether the cost is FSEvents churn, transcript reads, or SwiftUI re-rendering
+- [x] Fix the cause
+- [ ] Re-measure by CPU delta over 5+ minutes with live sessions present
+
+**The cause was none of the filesystem candidates.** It was SwiftUI, and specifically one animation.
+
+`MenuBarExtra(style: .window)` builds its popover content at launch and keeps it mounted in a
+window that is merely ordered out when dismissed. `StatusIndicator` pulses a running session with
+`.repeatForever(autoreverses: true)`, and a repeating animation on a mounted view drives a layout
+and a display-list pass at the screen's refresh rate for the life of the process, visible or not.
+Profiled on the release build with the popover never opened and zero filesystem events in the
+window: **6.9% of a core**, essentially all of it under
+`NSDisplayCycleFlush -> NSHostingView.layout -> ViewGraph.render`, ending in `-[CALayer setOpacity:]`.
+
+**Two fixes were considered; the safer one shipped.**
+
+Unmounting the popover subtree when it is not presented is the more general fix, since nothing off
+screen can then animate whichever component grows an animation next. It was built and then rejected:
+the AppKit signals available for "is this popover presented" flip on spuriously. `onAppear` fires at
+launch and cannot tell "presented" from "built". `NSWindow.isVisible` turns true on its own during a
+frame update, which made the popover mount itself and burn 7% again for the rest of the session.
+A false negative on that signal means an empty popover, which is a worse defect than the one being
+fixed.
+
+What shipped instead publishes presentation into the environment as `popoverIsPresented` and lets
+components suppress their own motion. The default is `false`, so anything that cannot prove it is
+visible stays still. A wrong answer now costs a missing pulse rather than an empty popover, and the
+supporting fixes stand on their own:
+
+- `MonitorViewModel` splits `menuBarState` and `usageState` out of `snapshot`, so the label — the
+  only thing on screen while the popover is closed — is not invalidated by session token churn.
+- Assignments are guarded on inequality, because `@Observable` invalidates on assignment rather
+  than on change.
+
+**Definition of done:** idle CPU under 0.5% measured by CPU delta over at least 5 minutes with live
+sessions present.
 
 ---
 

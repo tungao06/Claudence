@@ -6,6 +6,13 @@ import ClaudenceCore
 /// spec section 6 requires before any further session state can ship.
 enum Diagnose {
     static func run() {
+        // `--diagnose --counters [seconds]` answers the idle-cost question with
+        // numbers: it starts the real watcher and the real engine headless, so
+        // whatever it reports is the pipeline's cost with no UI attached.
+        if CommandLine.arguments.contains("--counters") {
+            DiagnoseCounters.run()
+            return
+        }
         let store = ClaudenceStore()
         let registry = SessionRegistryAdapter()
         let reader = TranscriptReader(cursorStore: store)
@@ -160,5 +167,86 @@ enum DiagnoseRawUsage {
         default:
             return "\(value)"
         }
+    }
+}
+
+
+/// `Claudence --diagnose --counters [seconds]` runs the real registry watcher
+/// and the real engine, with no window and no menu bar item, for a while.
+///
+/// It prints how many FSEvents callbacks arrived, how many survived the
+/// debounce, how much work each refresh did, and how many of the resulting
+/// snapshots were actually published. The process's own CPU time over the same
+/// window is printed alongside, so the event pipeline's idle cost can be read
+/// without the UI in the way. See spec section 13.
+enum DiagnoseCounters {
+    static func run() {
+        let seconds = parseSeconds() ?? 120
+
+        let store = ClaudenceStore()
+        let engine = MonitorEngine(
+            discovery: SessionRegistryAdapter(),
+            transcripts: TranscriptReader(cursorStore: store),
+            usageProvider: nil,   // No network: this measures the local pipeline.
+            store: store
+        )
+        let watcher = RegistryWatcher()
+
+        print("Claudence counters")
+        print("watching:  \(Constants.sessionsDirectory.path)")
+        print("debounce:  \(Constants.Watch.debounce)")
+        print("window:    \(Int(seconds))s")
+        print("")
+
+        // One refresh up front so steady-state numbers are not distorted by the
+        // cold pass (first transcript read, first store query).
+        let ready = DispatchSemaphore(value: 0)
+        Task.detached {
+            await engine.refreshSessions()
+            ready.signal()
+        }
+        _ = ready.wait(timeout: .now() + 30)
+
+        EngineCounters.shared.reset()
+        let startCPU = processCPUSeconds()
+        let startWall = Date()
+
+        _ = watcher.start { @Sendable in
+            await engine.refreshSessions()
+        }
+
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+        watcher.stop()
+
+        let wall = Date().timeIntervalSince(startWall)
+        let cpu = processCPUSeconds() - startCPU
+        let reading = EngineCounters.shared.snapshot
+
+        print("elapsed:   \(String(format: "%.1f", wall))s")
+        print("cpu:       \(String(format: "%.2f", cpu))s"
+              + "   (\(String(format: "%.2f", cpu / max(wall, 0.001) * 100))% of one core)")
+        print("")
+        for line in reading.lines(over: wall) {
+            print(line)
+        }
+    }
+
+    /// The first bare number after `--counters`, if any.
+    private static func parseSeconds() -> TimeInterval? {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--counters"), index + 1 < args.count else {
+            return nil
+        }
+        return TimeInterval(args[index + 1]).map { max(1, $0) }
+    }
+
+    /// User plus system CPU consumed by this process so far.
+    private static func processCPUSeconds() -> Double {
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
+        func seconds(_ tv: timeval) -> Double {
+            Double(tv.tv_sec) + Double(tv.tv_usec) / 1_000_000
+        }
+        return seconds(usage.ru_utime) + seconds(usage.ru_stime)
     }
 }

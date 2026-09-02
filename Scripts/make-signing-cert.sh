@@ -12,7 +12,11 @@ NAME="${1:-Claudence Dev}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-if security find-identity -v -p codesigning | grep -q "$NAME"; then
+# `security find-identity -p codesigning` never lists a self-signed certificate:
+# it is not a "valid" identity for that filter. Using it as the guard meant this
+# script created a duplicate on every run, and codesign then refused the name as
+# ambiguous. Check for the certificate itself instead.
+if security find-certificate -c "$NAME" >/dev/null 2>&1; then
     echo "identity '$NAME' already exists"
     exit 0
 fi

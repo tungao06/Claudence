@@ -74,7 +74,9 @@ Readable: `message.usage.*`, `message.model`, `content[].name`, `content[].input
 
 Never read, store, or display: `content[].text`, tool results, file history snapshots and deltas, attachment payloads, or the raw command string. Command strings routinely carry API keys and connection strings, so activity labels stay at tool-name granularity ("Running a command") rather than echoing the command.
 
-The usage API call is the only outbound request in the application. The request helper enforces a domain allowlist (`api.anthropic.com`, `console.anthropic.com`, `platform.claude.com`) and blocks off-allowlist redirects, so the token cannot structurally reach a third party.
+Two outbound requests exist, both on the usage path and nothing else: `GET api.anthropic.com/api/oauth/usage`, and a conditional `POST platform.claude.com/v1/oauth/token` when the access token has expired. Earlier wording here claimed exactly one; that was wrong, and the Settings privacy panel discloses both.
+
+The request helper enforces a host allowlist (`api.anthropic.com`, `console.anthropic.com`, `platform.claude.com`) before the `Authorization` header is built, and refuses redirects off it, so the token cannot structurally reach a third party. `console.anthropic.com` is allowlisted but never used; narrowing the list to the two hosts actually reached would be a real reduction in blast radius and is worth doing when someone touches that file.
 
 ## Token formula
 

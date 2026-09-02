@@ -14,6 +14,7 @@ struct StatusIndicator: View {
     let glyphSize: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.popoverIsPresented) private var isPresented
     @State private var isPulsing = false
 
     init(
@@ -26,10 +27,22 @@ struct StatusIndicator: View {
         self.glyphSize = glyphSize
     }
 
-    /// Only an active state pulses, and never under Reduce Motion. Motion here
-    /// means "this is happening right now", nothing else.
+    /// Only an active state pulses, never under Reduce Motion, and never while
+    /// the popover is not in front of the user. Motion here means "this is
+    /// happening right now", nothing else.
+    ///
+    /// The visibility term is the idle-CPU fix. `MenuBarExtra(style: .window)`
+    /// keeps its content mounted after the popover is dismissed, so a
+    /// `.repeatForever` animation goes on driving a layout and display-list pass
+    /// at the screen's refresh rate for the life of the process. Measured on the
+    /// release build with the popover never opened: 6.9% of a core, against a
+    /// 0.5% budget, essentially all of it under
+    /// `NSDisplayCycleFlush -> NSHostingView.layout -> ViewGraph.render`.
+    ///
+    /// `popoverIsPresented` defaults to false, so a view that cannot prove it is
+    /// visible stays still. See `PopoverPresentation.swift`.
     private var shouldPulse: Bool {
-        status == .running && !reduceMotion
+        status == .running && !reduceMotion && isPresented
     }
 
     var body: some View {

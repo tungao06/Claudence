@@ -6,7 +6,15 @@ import ClaudenceCore
 /// the engine or the views.
 @MainActor
 enum Composition {
-    static func makeViewModel() -> MonitorViewModel {
+    /// Everything the app needs, built once and held by the scene.
+    struct Services {
+        let model: MonitorViewModel
+        let watcher: RegistryWatcher
+        let preferences: Preferences
+        let notifications: NotificationBridge
+    }
+
+    static func makeServices() -> Services {
         // Persistence is best effort. A degraded store still lets the app show
         // live sessions; it only loses history and offset resumption.
         let store = ClaudenceStore()
@@ -17,10 +25,23 @@ enum Composition {
             usageProvider: UsageClient(),
             store: store
         )
-        return MonitorViewModel(engine: engine, storeHealth: store.health)
-    }
 
-    static func makeWatcher() -> RegistryWatcher {
-        RegistryWatcher()
+        let analytics = AnalyticsService(store: store)
+        let preferences = Preferences()
+        let notifications = NotificationBridge()
+        notifications.isEnabled = preferences.notificationsEnabled
+
+        let model = MonitorViewModel(
+            engine: engine,
+            storeHealth: store.health,
+            analytics: analytics
+        )
+
+        return Services(
+            model: model,
+            watcher: RegistryWatcher(),
+            preferences: preferences,
+            notifications: notifications
+        )
     }
 }

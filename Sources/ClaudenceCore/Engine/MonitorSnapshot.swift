@@ -37,6 +37,33 @@ public struct MonitorSnapshot: Sendable, Equatable {
         guard let percent = primaryWindow?.usedPercent else { return nil }
         return Constants.UsageThreshold.severity(forPercent: percent)
     }
+
+    /// Equality on everything a viewer could see, ignoring the two fields that
+    /// move on their own.
+    ///
+    /// `updatedAt` is set to `Date()` by every refresh, and
+    /// `UsageState.available` carries its own `fetchedAt`. Comparing whole
+    /// snapshots therefore always reports "changed", which is what made an idle
+    /// app republish and re-render on every filesystem event. Both fields are
+    /// timestamps *about* the reading rather than part of it, so both are
+    /// excluded here. Nothing else in a snapshot is time-derived: `duration` is
+    /// computed from `Date()` at read time and is not stored.
+    public func hasSameContent(as other: MonitorSnapshot) -> Bool {
+        sessions == other.sessions
+            && todayUsage == other.todayUsage
+            && MonitorSnapshot.sameContent(usage, other.usage)
+    }
+
+    private static func sameContent(_ lhs: UsageState, _ rhs: UsageState) -> Bool {
+        switch (lhs, rhs) {
+        case let (.unavailable(a), .unavailable(b)):
+            return a == b
+        case let (.available(windowsA, _), .available(windowsB, _)):
+            return windowsA == windowsB
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - Burn rate
@@ -73,6 +100,10 @@ public struct BurnRateTracker: Sendable {
         self.window = window
         self.capacity = capacity
     }
+
+    /// The newest cumulative total held, or nil when empty. Lets a caller skip
+    /// recording a sample that would repeat the previous total.
+    public var lastCumulativeTokens: Int? { samples.last?.cumulativeTokens }
 
     public mutating func record(tokens: Int, at date: Date = Date()) {
         samples.append(Sample(at: date, cumulativeTokens: tokens))

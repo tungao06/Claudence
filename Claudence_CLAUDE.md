@@ -112,7 +112,9 @@ Naive process counting overcounts by roughly 4x. Use `ps` only to corroborate li
 
 `<slug>` is `cwd` with every `/` replaced by `-`. Treat this as a hint, not a guarantee: confirm by reading `sessionId` inside the file. Never rely on the path derivation alone.
 
-Record types observed: `assistant`, `user`, `system`, `attachment`, `mode`, `permission-mode`, `last-prompt`, `ai-title`, `file-history-snapshot`, `file-history-delta`.
+Confirmation must be tolerant, not strict. Across 25 real transcripts, 24 carry their `sessionId` within the first 64 KB and one carries none at all in that window. Reject a file only when it names *other* sessions and never this one; treat "no session id found" as inconclusive and accept the name match. A strict implementation silently loses that session.
+
+Record types observed on 2.1.257: `assistant`, `user`, `system`, `attachment`, `mode`, `permission-mode`, `last-prompt`, `ai-title`, `file-history-snapshot`, `file-history-delta`, `queue-operation`, `agent-name`, `atis-latch`, `bridge-session`, `cost-state`. The list grows between releases, which is why an unknown type is skipped rather than treated as malformed.
 
 Only `assistant` records matter. Each carries `cwd`, `gitBranch`, `version`, `timestamp`, `sessionId`, and:
 
@@ -131,7 +133,11 @@ Only `assistant` records matter. Each carries `cwd`, `gitBranch`, `version`, `ti
 }
 ```
 
-**These files reach 12 MB and beyond.** Full re-parsing is forbidden. Persist `(path, inode, byteOffset)` and resume from the offset. A changed inode means rotation: reset the offset to zero.
+`message.usage` also carries `speed`, `inference_geo`, `iterations[]`, and `cache_creation { ephemeral_5m_input_tokens, ephemeral_1h_input_tokens }`. None are needed for the token total, but that last one splits cache writes by TTL, and one-hour writes are priced differently from five-minute ones. Cost estimation should use it rather than treating every cache write alike.
+
+Assistant records also carry `requestId`, `slug`, `effort`, `entrypoint`, both `sessionId` and `session_id`, and occasionally `isApiErrorMessage`, `apiErrorStatus`, `isAbortedMidStream`. Error records are rare, roughly 3 in 2700, but they still carry a usage block and must be counted.
+
+**These files reach 42 MB.** A 12 MB transcript is ordinary; 42 MB has been measured on this machine. Full re-parsing is forbidden. Persist `(path, inode, byteOffset)` and resume from the offset. A changed inode means rotation: reset the offset to zero.
 
 ### 2.4 Usage limits — OAuth API
 
@@ -188,7 +194,9 @@ Hard constraints on this path:
 
 ## 3. Privacy contract
 
-Local-first. No backend, no telemetry, no sync. The only outbound request in the entire application is the usage API call in 2.4.
+Local-first. No backend, no telemetry, no sync.
+
+The application makes two outbound requests, both on the usage path in 2.4: the usage `GET`, and a conditional token-refresh `POST` when the access token has expired. Nothing else leaves the machine. An earlier version of this section claimed a single request; it overlooked the refresh, and the Settings privacy panel must describe what the code does rather than what this document once said.
 
 ### 3.1 Field allowlist
 
@@ -442,15 +450,22 @@ Windows are switchable (`5h | 7d`) plus any model-scoped weekly caps the API ret
 Raw tool calls become human phrasing. Derived from tool name plus `file_path` only.
 
 ```
-Read + package.json         ->  Reading package.json
-Edit + src/Menu.tsx         ->  Editing Menu.tsx
-Bash                        ->  Running a command
-Bash + test-shaped intent   ->  Running tests
+Read + file_path            ->  Reading package.json
+Edit / Write + path         ->  Editing Menu.tsx
 Grep / Glob                 ->  Searching codebase
+Bash                        ->  Running a command
+WebFetch / WebSearch        ->  Searching the web
+Agent                       ->  Running a subagent
+TaskCreate / TaskUpdate     ->  Planning
+unknown tool                ->  Running <tool name>
 no assistant record recently->  Waiting
 ```
 
 Bash cannot be described more precisely than its tool name allows, because the command string is off-limits per 3.1. Prefer a vaguer honest label over a precise leaky one.
+
+An earlier version of this table carried `Bash + test-shaped intent -> Running tests`. It is removed: deciding that an intent is test-shaped requires reading the command, so the row contradicted section 3.1.
+
+Tool names move between releases. On 2.1.257 the agent-spawn tool is `Agent`, not `Task`, and `TodoWrite` has been replaced by `TaskCreate` / `TaskUpdate`. Map the old names too, so a transcript written by an older build still reads. `Skill`, `ToolSearch`, `AskUserQuestion` and `ExitPlanMode` are also live; they fall through to the unknown-tool branch, which is the correct outcome.
 
 ---
 
@@ -645,7 +660,7 @@ Stale registry file         -> reaped, not shown
 
 ```
 Test suite fails if any disallowed field escapes the parser
-Only one outbound host contacted, verifiable by inspection
+Only the two usage hosts contacted, verifiable by inspection
 ```
 
 **Experience**
