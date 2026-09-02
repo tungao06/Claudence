@@ -354,7 +354,7 @@ Nothing in stage 2 or 3 starts until this stage is done. The application current
 several figures that are confidently wrong, and a monitoring tool that cannot be trusted is
 worse than none.
 
-### 9.1 The project breakdown contradicts itself inside one row  `CONFIRMED`
+### 9.1 The project breakdown contradicts itself inside one row  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -380,10 +380,10 @@ This is the one aggregate in the codebase that dissents. `daily_rollups`, the se
 carries a comment warning that a repair using the parent-only figure "would quietly rewrite
 history down by every session's subagent spend".
 
-- [ ] `usage += session.combinedUsage`
-- [ ] Test: a project whose sessions have subagents reports the combined figure, and sorts on it
+- [x] `usage += session.combinedUsage`
+- [x] Test: a project whose sessions have subagents reports the combined figure, and sorts on it
 
-### 9.1b Context usage shows "unavailable" while the number is in hand  `REQUESTED 2026-09-03`
+### 9.1b Context usage shows "unavailable" while the number is in hand  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -397,12 +397,21 @@ while the request size sits in memory.
 The maintainer's rule for it: if there is a ceiling, draw the bar against it; if there is not,
 still say how much context is in use, with no bar and no percentage, and never a guessed limit.
 
-- [ ] A third state for `ContextWell`: amount known, limit unknown. Renders the figure
+- [x] A third state for `ContextWell`: amount known, limit unknown. Renders the figure
       (`261k in the last request`) and says the limit is not in the table, with no meter
-- [ ] `[1m]`-suffixed model ids resolve to a 1,000,000 limit. The suffix is the published name
+- [x] `[1m]`-suffixed model ids resolve to a 1,000,000 limit. The suffix is the published name
       of the 1M-context variant, so this is a read of the model id rather than a guess
-- [ ] The reason text distinguishes "no request read yet" (nothing to show) from "limit unknown"
+- [x] The reason text distinguishes "no request read yet" (nothing to show) from "limit unknown"
       (something to show), which are currently one sentence
+
+Three things the item did not anticipate. The precedence was wrong as well as the state: the
+reason checked table coverage before it checked whether a request had been read, so an unknown
+model with nothing read blamed the model. The missing numerator now wins. Only the exact `[1m]`
+marker is read, and it is honoured even when the base id is absent from the table, on the item's
+own reasoning that the suffix is a read of the id rather than a guess. And `ModelPricing` was
+deliberately left alone: the 1M-context variant bills at a different rate, so borrowing the base
+model's prices would fabricate money. Cost for such a session stays unavailable, which is a gap
+Stage 4 should close with the published 1M rates rather than by aliasing.
 
 ### 9.2 The hourly chart counts tokens twice after a cumulative regression  `CONFIRMED`
 
@@ -446,7 +455,7 @@ the tokens actually spent in that window, while the session that spent 61% of th
 - [ ] Either compute a true in-window figure from `usage_samples` deltas, or rename the row to
       what it measures. Not both readings under one label.
 
-### 9.4 Burn rate never decays  `CONFIRMED`
+### 9.4 Burn rate never decays  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -460,8 +469,20 @@ A session that spends 1.5 M tokens between 14:00 and 14:05 and then goes quiet s
 The documentation immediately above that struct claims the opposite behaviour: "an idle gap
 drives the rate toward zero instead of preserving a stale average." The code does not do this.
 
-- [ ] Evict on read as well as on write, using the `now` the caller already passes
-- [ ] Test: a tracker with no new samples reports a falling rate and then zero
+- [x] Evict on read as well as on write, using the `now` the caller already passes
+- [x] Test: a tracker with no new samples reports a falling rate and then zero
+
+Eviction alone produces a stale figure followed by a cliff to zero rather than a decay, so the
+elapsed span now runs from the oldest surviving sample to the read moment. The figure stays a
+measurement: tokens observed over an interval that ends now.
+
+Found while fixing it, and deferred to 9.11 because the projection is what makes it matter: the
+decay is correct in the model and does not always reach the screen. `MonitorViewModel.refreshBurnRates()`
+recomputes only when a snapshot is applied, and `publishIfChanged` suppresses publication while a
+session is idle, which is exactly when the rate is falling. An idle app can display a frozen rate
+until a filesystem event or the usage refresh wakes it. The fix must ride the existing usage
+refresh rather than introduce a tick, because a tick collides with the no-polling and idle-CPU
+rules.
 
 ### 9.5 A degraded store renders zero as a measurement  `CONFIRMED`
 
