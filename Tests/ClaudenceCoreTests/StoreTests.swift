@@ -1007,3 +1007,238 @@ func inMemoryFallbackDoesNotRecoverToHealthy() {
     #expect(store.health.isPersistent == false)
     #expect(store.unansweredQueries == 0)
 }
+
+// MARK: - Rollup day attribution
+
+/// A calendar pinned to UTC so a day key is the same on every machine that
+/// runs these tests, and dates built from parts rather than from offsets so
+/// the midnight in question is the one written down.
+private let rollupUTC: Calendar = {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+    return calendar
+}()
+
+private func rollupDate(day: Int, hour: Int, minute: Int = 0) -> Date {
+    var parts = DateComponents()
+    parts.year = 2026
+    parts.month = 9
+    parts.day = day
+    parts.hour = hour
+    parts.minute = minute
+    return rollupUTC.date(from: parts) ?? Date(timeIntervalSince1970: 0)
+}
+
+/// What one day of `daily_rollups` holds, read straight from the table so the
+/// assertion does not depend on the clock the aggregate windows itself with.
+private func rollupUsage(_ store: ClaudenceStore, day: String) -> TokenUsage {
+    let row = try? store.connection?.queryFirst(
+        """
+        SELECT COALESCE(SUM(fresh_input), 0), COALESCE(SUM(cache_creation), 0),
+               COALESCE(SUM(cache_read), 0), COALESCE(SUM(output), 0),
+               COALESCE(SUM(thinking), 0)
+          FROM daily_rollups
+         WHERE day = ?
+        """,
+        [.text(day)]
+    ) { row in
+        TokenUsage(
+            freshInput: row.int(0),
+            cacheCreation: row.int(1),
+            cacheRead: row.int(2),
+            output: row.int(3),
+            thinking: row.int(4)
+        )
+    }
+    return row.flatMap { $0 } ?? .zero
+}
+
+/// Every day the rollups hold, so a test can prove nothing landed anywhere
+/// unexpected as well as proving the sum.
+private func rollupDays(_ store: ClaudenceStore) -> [String] {
+    (try? store.connection?.query(
+        "SELECT DISTINCT day FROM daily_rollups ORDER BY day ASC"
+    ) { $0.string(0) }) as? [String] ?? []
+}
+
+@Test("a session spanning midnight lands on both days and the two-day sum is unchanged")
+func rollupsSplitASessionAcrossMidnight() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: rollupUTC)
+
+    let evening = TokenUsage(freshInput: 40, cacheCreation: 10, cacheRead: 100, output: 8, thinking: 2)
+    let overnight = TokenUsage(freshInput: 100, cacheCreation: 20, cacheRead: 300, output: 30, thinking: 5)
+
+    var session = makeSession(
+        id: "night", project: "P",
+        startedAt: rollupDate(day: 2, hour: 21, minute: 25),
+        lastActivityAt: rollupDate(day: 2, hour: 23, minute: 50),
+        usage: evening
+    )
+    store.upsert(session: session)
+    store.recordUsageSample(sessionID: "night", usage: evening, at: rollupDate(day: 2, hour: 23, minute: 50))
+
+    session.usage = overnight
+    session.lastActivityAt = rollupDate(day: 3, hour: 0, minute: 52)
+    store.upsert(session: session)
+    store.recordUsageSample(sessionID: "night", usage: overnight, at: rollupDate(day: 3, hour: 0, minute: 52))
+
+    // The defect, stated: the incremental path keys on the start date, so the
+    // whole night sits on the day the session began.
+    #expect(rollupUsage(store, day: "2026-09-02") == overnight)
+    #expect(rollupUsage(store, day: "2026-09-03") == .zero)
+
+    store.recomputeRollups()
+
+    let first = rollupUsage(store, day: "2026-09-02")
+    let second = rollupUsage(store, day: "2026-09-03")
+    #expect(first == evening)
+    #expect(second.total == overnight.total - evening.total)
+    #expect(second.total > 0)
+    // The assertion this fix exists for. A repair that moves tokens between
+    // days must move them, never lose them.
+    #expect(first + second == overnight)
+    #expect(rollupDays(store) == ["2026-09-02", "2026-09-03"])
+}
+
+@Test("a session with no samples keeps its start day, and the sum is still its own total")
+func rollupsFallBackToTheStartDayWithoutSamples() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: rollupUTC)
+
+    let usage = TokenUsage(freshInput: 70, cacheRead: 30, output: 12)
+    store.upsert(session: makeSession(
+        id: "unsampled", project: "P",
+        startedAt: rollupDate(day: 2, hour: 21, minute: 25),
+        lastActivityAt: rollupDate(day: 3, hour: 0, minute: 52),
+        usage: usage
+    ))
+
+    store.recomputeRollups()
+
+    #expect(rollupUsage(store, day: "2026-09-02") == usage)
+    #expect(rollupDays(store) == ["2026-09-02"])
+}
+
+@Test("a repaired rollup counts a non-monotonic session once, not twice")
+func rollupsUseTheHighWaterMarkAcrossDays() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: rollupUTC)
+
+    let total = TokenUsage(freshInput: 150)
+    store.upsert(session: makeSession(
+        id: "rotated", project: "P",
+        startedAt: rollupDate(day: 2, hour: 21),
+        lastActivityAt: rollupDate(day: 3, hour: 2),
+        usage: total
+    ))
+    // A transcript rotation drops the running total to 40 and it climbs back.
+    // Differencing against the previous sample would count 110 on the second
+    // day on top of the 100 already counted on the first.
+    store.recordUsageSample(sessionID: "rotated", usage: TokenUsage(freshInput: 100), at: rollupDate(day: 2, hour: 22))
+    store.recordUsageSample(sessionID: "rotated", usage: TokenUsage(freshInput: 40), at: rollupDate(day: 3, hour: 1))
+    store.recordUsageSample(sessionID: "rotated", usage: TokenUsage(freshInput: 150), at: rollupDate(day: 3, hour: 2))
+
+    store.recomputeRollups()
+
+    #expect(rollupUsage(store, day: "2026-09-02").freshInput == 100)
+    #expect(rollupUsage(store, day: "2026-09-03").freshInput == 50)
+    #expect(
+        rollupUsage(store, day: "2026-09-02").freshInput
+            + rollupUsage(store, day: "2026-09-03").freshInput == total.freshInput
+    )
+}
+
+@Test("samples that measure more than the session row holds are scaled down, never negative")
+func rollupsNeverExceedTheStoredTotal() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: rollupUTC)
+
+    // The row is the authority on how much was spent; the samples are only the
+    // authority on when. Here they disagree, which is what a session row
+    // rewritten downward looks like on disk.
+    store.upsert(session: makeSession(
+        id: "overmeasured", project: "P",
+        startedAt: rollupDate(day: 2, hour: 21),
+        lastActivityAt: rollupDate(day: 3, hour: 1),
+        usage: TokenUsage(freshInput: 100)
+    ))
+    store.recordUsageSample(sessionID: "overmeasured", usage: TokenUsage(freshInput: 300), at: rollupDate(day: 2, hour: 22))
+    store.recordUsageSample(sessionID: "overmeasured", usage: TokenUsage(freshInput: 900), at: rollupDate(day: 3, hour: 1))
+
+    store.recomputeRollups()
+
+    let first = rollupUsage(store, day: "2026-09-02")
+    let second = rollupUsage(store, day: "2026-09-03")
+    #expect(first.freshInput >= 0)
+    #expect(second.freshInput >= 0)
+    #expect(first.freshInput + second.freshInput == 100)
+}
+
+@Test("an incremental upsert after a repair keeps the sum across both days")
+func incrementalUpsertAfterARepairPreservesTheSum() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: rollupUTC)
+
+    var session = makeSession(
+        id: "night", project: "P",
+        startedAt: rollupDate(day: 2, hour: 21, minute: 25),
+        lastActivityAt: rollupDate(day: 3, hour: 0, minute: 52),
+        usage: TokenUsage(freshInput: 100)
+    )
+    store.upsert(session: session)
+    store.recordUsageSample(sessionID: "night", usage: TokenUsage(freshInput: 60), at: rollupDate(day: 2, hour: 22))
+    store.recordUsageSample(sessionID: "night", usage: TokenUsage(freshInput: 100), at: rollupDate(day: 3, hour: 0, minute: 52))
+    store.recomputeRollups()
+
+    // The engine keeps writing while the repaired rows sit there. The
+    // subtract-then-add pair subtracts the session's whole total from the
+    // start-day bucket that now holds only part of it, and the day it lands on
+    // is wrong until the next repair -- but the two days together must still
+    // add up to what the session has spent.
+    session.usage = TokenUsage(freshInput: 130)
+    store.upsert(session: session)
+
+    let first = rollupUsage(store, day: "2026-09-02")
+    let second = rollupUsage(store, day: "2026-09-03")
+    #expect(first.freshInput >= 0)
+    #expect(second.freshInput >= 0)
+    #expect(first.freshInput + second.freshInput == 130)
+
+    // And the next repair puts it back where it belongs.
+    store.recordUsageSample(sessionID: "night", usage: TokenUsage(freshInput: 130), at: rollupDate(day: 3, hour: 1))
+    store.recomputeRollups()
+    #expect(rollupUsage(store, day: "2026-09-02").freshInput == 60)
+    #expect(rollupUsage(store, day: "2026-09-03").freshInput == 70)
+}
+
+@Test("today reads the tokens spent today by a session that started yesterday")
+func todayCountsWhatAnOvernightSessionSpentAfterMidnight() {
+    let temp = TempDatabase()
+    // The real calendar and the real clock: this is the reported defect, and
+    // it is about the day boundary the user is actually standing on.
+    let store = ClaudenceStore(url: temp.url)
+    let now = Date()
+    let yesterday = now.addingTimeInterval(-25 * 60 * 60)
+
+    var session = makeSession(
+        id: "overnight", project: "P",
+        startedAt: now.addingTimeInterval(-26 * 60 * 60),
+        lastActivityAt: now,
+        usage: TokenUsage(freshInput: 1_000)
+    )
+    store.upsert(session: session)
+    store.recordUsageSample(sessionID: "overnight", usage: TokenUsage(freshInput: 1_000), at: yesterday)
+
+    session.usage = TokenUsage(freshInput: 1_750)
+    store.upsert(session: session)
+    store.recordUsageSample(sessionID: "overnight", usage: TokenUsage(freshInput: 1_750), at: now)
+
+    #expect(store.dailyTotals(days: 1).first?.usage.freshInput == nil)
+
+    store.recomputeRollups()
+
+    #expect(store.dailyTotals(days: 1).first?.usage.freshInput == 750)
+    let everything = store.dailyTotals(days: 7).reduce(0) { $0 + $1.usage.freshInput }
+    #expect(everything == 1_750)
+}

@@ -235,7 +235,11 @@ public struct AnalyticsService: Sendable {
         }
 
         var measured: [String: TokenUsage] = [:]
-        Self.enumerateIncreases(in: rows, range: range, sessions: sessions) { _, sampledAt, delta in
+        UsageSampleWalk.enumerateIncreases(
+            in: rows,
+            range: range,
+            sessionStarts: Self.starts(of: sessions)
+        ) { _, sampledAt, delta in
             let key = Self.hourString(for: sampledAt, calendar: calendar)
             measured[key, default: .zero] += delta
         }
@@ -243,65 +247,6 @@ public struct AnalyticsService: Sendable {
         return starts.map { start in
             let key = Self.hourString(for: start, calendar: calendar)
             return HourPoint(hour: key, date: start, usage: measured[key])
-        }
-    }
-
-    /// Walks sample rows in store order and hands each session's rise inside
-    /// `range` to `body`, as `(sessionID, sampledAt, delta)`.
-    ///
-    /// One implementation with two callers: `hourlySeries` buckets the rises by
-    /// hour, `shareOfWindowTokens` buckets them by session. They ask the same
-    /// question of the same rows, and a second copy of this walk would be a
-    /// second place for the high-water rule below to be got wrong.
-    ///
-    /// `body` runs for a session exactly when that session has something to
-    /// difference, which is what makes "not derivable" distinguishable from
-    /// "zero": a session `body` is never called for has no in-window figure,
-    /// while one called with a zero delta was measurably idle.
-    ///
-    /// - Parameters:
-    ///   - rows: from `ClaudenceStore.usageSamples(in:)`, so each session's
-    ///     rows are in time order and are preceded by the last sample taken
-    ///     before the range where one exists.
-    ///   - sessions: used only to tell which sessions began inside the range.
-    private static func enumerateIncreases(
-        in rows: [UsageSampleRow],
-        range: Range<Date>,
-        sessions: [AISession],
-        body: (_ sessionID: String, _ sampledAt: Date, _ delta: TokenUsage) -> Void
-    ) {
-        // A session that began inside the range is the one case where a first
-        // sample carries no history from before it.
-        let startedInRange = Set(
-            sessions.filter { range.contains($0.startedAt) }.map(\.id)
-        )
-
-        // The highest running total each session has reached, not merely the
-        // sample before this one. `usage_samples` is not monotonic, and against
-        // the previous sample alone every token between the floor of a
-        // regression and the level it fell from is counted a second time on the
-        // way back up.
-        var peak: [String: TokenUsage] = [:]
-        for row in rows {
-            let mark = peak[row.sessionID]
-            peak[row.sessionID] = higher(mark ?? .zero, row.usage)
-
-            let delta: TokenUsage
-            if let mark {
-                delta = increase(from: mark, to: row.usage)
-            } else if startedInRange.contains(row.sessionID) {
-                delta = row.usage
-            } else {
-                // The baseline row, or a session whose history predates the
-                // range. Either way it establishes a floor and contributes
-                // nothing of its own.
-                continue
-            }
-
-            // The baseline row sits before the range and must not open a bucket
-            // of its own even when it is also a session's first sample.
-            guard range.contains(row.sampledAt) else { continue }
-            body(row.sessionID, row.sampledAt, delta)
         }
     }
 
@@ -332,44 +277,6 @@ public struct AnalyticsService: Sendable {
             parts.month ?? 0,
             parts.day ?? 0,
             parts.hour ?? 0
-        )
-    }
-
-    /// The rise of a running total above the highest it has already reached,
-    /// floored at zero per field.
-    ///
-    /// Totals only ever climb while a session lives, so a fall means the
-    /// session's transcript was rotated or its cursor reset. Nothing is lost
-    /// when that happens: the tokens below the mark were drawn when they were
-    /// first observed. What the floor prevents is the opposite failure, of
-    /// drawing them again as the counter climbs back to where it was, which is
-    /// what measuring against the previous sample did. A negative bar would be
-    /// a second, louder wrong answer.
-    private static func increase(from earlier: TokenUsage, to later: TokenUsage) -> TokenUsage {
-        TokenUsage(
-            freshInput: max(0, later.freshInput - earlier.freshInput),
-            cacheCreation: max(0, later.cacheCreation - earlier.cacheCreation),
-            cacheRead: max(0, later.cacheRead - earlier.cacheRead),
-            output: max(0, later.output - earlier.output),
-            thinking: max(0, later.thinking - earlier.thinking)
-        )
-    }
-
-    /// The per-field maximum of two running totals.
-    ///
-    /// Per field rather than per total, because each field is its own
-    /// cumulative counter and none of them can legitimately fall. Holding one
-    /// mark against `total` would make a regression in any single field
-    /// suppress the fields that kept climbing through it, and there would be no
-    /// honest way to split a recovered total back across a breakdown the chart
-    /// shows cache separately in.
-    private static func higher(_ lhs: TokenUsage, _ rhs: TokenUsage) -> TokenUsage {
-        TokenUsage(
-            freshInput: max(lhs.freshInput, rhs.freshInput),
-            cacheCreation: max(lhs.cacheCreation, rhs.cacheCreation),
-            cacheRead: max(lhs.cacheRead, rhs.cacheRead),
-            output: max(lhs.output, rhs.output),
-            thinking: max(lhs.thinking, rhs.thinking)
         )
     }
 
@@ -583,7 +490,11 @@ public struct AnalyticsService: Sendable {
         // could be differenced for. Absent is not zero, and the two must stay
         // distinguishable all the way to the screen.
         var measured: [String: TokenUsage] = [:]
-        Self.enumerateIncreases(in: rows, range: range, sessions: sessions) { sessionID, _, delta in
+        UsageSampleWalk.enumerateIncreases(
+            in: rows,
+            range: range,
+            sessionStarts: Self.starts(of: sessions)
+        ) { sessionID, _, delta in
             measured[sessionID, default: .zero] += delta
         }
 
@@ -648,5 +559,11 @@ public struct AnalyticsService: Sendable {
     /// method can fail one after another with health degraded throughout.
     private static func answered(before: UInt64, after: UInt64) -> Bool {
         before == after
+    }
+
+    /// When each session began, keyed by id, which is all `UsageSampleWalk`
+    /// wants of a session list.
+    private static func starts(of sessions: [AISession]) -> [String: Date] {
+        Dictionary(sessions.map { ($0.id, $0.startedAt) }, uniquingKeysWith: { first, _ in first })
     }
 }

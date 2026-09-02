@@ -62,10 +62,10 @@ struct MenuBarContent: View {
         // The cost in the today strip is priced from the database, which the
         // dashboard's aggregates already own, so it is pulled the same way the
         // dashboard pulls it rather than being recomputed here. Keyed on a
-        // quantised token count: an unquantised `todayUsage.total` changes
-        // several times a second while a session streams, and this reads
-        // SQLite. One read at launch, then one per quarter-million tokens.
-        .task(id: model.todayUsage.total / MenuBarContent.costRefreshQuantum) {
+        // quantised token count: an unquantised total changes several times a
+        // second while a session streams, and this reads SQLite. One read at
+        // launch, then one per quarter-million tokens.
+        .task(id: costRefreshKey) {
             model.refreshDashboard()
         }
     }
@@ -93,6 +93,25 @@ struct MenuBarContent: View {
 
     /// How far today's token total has to move before the cost is repriced.
     private static let costRefreshQuantum = 250_000
+
+    /// What has to change before today's cost is read again.
+    ///
+    /// This was `todayUsage.total / costRefreshQuantum` alone until 2026-09-03,
+    /// and that number is stuck at zero for the whole of a new day when the
+    /// rollups still file an overnight session under yesterday, and stuck at
+    /// nothing whenever the aggregate fails. Either way the cost beside it
+    /// never refreshed, because the key it was watching had nowhere to move.
+    ///
+    /// So the key carries three things that move for different reasons: the
+    /// local day, which turns over at midnight whatever the store says; the
+    /// live sessions' own tokens, which the engine accumulates in memory and
+    /// which never depend on a query answering; and today's stored total, still
+    /// quantised, when there is one.
+    private var costRefreshKey: String {
+        let live = model.sessions.reduce(0) { $0 + $1.combinedUsage.total }
+        let stored = model.todayUsage.map { "\($0.total / MenuBarContent.costRefreshQuantum)" } ?? "-"
+        return "\(ClaudenceStore.dayString(for: Date()))/\(live / MenuBarContent.costRefreshQuantum)/\(stored)"
+    }
 
     /// The section rule. A `Divider` inside a leading-aligned stack sizes to
     /// its content rather than to the band, so the rule is drawn explicitly.
@@ -378,19 +397,24 @@ struct MenuBarContent: View {
                 Text("Today")
                     .font(Theme.Typography.body)
                     .foregroundStyle(Theme.textTertiary)
-                Text(Format.tokens(model.todayUsage.total))
-                    .font(Theme.Typography.stripValue)
-                    .foregroundStyle(Theme.textPrimary)
-                Text(costLine)
-                    .font(Theme.Typography.help)
-                    .foregroundStyle(Theme.textQuaternary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if let usage = model.todayUsage {
+                    Text(Format.tokens(usage.total))
+                        .font(Theme.Typography.stripValue)
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(costLine)
+                        .font(Theme.Typography.help)
+                        .foregroundStyle(Theme.textQuaternary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else {
+                    // The aggregate behind this figure did not answer. A zero
+                    // here would be a measurement, and the cost beside it would
+                    // be a second one derived from the first.
+                    UnavailableView("Token usage unavailable", compact: true)
+                }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(
-                "Today, \(Format.tokens(model.todayUsage.total)) tokens. \(spokenCost)"
-            )
+            .accessibilityLabel(spokenToday)
             Spacer(minLength: Theme.Space.s)
             Button {
                 openDashboard()
@@ -405,6 +429,14 @@ struct MenuBarContent: View {
         .padding(.horizontal, Theme.Popover.gutter)
         .padding(.vertical, Theme.Popover.todayStrip)
         .accessibilityElement(children: .contain)
+    }
+
+    /// The whole today strip, spoken.
+    private var spokenToday: String {
+        guard let usage = model.todayUsage else {
+            return "Today, token usage unavailable"
+        }
+        return "Today, \(Format.tokens(usage.total)) tokens. \(spokenCost)"
     }
 
     /// The trailing half of the today strip: `tokens \u{00B7} $3.42 est.`, or

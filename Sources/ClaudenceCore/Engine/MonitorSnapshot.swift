@@ -6,13 +6,22 @@ import Foundation
 public struct MonitorSnapshot: Sendable, Equatable {
     public var sessions: [AISession]
     public var usage: UsageState
-    public var todayUsage: TokenUsage
+    /// Tokens recorded for the current local day, or nil when the store could
+    /// not answer.
+    ///
+    /// Optional because the engine reads an aggregate, and an aggregate that
+    /// failed returns the same empty result as a day with nothing on it. This
+    /// was a plain `TokenUsage` until 2026-09-03 and published `Tokens today 0`
+    /// off a failed query, as a measurement, which is the one thing this
+    /// project does not do. Nothing durable was wrong; the header simply had no
+    /// figure and said it had one.
+    public var todayUsage: TokenUsage?
     public var updatedAt: Date
 
     public init(
         sessions: [AISession] = [],
         usage: UsageState = .unavailable(reason: "Not yet fetched"),
-        todayUsage: TokenUsage = .zero,
+        todayUsage: TokenUsage? = nil,
         updatedAt: Date = Date()
     ) {
         self.sessions = sessions

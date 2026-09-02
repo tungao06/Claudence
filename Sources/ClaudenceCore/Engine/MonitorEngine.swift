@@ -38,11 +38,19 @@ public actor MonitorEngine {
     private var observers: [UUID: @Sendable (MonitorSnapshot) -> Void] = [:]
     private var lastUpserted: [String: AISession] = [:]
     private var todayCache: (usage: TokenUsage, at: Date)?
+    /// When the rollups were last rebuilt, and for which local day.
+    private var lastRollupRepair: (day: String, at: Date)?
 
     /// How long a `dailyTotals` result is reused when no session produced new
     /// tokens. Bounded so a rollover past midnight cannot pin the figure to
     /// yesterday, short enough that the number is never visibly wrong.
     static let todayTotalTTL: TimeInterval = 60
+
+    /// The shortest gap between two rollup repairs. A repair reads every
+    /// session and every sample, so it is far too expensive to run per
+    /// filesystem event, and far too cheap to be worth skipping once a minute
+    /// while a session that started yesterday is still spending.
+    static let rollupRepairInterval: TimeInterval = 60
 
     public init(
         discovery: any SessionDiscovering,
@@ -381,10 +389,17 @@ public actor MonitorEngine {
     /// Today's total prefers the store, which survives restarts. With no store
     /// it falls back to the live sessions, which is honest but resets on launch.
     ///
+    /// Nil when the store did not answer. A failed aggregate and a day with
+    /// nothing on it both come back empty, and only the store's own count of
+    /// unanswered queries separates them; publishing the empty case as zero
+    /// printed `Tokens today 0` as a measurement.
+    ///
     /// The query only runs when something could have moved the number, or when
     /// the cached figure is older than `todayTotalTTL`. Running an aggregate on
     /// every filesystem event is the kind of cost that has no visible effect.
-    private func todayTotal(live: [AISession], producedTokens: Bool, now: Date) -> TokenUsage {
+    /// Only an answered read is cached: caching a failure would hold the gap
+    /// open for a minute after the store recovered.
+    private func todayTotal(live: [AISession], producedTokens: Bool, now: Date) -> TokenUsage? {
         guard let store else {
             return live.reduce(TokenUsage.zero) { $0 + $1.combinedUsage }
         }
@@ -392,9 +407,56 @@ public actor MonitorEngine {
            now.timeIntervalSince(cached.at) < MonitorEngine.todayTotalTTL {
             return cached.usage
         }
+
+        repairRollupsIfStale(store: store, live: live, now: now)
+
+        let before = store.unansweredQueries
         let total = store.dailyTotals(days: 1).first?.usage ?? .zero
+        guard store.unansweredQueries == before else { return nil }
         todayCache = (total, now)
         return total
+    }
+
+    /// Rebuilds the day-keyed rollups when the incremental attribution could be
+    /// stale, and not otherwise.
+    ///
+    /// `upsert(session:)` keys a session's whole spend on the day it started,
+    /// so a session that began yesterday and is still running has everything it
+    /// spends today filed under yesterday, and today's row reads nothing at
+    /// all. Only the store can put that right, from the samples; this decides
+    /// when to ask.
+    ///
+    /// Three reasons to ask, and no others:
+    ///
+    /// - the first pass of the process, which heals whatever drifted while the
+    ///   app was not running;
+    /// - the local day changing under a running app, which is the midnight this
+    ///   defect is named after and is not allowed to wait for the interval;
+    /// - a live session that started before today, which is the only shape that
+    ///   keeps misfiling tokens while the app watches. Throttled to
+    ///   `rollupRepairInterval`, because that misfiling is corrected within a
+    ///   minute and a rebuild per filesystem event is not a cost worth paying
+    ///   for a fresher one.
+    ///
+    /// The repair moves tokens between days and never changes their sum, so the
+    /// incremental writes that land between two repairs are wrong about the day
+    /// and right about the total. See `ClaudenceStore.recomputeRollups`.
+    private func repairRollupsIfStale(store: any ClaudenceStoring, live: [AISession], now: Date) {
+        let today = ClaudenceStore.dayString(for: now)
+        guard let last = lastRollupRepair else {
+            store.recomputeRollups()
+            lastRollupRepair = (today, now)
+            return
+        }
+        if last.day != today {
+            store.recomputeRollups()
+            lastRollupRepair = (today, now)
+            return
+        }
+        guard now.timeIntervalSince(last.at) >= MonitorEngine.rollupRepairInterval else { return }
+        guard live.contains(where: { ClaudenceStore.dayString(for: $0.startedAt) != today }) else { return }
+        store.recomputeRollups()
+        lastRollupRepair = (today, now)
     }
 
     /// The single write path for `snapshot`.
@@ -450,6 +512,13 @@ public protocol ClaudenceStoring: CursorStoring, StoreOutcomeReporting {
     func upsert(session: AISession)
     func markEnded(sessionID: String, at: Date)
     func recordUsageSample(sessionID: String, usage: TokenUsage, at: Date)
+    /// Rebuilds the day-keyed rollups from the sessions and samples on disk.
+    ///
+    /// Declared here because the incremental write path keys a session's whole
+    /// spend on the day it started, so an overnight session's tokens sit under
+    /// yesterday until this is run. The store owns what the correct answer is;
+    /// the engine owns when to ask. See `ClaudenceStore.recomputeRollups`.
+    func recomputeRollups()
     func dailyTotals(days: Int) -> [(day: String, usage: TokenUsage)]
     func projectTotals(since: Date?) -> [(project: String, usage: TokenUsage, sessionCount: Int)]
 }

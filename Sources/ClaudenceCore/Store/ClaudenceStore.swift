@@ -496,56 +496,291 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         }
     }
 
-    /// Rebuilds `daily_rollups` from `sessions`. O(number of sessions).
+    /// Rebuilds `daily_rollups` from `sessions` and `usage_samples`.
     ///
-    /// A repair path, not a hot path: use it after an import, a manual edit, or
-    /// any suspicion that the incremental updates drifted.
+    /// ## What it repairs
+    ///
+    /// `upsert(session:)` keys a session's whole contribution on the day it
+    /// *started*, because that is the only day the row in front of it can name
+    /// in O(1). A session that begins at 21:25 and is still running at 00:52
+    /// therefore puts everything it spends after midnight onto the previous
+    /// day, and `dailyTotals(days: 1)`, which asks `WHERE day >= '<today>'`,
+    /// finds nothing at all. Observed on the live database on 2026-09-03: all
+    /// eight rollup rows dated the previous day while a live session held
+    /// 172.7 M tokens.
+    ///
+    /// The correction lives here and only here. Splitting a session across days
+    /// inside the incremental write would need the previous split back to
+    /// subtract it, which the session row does not carry; a repair rebuilt from
+    /// durable facts can always be run again, and a wrong incremental write
+    /// cannot be taken back.
+    ///
+    /// ## How a session is split
+    ///
+    /// `usage_samples` hold each session's running total, so the rises between
+    /// them say *when* tokens were spent while the session row says *how many*.
+    /// The rises are bucketed by the local day the later sample falls in,
+    /// through the same `UsageSampleWalk` the hourly chart and the window share
+    /// use, high-water mark included: the samples are not monotonic, and
+    /// differencing against the previous sample counts a recovery twice.
+    ///
+    /// The buckets are then reconciled to the row, field by field, so they add
+    /// up to exactly what the session holds:
+    ///
+    /// - measured less than the row: the difference was spent after the last
+    ///   sample, so it goes on the day of the session's last activity.
+    /// - measured more than the row: the buckets are scaled down in proportion,
+    ///   the remainder handed out largest first. Nothing goes negative.
+    /// - no samples at all: the whole total goes on the start day, which is
+    ///   exactly what the incremental path already does.
+    ///
+    /// The sum over days is therefore exactly the sum of `combinedUsage` over
+    /// sessions, whatever the samples say, and `rollupsSplitASessionAcrossMidnight`
+    /// asserts it. That property is the point: this project has already shipped
+    /// a rollup rewritten downward by a cursor that outlived its total, and a
+    /// repair that can lose tokens is the same defect wearing a different hat.
+    ///
+    /// `session_count` stays on the start day alone. It counts sessions rather
+    /// than session-days, and moving it would change a figure this repair was
+    /// not asked to touch.
+    ///
+    /// ## Cost and failure
+    ///
+    /// O(sessions + samples), all of both, in one transaction: the split of a
+    /// session that ran three days ago is as much a fact as today's, so a
+    /// partial rebuild would have to invent a rule for the sessions that
+    /// straddle its edge. Every read happens inside the transaction and throws,
+    /// so a statement that fails rolls the `DELETE` back with it rather than
+    /// leaving the table rebuilt from half the rows. Callers must throttle it;
+    /// `MonitorEngine` does.
     public func recomputeRollups() {
         perform("recompute rollups") { database in
             try database.withTransaction {
                 try database.execute("DELETE FROM daily_rollups")
+
                 // Combined, matching `upsert(session:)`. A repair that used the
                 // parent-only figure would quietly rewrite history down by
                 // every session's subagent spend.
-                let rows = try database.query(
+                let sessions = try database.query(
                     """
-                    SELECT project_name, started_at,
+                    SELECT id, project_name, started_at, last_activity_at,
                            fresh_input, cache_creation, cache_read, output, thinking,
                            subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
                            subagent_output, subagent_thinking
                       FROM sessions
                     """
                 ) { row in
-                    (
-                        project: row.string(0),
-                        startedAt: Date(timeIntervalSince1970: row.double(1)),
+                    RollupSession(
+                        id: row.string(0),
+                        project: row.string(1),
+                        startedAt: Date(timeIntervalSince1970: row.double(2)),
+                        lastActivityAt: Date(timeIntervalSince1970: row.double(3)),
+                        usage: TokenUsage(
+                            freshInput: row.int(4),
+                            cacheCreation: row.int(5),
+                            cacheRead: row.int(6),
+                            output: row.int(7),
+                            thinking: row.int(8)
+                        ) + TokenUsage(
+                            freshInput: row.int(9),
+                            cacheCreation: row.int(10),
+                            cacheRead: row.int(11),
+                            output: row.int(12),
+                            thinking: row.int(13)
+                        )
+                    )
+                }
+
+                // Ordered by session and then by time, which is the order the
+                // walk differentiates in.
+                let samples = try database.query(
+                    """
+                    SELECT session_id, sampled_at,
+                           fresh_input, cache_creation, cache_read, output, thinking
+                      FROM usage_samples
+                     ORDER BY session_id ASC, sampled_at ASC, id ASC
+                    """
+                ) { row in
+                    UsageSampleRow(
+                        sessionID: row.string(0),
+                        sampledAt: Date(timeIntervalSince1970: row.double(1)),
                         usage: TokenUsage(
                             freshInput: row.int(2),
                             cacheCreation: row.int(3),
                             cacheRead: row.int(4),
                             output: row.int(5),
                             thinking: row.int(6)
-                        ) + TokenUsage(
-                            freshInput: row.int(7),
-                            cacheCreation: row.int(8),
-                            cacheRead: row.int(9),
-                            output: row.int(10),
-                            thinking: row.int(11)
                         )
                     )
                 }
-                for row in rows {
+
+                for (bucket, contribution) in self.rollupBuckets(sessions: sessions, samples: samples) {
                     try self.applyRollup(
-                        day: self.dayString(for: row.startedAt),
-                        project: row.project,
-                        usage: row.usage,
+                        day: bucket.day,
+                        project: bucket.project,
+                        usage: contribution.usage,
                         sign: 1,
-                        sessionCountDelta: 1,
+                        sessionCountDelta: contribution.sessionCount,
                         in: database
                     )
                 }
             }
         }
+    }
+
+    /// One `(day, project)` cell of `daily_rollups`.
+    private struct RollupBucket: Hashable {
+        let day: String
+        let project: String
+    }
+
+    private struct RollupContribution {
+        var usage: TokenUsage = .zero
+        var sessionCount: Int64 = 0
+    }
+
+    /// What every session read back from disk contributes, and where.
+    private struct RollupSession {
+        let id: String
+        let project: String
+        let startedAt: Date
+        let lastActivityAt: Date
+        /// Combined, parent plus subagents. See `recomputeRollups`.
+        let usage: TokenUsage
+    }
+
+    /// The whole rollup table as it should be, in an order that does not depend
+    /// on how a dictionary happened to hash.
+    private func rollupBuckets(
+        sessions: [RollupSession],
+        samples: [UsageSampleRow]
+    ) -> [(RollupBucket, RollupContribution)] {
+        // Everything ever sampled is in range, so every session's first sample
+        // counts in full: a rollup covers a session's whole life rather than a
+        // window of it, and there is no earlier bucket for those tokens to
+        // belong to.
+        let everything = Date.distantPast..<Date.distantFuture
+        var measured: [String: [String: TokenUsage]] = [:]
+        UsageSampleWalk.enumerateIncreases(
+            in: samples,
+            range: everything,
+            sessionStarts: Dictionary(
+                sessions.map { ($0.id, $0.startedAt) },
+                uniquingKeysWith: { first, _ in first }
+            )
+        ) { sessionID, sampledAt, delta in
+            measured[sessionID, default: [:]][self.dayString(for: sampledAt), default: .zero] += delta
+        }
+
+        var lastSampleAt: [String: Date] = [:]
+        for row in samples {
+            lastSampleAt[row.sessionID] = max(lastSampleAt[row.sessionID] ?? row.sampledAt, row.sampledAt)
+        }
+
+        var buckets: [RollupBucket: RollupContribution] = [:]
+        for session in sessions {
+            let startDay = dayString(for: session.startedAt)
+            // The unmeasured remainder was spent after the last sample, so it
+            // belongs to the last day the session was seen working, not to the
+            // day it happened to start on.
+            let residual = max(session.lastActivityAt, lastSampleAt[session.id] ?? session.lastActivityAt)
+            let split = Self.daySplit(
+                total: session.usage,
+                measured: measured[session.id] ?? [:],
+                fallbackDay: startDay,
+                residualDay: dayString(for: residual)
+            )
+            for (day, usage) in split {
+                buckets[RollupBucket(day: day, project: session.project), default: RollupContribution()].usage += usage
+            }
+            buckets[RollupBucket(day: startDay, project: session.project), default: RollupContribution()]
+                .sessionCount += 1
+        }
+
+        return buckets
+            .map { ($0.key, $0.value) }
+            .sorted { lhs, rhs in
+                lhs.0.day == rhs.0.day ? lhs.0.project < rhs.0.project : lhs.0.day < rhs.0.day
+            }
+    }
+
+    /// Splits one session's stored total across the local days its samples rose
+    /// on, in a way that adds back up to that total exactly.
+    ///
+    /// Per field, because each of the five counters is its own quantity and the
+    /// breakdown shows cache separately from fresh input. See `recomputeRollups`
+    /// for the three cases and why each is answered the way it is.
+    static func daySplit(
+        total: TokenUsage,
+        measured: [String: TokenUsage],
+        fallbackDay: String,
+        residualDay: String
+    ) -> [String: TokenUsage] {
+        // A session with no samples has nothing to say about when, so its
+        // total goes where the incremental path already puts it.
+        let anchor = measured.isEmpty ? fallbackDay : residualDay
+        var result: [String: TokenUsage] = [:]
+        for field in UsageSampleWalk.fields {
+            let amounts = measured
+                .map { (day: $0.key, value: $0.value[keyPath: field]) }
+                .sorted { $0.day < $1.day }
+            for placed in Self.apportion(total: total[keyPath: field], across: amounts, anchor: anchor) {
+                guard placed.value != 0 else { continue }
+                result[placed.day, default: .zero][keyPath: field] += placed.value
+            }
+        }
+        return result
+    }
+
+    /// Places `total` across the measured days so that the parts sum to exactly
+    /// `total` and none of them is negative.
+    ///
+    /// The measured amounts are a shape, not a magnitude: the session row is
+    /// the authority on how much was spent and the samples only on when. When
+    /// the two disagree the shape gives way, never the total, because a repair
+    /// that changes a sum is the failure this whole path exists to prevent.
+    static func apportion(
+        total: Int,
+        across amounts: [(day: String, value: Int)],
+        anchor: String
+    ) -> [(day: String, value: Int)] {
+        guard total > 0 else { return [] }
+        let measured = amounts.reduce(0) { $0 + $1.value }
+        guard measured > 0 else { return [(day: anchor, value: total)] }
+        if measured == total { return amounts }
+
+        if measured < total {
+            var result = amounts
+            let remainder = total - measured
+            if let index = result.firstIndex(where: { $0.day == anchor }) {
+                result[index].value += remainder
+            } else {
+                result.append((day: anchor, value: remainder))
+            }
+            return result
+        }
+
+        // Measured more than the row holds, which is what a session row written
+        // down to a smaller figure looks like from here. Scale in proportion
+        // and hand the rounding remainder out largest fraction first, so the
+        // parts land on exactly `total`.
+        let scale = Double(total) / Double(measured)
+        var scaled = amounts.map { (day: $0.day, value: Int((Double($0.value) * scale).rounded(.down))) }
+        var leftover = total - scaled.reduce(0) { $0 + $1.value }
+        let byFraction = amounts.indices.sorted { lhs, rhs in
+            let left = Double(amounts[lhs].value) * scale
+            let right = Double(amounts[rhs].value) * scale
+            let leftFraction = left - left.rounded(.down)
+            let rightFraction = right - right.rounded(.down)
+            return leftFraction == rightFraction
+                ? amounts[lhs].day < amounts[rhs].day
+                : leftFraction > rightFraction
+        }
+        for index in byFraction where leftover > 0 {
+            scaled[index].value += 1
+            leftover -= 1
+        }
+        return scaled
     }
 
     // MARK: - Subagent totals

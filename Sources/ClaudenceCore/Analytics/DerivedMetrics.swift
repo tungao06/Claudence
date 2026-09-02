@@ -25,13 +25,23 @@ public struct DayOverDayDelta: Sendable, Equatable {
 
     /// `(today - yesterday) / yesterday` on `TokenUsage.total`, signed.
     ///
-    /// Nil when yesterday is zero, because the ratio is undefined and not
-    /// infinite: "5,000 tokens today, none yesterday" is a first day of work,
-    /// not an infinite increase. The caller renders "no comparison" rather than
-    /// inventing a denominator of one.
+    /// Nil when either day is zero, because a ratio needs two readings and one
+    /// of them is missing.
+    ///
+    /// Yesterday at zero makes the ratio undefined rather than infinite:
+    /// "5,000 tokens today, none yesterday" is a first day of work, not an
+    /// infinite increase.
+    ///
+    /// Today at zero is the other half, added 2026-09-03. The arithmetic is
+    /// defined -- it is exactly -1 -- but the sentence it produces is not a
+    /// measurement: at 00:20 the tile read `down 100% vs yesterday` against a
+    /// day twenty minutes old with nothing in it yet, which states a decline
+    /// that has not happened. A day-over-day comparison is between two days
+    /// that both recorded work, and until today has any, the caller renders no
+    /// comparison at all.
     public var fractionalChange: Double? {
         let base = yesterday.total
-        guard base > 0 else { return nil }
+        guard base > 0, today.total > 0 else { return nil }
         return Double(today.total - base) / Double(base)
     }
 
@@ -39,7 +49,7 @@ public struct DayOverDayDelta: Sendable, Equatable {
     public var percentChange: Double? { fractionalChange.map { $0 * 100 } }
 
     /// Whether a comparison can be drawn at all.
-    public var hasComparison: Bool { yesterday.total > 0 }
+    public var hasComparison: Bool { yesterday.total > 0 && today.total > 0 }
 }
 
 // MARK: - Share of the window

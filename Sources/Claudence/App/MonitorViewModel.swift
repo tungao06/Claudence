@@ -143,7 +143,9 @@ final class MonitorViewModel {
 
     var sessions: [AISession] { snapshot.sessions }
     var activeCount: Int { snapshot.activeCount }
-    var todayUsage: TokenUsage { snapshot.todayUsage }
+    /// Today's tokens, or nil when the store could not answer. Nil is not a
+    /// zero and the popover must not render it as one.
+    var todayUsage: TokenUsage? { snapshot.todayUsage }
     var primaryWindow: UsageWindow? { usageState.window(named: "five_hour") }
     var weeklyWindow: UsageWindow? { usageState.window(named: "seven_day") }
 

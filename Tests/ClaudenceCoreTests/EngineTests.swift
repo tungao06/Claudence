@@ -114,7 +114,7 @@ func engineReaps() async {
     let empty = MonitorEngine(discovery: FakeDiscovery(sessions: []), transcripts: FakeTranscripts())
     await empty.refreshSessions()
     #expect(await empty.current().sessions.isEmpty)
-    #expect(await empty.current().todayUsage.total == 0)
+    #expect(await empty.current().todayUsage?.total == 0)
 }
 
 @Test("activity and model carry over from the transcript delta")
@@ -361,11 +361,32 @@ private final class ReadFailingStore: ClaudenceStoring, @unchecked Sendable {
     let inner: ClaudenceStore
     private let lock = NSLock()
     private var _failSessionReads: Bool
+    private var _failDailyTotals = false
+    private var _recomputeCalls = 0
     private var _unanswered: UInt64 = 0
 
     init(inner: ClaudenceStore, failSessionReads: Bool) {
         self.inner = inner
         self._failSessionReads = failSessionReads
+    }
+
+    /// Makes the aggregate behind `Tokens today` fail while everything else
+    /// answers, which is what a single bad statement looks like from outside.
+    var failDailyTotals: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _failDailyTotals
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _failDailyTotals = newValue
+        }
+    }
+
+    /// How many times the engine asked for a rollup repair.
+    var recomputeCalls: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _recomputeCalls
     }
 
     var failSessionReads: Bool {
@@ -407,10 +428,23 @@ private final class ReadFailingStore: ClaudenceStoring, @unchecked Sendable {
         inner.recordUsageSample(sessionID: sessionID, usage: usage, at: date)
     }
     func dailyTotals(days: Int) -> [(day: String, usage: TokenUsage)] {
-        inner.dailyTotals(days: days)
+        lock.lock()
+        let failing = _failDailyTotals
+        if failing { _unanswered &+= 1 }
+        lock.unlock()
+        // A failed aggregate and a day with no rows return the same empty
+        // array. Only the count separates them, exactly as in the real store.
+        guard !failing else { return [] }
+        return inner.dailyTotals(days: days)
     }
     func projectTotals(since: Date?) -> [(project: String, usage: TokenUsage, sessionCount: Int)] {
         inner.projectTotals(since: since)
+    }
+    func recomputeRollups() {
+        lock.lock()
+        _recomputeCalls += 1
+        lock.unlock()
+        inner.recomputeRollups()
     }
     func cursor(forSession sessionID: String) -> ReadCursor? {
         inner.cursor(forSession: sessionID)
@@ -506,6 +540,7 @@ private final class UnavailableStore: ClaudenceStoring, @unchecked Sendable {
         countUnanswered()
         return []
     }
+    func recomputeRollups() { countUnanswered() }
     func cursor(forSession sessionID: String) -> ReadCursor? { countUnanswered(); return nil }
     func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) { countUnanswered() }
 }
@@ -531,4 +566,69 @@ func unavailableStoreStillProducesSessions() async throws {
     let session = try #require(await engine.current().sessions.first)
     #expect(session.usage.total == 2_000)
     #expect(transcripts.calls == ["s1"])
+}
+
+// MARK: - Today's total and the rollup repair
+
+@Test("a daily aggregate that does not answer publishes no total rather than a zero")
+func failedDailyAggregatePublishesNoTodayTotal() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClaudenceEngineTests", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let inner = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+
+    let session = makeSession(id: "s1", startedAt: Date())
+    let store = ReadFailingStore(inner: inner, failSessionReads: false)
+    store.failDailyTotals = true
+
+    let transcripts = FakeTranscripts()
+    transcripts.queue(TranscriptDelta(usage: TokenUsage(freshInput: 1_000), recordsParsed: 1), for: "s1")
+    let engine = MonitorEngine(
+        discovery: FakeDiscovery(sessions: [session]),
+        transcripts: transcripts,
+        store: store
+    )
+
+    await engine.refreshSessions()
+    // Nothing durable is wrong here; the header simply has no figure, and a
+    // zero would be a measurement it did not take.
+    #expect(await engine.current().todayUsage == nil)
+
+    store.failDailyTotals = false
+    transcripts.queue(TranscriptDelta(usage: TokenUsage(freshInput: 5), recordsParsed: 1), for: "s1")
+    await engine.refreshSessions()
+    #expect(await engine.current().todayUsage?.total == 1_005)
+}
+
+@Test("the rollups are repaired once when the engine starts, not on every pass")
+func rollupRepairIsThrottled() async throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ClaudenceEngineTests", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let inner = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+    let store = ReadFailingStore(inner: inner, failSessionReads: false)
+
+    let transcripts = FakeTranscripts()
+    transcripts.queue(TranscriptDelta(usage: TokenUsage(freshInput: 10), recordsParsed: 1), for: "s1")
+    transcripts.queue(TranscriptDelta(usage: TokenUsage(freshInput: 10), recordsParsed: 1), for: "s1")
+    let engine = MonitorEngine(
+        // Yesterday's session: the one whose spend the incremental path keeps
+        // piling onto the day it started.
+        discovery: FakeDiscovery(sessions: [
+            makeSession(id: "s1", startedAt: Date().addingTimeInterval(-26 * 60 * 60))
+        ]),
+        transcripts: transcripts,
+        store: store
+    )
+
+    await engine.refreshSessions()
+    #expect(store.recomputeCalls == 1)
+
+    // A second pass moments later produces tokens again, so it reaches the
+    // aggregate, but a full rebuild per filesystem event is exactly the cost
+    // this repair is not allowed to have.
+    await engine.refreshSessions()
+    #expect(store.recomputeCalls == 1)
 }

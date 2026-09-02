@@ -727,3 +727,25 @@ struct ShareFormattingTests {
         #expect(Format.share(1) == "100%")
     }
 }
+
+@Test("a day with nothing on it yet is no comparison at all, not a 100% fall")
+func dayOverDayWithNothingTodayIsUndefined() {
+    // 00:20 on a new day: yesterday was a full day of work and today has not
+    // started. The ratio is exactly -1, and printing it as "down 100% vs
+    // yesterday" states a measurement of a day that is twenty minutes old.
+    let fresh = DayOverDayDelta(
+        today: .zero,
+        yesterday: TokenUsage(freshInput: 855_975_471)
+    )
+    #expect(fresh.fractionalChange == nil)
+    #expect(fresh.percentChange == nil)
+    #expect(fresh.hasComparison == false)
+
+    // Both sides present is still a comparison, including a real fall.
+    let real = DayOverDayDelta(
+        today: TokenUsage(freshInput: 1),
+        yesterday: TokenUsage(freshInput: 4)
+    )
+    #expect(real.hasComparison)
+    #expect(real.fractionalChange == -0.75)
+}
