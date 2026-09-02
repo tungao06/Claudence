@@ -85,9 +85,12 @@ struct SessionDetailView: View {
     let tokenScaleMaximum: Int?
     let burnRatePerMinute: Double?
     let burnHistory: [Double]
-    /// This session's share of the tokens Claudence measured over the recent
-    /// window, from `AnalyticsService.shareOfRecentTokens`. Nil is unavailable,
-    /// and it is nil by default because the figure reads the database and a
+    /// This session's share of the tokens spent inside the recent window, from
+    /// `AnalyticsService.shareOfWindowTokens`. A share of the work done in those
+    /// five hours, never of the allowance they belong to, which is a quantity
+    /// nothing reports. Nil is unavailable, which covers both a window that
+    /// measured nothing and a session whose samples cannot be differenced across
+    /// it, and it is nil by default because the figure reads the database and a
     /// view must not.
     let windowShare: Double?
     /// The design's `Show subagents` setting. False omits the list entirely

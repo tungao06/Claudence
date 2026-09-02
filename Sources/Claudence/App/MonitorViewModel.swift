@@ -173,33 +173,39 @@ final class MonitorViewModel {
         subagentsBySession[session.id] ?? []
     }
 
-    /// Each session's share of the tokens Claudence measured over the recent
-    /// window, keyed by session id.
+    /// Each session's share of the tokens spent inside the recent window, keyed
+    /// by session id.
     ///
-    /// The denominator is what this application measured, not the provider's
-    /// window capacity: the usage API reports a percentage consumed and never
-    /// a capacity, so there is no honest way to divide a token count by it.
-    /// Nil for a session means the window measured nothing to take a share of.
-    private(set) var recentShares: [String: Double] = [:]
+    /// The denominator is what this application measured over the window, not
+    /// the provider's window capacity: the usage API reports a percentage
+    /// consumed and never a capacity, so there is no honest way to divide a
+    /// token count by it.
+    ///
+    /// A session missing from this map has no share to show, either because the
+    /// window measured nothing at all or because its own samples cannot be
+    /// differenced across it. The view renders that as unavailable; a zero would
+    /// be a claim the data does not support.
+    private(set) var windowShares: [String: Double] = [:]
 
-    func recentShare(for session: AISession) -> Double? {
-        recentShares[session.id]
+    func windowShare(for session: AISession) -> Double? {
+        windowShares[session.id]
     }
 
     /// Recomputes the shares. Reads the database, so it runs off the main actor
     /// and is called when a detail view opens rather than on every snapshot.
-    func refreshRecentShares() async {
+    func refreshWindowShares() async {
         guard let analytics else { return }
         let shares = await Task.detached(priority: .utility) {
-            guard let result = analytics.shareOfRecentTokens() else { return [String: Double]() }
+            guard let result = analytics.shareOfWindowTokens() else { return [String: Double]() }
             var mapped: [String: Double] = [:]
-            for entry in result.sessions where entry.share != nil {
-                mapped[entry.sessionID] = entry.share
+            for entry in result.sessions {
+                guard let share = entry.share else { continue }
+                mapped[entry.sessionID] = share
             }
             return mapped
         }.value
-        if recentShares != shares {
-            recentShares = shares
+        if windowShares != shares {
+            windowShares = shares
         }
     }
 

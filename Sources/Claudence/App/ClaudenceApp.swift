@@ -327,7 +327,7 @@ private struct DashboardHost: View {
                 tokenScaleMaximum: model.tokenScaleMaximum,
                 burnRatePerMinute: rate.tokensPerMinute > 0 ? rate.tokensPerMinute : nil,
                 burnHistory: rate.samples,
-                windowShare: model.recentShare(for: session),
+                windowShare: model.windowShare(for: session),
                 showsSubagents: showsSubagents,
                 onClose: { selectedSession = nil }
             )

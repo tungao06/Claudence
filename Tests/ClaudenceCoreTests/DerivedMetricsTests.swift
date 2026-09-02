@@ -244,112 +244,236 @@ func dailySeriesPointsCarryBands() {
     #expect(series.last?.output == 250)
 }
 
-// MARK: - Share of recent activity
+// MARK: - Share of the window
 
-@Test("shares divide the locally measured total and sum to one")
-func recentSharesDivideTheMeasuredTotal() throws {
+@Test("the share is measured from samples inside the window, not from lifetime totals")
+func windowShareMeasuresTheWindowNotTheLifetime() throws {
     let temp = TempDerivedDatabase()
     let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
     let now = Date()
-    let anHourAgo = now.addingTimeInterval(-3_600)
+
+    // The shape found on the live database: the session with by far the larger
+    // lifetime total barely moved inside the window, and the one with the
+    // smaller lifetime total spent almost everything spent in it.
+    store.upsert(session: makeDerivedSession(
+        id: "6ff2ff43", startedAt: now.addingTimeInterval(-9 * 3_600),
+        lastActivityAt: now.addingTimeInterval(-600),
+        usage: usage(5_900_000)))
+    store.recordUsageSample(
+        sessionID: "6ff2ff43", usage: usage(5_890_000), at: now.addingTimeInterval(-6 * 3_600))
+    store.recordUsageSample(
+        sessionID: "6ff2ff43", usage: usage(5_900_000), at: now.addingTimeInterval(-3_600))
 
     store.upsert(session: makeDerivedSession(
-        id: "a", project: "Alpha", startedAt: anHourAgo, lastActivityAt: now,
-        usage: TokenUsage(freshInput: 700, output: 50)))
-    store.upsert(session: makeDerivedSession(
-        id: "b", project: "Beta", startedAt: anHourAgo, lastActivityAt: anHourAgo,
-        usage: TokenUsage(freshInput: 200, output: 50)))
+        id: "worker", startedAt: now.addingTimeInterval(-9 * 3_600),
+        lastActivityAt: now.addingTimeInterval(-600),
+        usage: usage(2_500_000)))
+    store.recordUsageSample(
+        sessionID: "worker", usage: usage(1_890_000), at: now.addingTimeInterval(-6 * 3_600))
+    store.recordUsageSample(
+        sessionID: "worker", usage: usage(2_500_000), at: now.addingTimeInterval(-3_600))
 
     let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
-    let shares = try #require(service.shareOfRecentTokens())
+    let shares = try #require(service.shareOfWindowTokens())
 
-    #expect(shares.window == AnalyticsService.recentActivityWindow)
+    #expect(shares.window == AnalyticsService.windowSpan)
     #expect(shares.until == now)
-    #expect(shares.measuredTotal.total == 1_000)
-    #expect(shares.sessions.map(\.sessionID) == ["a", "b"])
+    #expect(shares.windowTotal.total == 620_000)
+    // Heaviest inside the window first, which is not the lifetime order.
+    #expect(shares.sessions.map(\.sessionID) == ["worker", "6ff2ff43"])
+    #expect(shares.sessions[0].windowUsage?.total == 610_000)
+    #expect(shares.sessions[1].windowUsage?.total == 10_000)
 
-    let first = try #require(shares.share(ofSession: "a"))
-    let second = try #require(shares.share(ofSession: "b"))
-    #expect(abs(first - 0.75) < 0.000_001)
-    #expect(abs(second - 0.25) < 0.000_001)
-    #expect(abs(first + second - 1.0) < 0.000_001)
-    #expect(shares.share(ofSession: "missing") == nil)
+    let heavy = try #require(shares.share(ofSession: "worker"))
+    let light = try #require(shares.share(ofSession: "6ff2ff43"))
+    #expect(abs(heavy - 610_000.0 / 620_000.0) < 0.000_001)
+    #expect(abs(light - 10_000.0 / 620_000.0) < 0.000_001)
+    #expect(abs(heavy + light - 1.0) < 0.000_001)
+
+    // The lifetime reading these replaced: 70% and 30%, both far from the truth.
+    #expect(abs(light - 5_900_000.0 / 8_400_000.0) > 0.5)
+    #expect(abs(heavy - 2_500_000.0 / 8_400_000.0) > 0.5)
 }
 
-@Test("a session that has been quiet longer than the window is excluded from both sides")
-func recentSharesExcludeStaleSessions() throws {
+@Test("a cumulative regression inside the window is not counted twice on the way back up")
+func windowShareDoesNotRecountAfterARegression() throws {
     let temp = TempDerivedDatabase()
     let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
     let now = Date()
-    let sixHoursAgo = now.addingTimeInterval(-6 * 3_600)
 
     store.upsert(session: makeDerivedSession(
-        id: "live", startedAt: now, lastActivityAt: now,
-        usage: TokenUsage(freshInput: 400)))
-    store.upsert(session: makeDerivedSession(
-        id: "stale", startedAt: sixHoursAgo, lastActivityAt: sixHoursAgo,
-        usage: TokenUsage(freshInput: 9_000)))
+        id: "regressed", startedAt: now.addingTimeInterval(-9 * 3_600),
+        lastActivityAt: now, usage: usage(1_600)))
+    store.recordUsageSample(
+        sessionID: "regressed", usage: usage(1_000), at: now.addingTimeInterval(-6 * 3_600))
+    store.recordUsageSample(
+        sessionID: "regressed", usage: usage(1_500), at: now.addingTimeInterval(-4 * 3_600))
+    store.recordUsageSample(
+        sessionID: "regressed", usage: usage(1_200), at: now.addingTimeInterval(-3 * 3_600))
+    store.recordUsageSample(
+        sessionID: "regressed", usage: usage(1_600), at: now.addingTimeInterval(-2 * 3_600))
 
     let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
-    let shares = try #require(service.shareOfRecentTokens())
+    let shares = try #require(service.shareOfWindowTokens())
+
+    // 1,600 - 1,000 against the high-water mark. Differencing against the
+    // previous sample alone would report 500 + 0 + 400 = 900.
+    #expect(shares.windowTotal.total == 600)
+    #expect(shares.sessions[0].windowUsage?.total == 600)
+    #expect(shares.share(ofSession: "regressed") == 1.0)
+}
+
+@Test("a session with nothing to difference is unavailable, not zero and not its lifetime")
+func windowShareIsUnavailableWithoutTwoSamples() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+    let old = now.addingTimeInterval(-9 * 3_600)
+
+    store.upsert(session: makeDerivedSession(
+        id: "measured", startedAt: old, lastActivityAt: now, usage: usage(1_400)))
+    store.recordUsageSample(
+        sessionID: "measured", usage: usage(1_000), at: now.addingTimeInterval(-6 * 3_600))
+    store.recordUsageSample(
+        sessionID: "measured", usage: usage(1_400), at: now.addingTimeInterval(-3_600))
+
+    // One sample and no history before the window: it is a floor and nothing
+    // more, so what this session spent inside the window is not derivable.
+    store.upsert(session: makeDerivedSession(
+        id: "onesample", startedAt: old, lastActivityAt: now, usage: usage(5_000_000)))
+    store.recordUsageSample(
+        sessionID: "onesample", usage: usage(5_000_000), at: now.addingTimeInterval(-3_600))
+
+    // No samples at all.
+    store.upsert(session: makeDerivedSession(
+        id: "unsampled", startedAt: old, lastActivityAt: now, usage: usage(9_000_000)))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let shares = try #require(service.shareOfWindowTokens())
+
+    #expect(shares.sessions.count == 3)
+    #expect(shares.share(ofSession: "measured") == 1.0)
+    #expect(shares.share(ofSession: "onesample") == nil)
+    #expect(shares.share(ofSession: "unsampled") == nil)
+
+    let undrawable = shares.sessions.filter { $0.share == nil }
+    #expect(undrawable.count == 2)
+    #expect(undrawable.allSatisfy { $0.windowUsage == nil })
+    // Neither the lifetime figure nor a zero reaches the denominator.
+    #expect(shares.windowTotal.total == 400)
+}
+
+@Test("a session born inside the window counts its first sample in full")
+func windowShareCountsASessionBornInsideTheWindow() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+
+    // Nothing in this total predates the window, so the single sample needs no
+    // baseline: the session's whole running total was spent inside it.
+    store.upsert(session: makeDerivedSession(
+        id: "fresh", startedAt: now.addingTimeInterval(-2 * 3_600),
+        lastActivityAt: now, usage: usage(500)))
+    store.recordUsageSample(
+        sessionID: "fresh", usage: usage(500), at: now.addingTimeInterval(-3_600))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let shares = try #require(service.shareOfWindowTokens())
+
+    #expect(shares.windowTotal.total == 500)
+    #expect(shares.share(ofSession: "fresh") == 1.0)
+}
+
+@Test("a session quiet for longer than the window is on neither side of the division")
+func windowShareExcludesStaleSessions() throws {
+    let temp = TempDerivedDatabase()
+    let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
+    let now = Date()
+
+    store.upsert(session: makeDerivedSession(
+        id: "live", startedAt: now.addingTimeInterval(-2 * 3_600),
+        lastActivityAt: now, usage: usage(400)))
+    store.recordUsageSample(
+        sessionID: "live", usage: usage(400), at: now.addingTimeInterval(-600))
+
+    store.upsert(session: makeDerivedSession(
+        id: "stale", startedAt: now.addingTimeInterval(-9 * 3_600),
+        lastActivityAt: now.addingTimeInterval(-6 * 3_600), usage: usage(9_000)))
+    store.recordUsageSample(
+        sessionID: "stale", usage: usage(3_000), at: now.addingTimeInterval(-7 * 3_600))
+    store.recordUsageSample(
+        sessionID: "stale", usage: usage(9_000), at: now.addingTimeInterval(-6 * 3_600))
+
+    let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
+    let shares = try #require(service.shareOfWindowTokens())
 
     #expect(shares.sessions.map(\.sessionID) == ["live"])
-    // The excluded session's tokens are not in the denominator either.
-    #expect(shares.measuredTotal.total == 400)
+    #expect(shares.windowTotal.total == 400)
     #expect(shares.share(ofSession: "live") == 1.0)
     #expect(shares.share(ofSession: "stale") == nil)
 }
 
 @Test("a window that measured nothing leaves every share undefined rather than zero")
-func recentSharesUndefinedWhenNothingMeasured() throws {
+func windowShareUndefinedWhenNothingMeasured() throws {
     let temp = TempDerivedDatabase()
     let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
     let now = Date()
 
     store.upsert(session: makeDerivedSession(
-        id: "quiet", startedAt: now, lastActivityAt: now, usage: .zero))
+        id: "quiet", startedAt: now.addingTimeInterval(-2 * 3_600),
+        lastActivityAt: now, usage: .zero))
+    store.recordUsageSample(sessionID: "quiet", usage: .zero, at: now.addingTimeInterval(-3_600))
 
     let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
-    let shares = try #require(service.shareOfRecentTokens())
+    let shares = try #require(service.shareOfWindowTokens())
 
-    #expect(shares.measuredTotal == TokenUsage.zero)
+    #expect(shares.windowTotal == TokenUsage.zero)
     #expect(shares.sessions.count == 1)
     #expect(shares.sessions[0].share == nil)
 }
 
 @Test("an empty store yields an answered, empty window rather than nil")
-func recentSharesOnEmptyStore() throws {
+func windowShareOnEmptyStore() throws {
     let temp = TempDerivedDatabase()
     let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
     let service = AnalyticsService(store: store, calendar: derivedUTC)
 
-    let shares = try #require(service.shareOfRecentTokens())
+    let shares = try #require(service.shareOfWindowTokens())
     #expect(shares.sessions.isEmpty)
-    #expect(shares.measuredTotal == TokenUsage.zero)
+    #expect(shares.windowTotal == TokenUsage.zero)
 }
 
 @Test("a custom window narrows the set, and the window bounds are reported")
-func recentSharesHonourACustomWindow() throws {
+func windowShareHonoursACustomWindow() throws {
     let temp = TempDerivedDatabase()
     let store = ClaudenceStore(url: temp.url, calendar: derivedUTC)
     let now = Date()
-    let twoHoursAgo = now.addingTimeInterval(-2 * 3_600)
 
     store.upsert(session: makeDerivedSession(
-        id: "recent", startedAt: now, lastActivityAt: now, usage: TokenUsage(output: 10)))
+        id: "recent", startedAt: now.addingTimeInterval(-1_800),
+        lastActivityAt: now.addingTimeInterval(-1_200), usage: usage(10)))
+    store.recordUsageSample(
+        sessionID: "recent", usage: usage(10), at: now.addingTimeInterval(-1_200))
+
     store.upsert(session: makeDerivedSession(
-        id: "older", startedAt: twoHoursAgo, lastActivityAt: twoHoursAgo,
-        usage: TokenUsage(output: 90)))
+        id: "older", startedAt: now.addingTimeInterval(-2 * 3_600),
+        lastActivityAt: now.addingTimeInterval(-5_400), usage: usage(180)))
+    store.recordUsageSample(
+        sessionID: "older", usage: usage(90), at: now.addingTimeInterval(-2 * 3_600))
+    store.recordUsageSample(
+        sessionID: "older", usage: usage(180), at: now.addingTimeInterval(-5_400))
 
     let service = AnalyticsService(store: store, calendar: derivedUTC, now: { now })
 
-    let fiveHours = try #require(service.shareOfRecentTokens())
-    #expect(fiveHours.sessions.count == 2)
+    let five = try #require(service.shareOfWindowTokens())
+    #expect(five.sessions.count == 2)
+    #expect(five.windowTotal.total == 190)
 
-    let oneHour = try #require(service.shareOfRecentTokens(window: 3_600))
+    let oneHour = try #require(service.shareOfWindowTokens(window: 3_600))
     #expect(oneHour.sessions.map(\.sessionID) == ["recent"])
     #expect(oneHour.since == now.addingTimeInterval(-3_600))
-    #expect(oneHour.measuredTotal.total == 10)
+    #expect(oneHour.windowTotal.total == 10)
+    #expect(oneHour.window == 3_600)
 }
 
 // MARK: - Hourly series

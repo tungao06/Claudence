@@ -42,90 +42,117 @@ public struct DayOverDayDelta: Sendable, Equatable {
     public var hasComparison: Bool { yesterday.total > 0 }
 }
 
-// MARK: - Share of recent activity
+// MARK: - Share of the window
 
-/// One session's slice of the tokens Claudence measured across a recent window.
+/// One session's slice of the tokens Claudence measured *inside* a window.
 ///
-/// `share` is deliberately optional. When nothing was measured in the window the
-/// denominator is zero and every share is undefined, which is not the same as
-/// every share being 0%.
-public struct SessionTokenShare: Sendable, Equatable, Identifiable {
+/// Both optionals mean "not derivable" and neither means zero.
+///
+/// `windowUsage` is nil when the session's samples cannot be differenced over
+/// the window: a running total on its own says nothing about a period, so a
+/// session with a single sample and no history before the window has no
+/// in-window figure at all. Its lifetime total is not a stand-in, and neither
+/// is 0.
+///
+/// `share` is nil for that same session, and also when nothing at all was
+/// measured in the window, because then the denominator is zero and every share
+/// is undefined rather than 0%.
+public struct SessionWindowShare: Sendable, Equatable, Identifiable {
     public let sessionID: String
     public let projectName: String
-    /// The session's own tokens as stored, subagents included where known.
-    public let usage: TokenUsage
-    /// Fraction of `RecentTokenShares.measuredTotal.total`, or nil when that
-    /// total is zero.
+    /// What this session spent between `WindowTokenShares.since` and `until`,
+    /// or nil when that is not derivable from the samples on hand.
+    public let windowUsage: TokenUsage?
+    /// Fraction of `WindowTokenShares.windowTotal.total`, or nil when that
+    /// total is zero or this session's own in-window figure is not derivable.
     public let share: Double?
 
     public var id: String { sessionID }
 
-    public init(sessionID: String, projectName: String, usage: TokenUsage, share: Double?) {
+    public init(sessionID: String, projectName: String, windowUsage: TokenUsage?, share: Double?) {
         self.sessionID = sessionID
         self.projectName = projectName
-        self.usage = usage
+        self.windowUsage = windowUsage
         self.share = share
     }
 }
 
-/// How recently-active sessions divide up the tokens Claudence itself measured.
+/// How the sessions active in a window divide up the tokens spent *in* it.
 ///
-/// ## This is not a share of the provider's 5 hour window
+/// ## Still not a share of the provider's 5 hour allowance
 ///
-/// `PLAN-UI.md` section C lists "share of the 5-hour window", and the obvious
-/// reading of that is wrong. `GET /api/oauth/usage` reports a **percentage
-/// consumed** and never an absolute capacity, so the window's token size is not
-/// a number this application has. Recovering it as
+/// `PLAN-UI.md` section C lists "share of the 5-hour window", and one reading of
+/// that is unavailable to this application. `GET /api/oauth/usage` reports a
+/// **percentage consumed** and never an absolute capacity, so the window's token
+/// size is not a number Claudence has. Recovering it as
 /// `measuredTokens / percentUsed` would manufacture a denominator out of our own
 /// incomplete measurement and then divide by it, which is fabricating a number
 /// twice over. `CLAUDE.md` forbids exactly that.
 ///
-/// So the denominator here is local and stated: the sum of `combinedUsage` over
-/// every session the store shows as active in the window. It says "this session
-/// is 40% of what Claudence saw in the last five hours". It says nothing about
-/// how much of the billing window is left; `UsageWindow.usedPercent` is the only
+/// The denominator is therefore local and stated: the tokens Claudence measured
+/// across every session active in the window. The figure says "this session is
+/// 40% of the work done in the last five hours". It still says nothing about how
+/// much of the billing window is left; `UsageWindow.usedPercent` is the only
 /// source for that, and it is unrelated to this figure.
 ///
-/// The denominator is `combinedUsage`, which includes what each session's
+/// ## What changed on 2026-09-03, and why the members were renamed
+///
+/// Until then both sides of the division were each session's **lifetime**
+/// `combinedUsage`, merely filtered to sessions active in the window, and the
+/// comment here argued that every member should say "recent tokens" rather than
+/// "window" so a call site could not confuse the two. The single call site said
+/// window anyway, and the figure was wrong in the way that matters: measured on
+/// the live database for 20:25 to 01:25, session `6ff2ff43` rendered 59% having
+/// spent about 1% of the tokens actually spent in that window, while the session
+/// that spent 61% of them rendered 25%. A long-lived session that had been idle
+/// for four hours out-ranked the one doing all the work.
+///
+/// Both numerator and denominator are now differences of `usage_samples` over
+/// the window, so the members genuinely are window figures and are named for it.
+/// Renaming instead of correcting was the other option and was rejected: Stage 3
+/// projects a rate limit from the same in-window quantity, so the honest number
+/// has to exist regardless.
+///
+/// Sampling is what the figure rests on, and it is not free of gaps. A session
+/// with fewer than two points to difference across the window is reported as
+/// undrawable rather than as zero, and contributes to neither side; see
+/// `SessionWindowShare`.
+///
+/// The samples carry `combinedUsage`, which includes what each session's
 /// subagents spent. That is the honest figure: subagents have no process of
 /// their own and their tokens are billed to the parent.
-///
-/// An earlier version of this comment warned that sessions rehydrated from the
-/// store carried no subagent split, so `combinedUsage` collapsed to the parent
-/// transcript's tokens for stored rows. That is no longer true. Schema version
-/// 2 added `subagent_*` columns to `sessions`, and `allSessions(since:)` reads
-/// them back into `subagentUsage`, so a stored session's combined total matches
-/// what it had when it was written.
-public struct RecentTokenShares: Sendable, Equatable {
+public struct WindowTokenShares: Sendable, Equatable {
     /// The window's length, as asked for.
     public let window: TimeInterval
     /// Start of the window.
     public let since: Date
     /// End of the window, the `now` the service was asked at.
     public let until: Date
-    /// Sum over the listed sessions. The denominator of every share, and a
-    /// figure Claudence measured rather than one a provider reported.
-    public let measuredTotal: TokenUsage
-    /// Sessions active in the window, heaviest first, ties broken by session id
-    /// so the order is stable between refreshes.
-    public let sessions: [SessionTokenShare]
+    /// Tokens spent inside the window, summed over the sessions whose in-window
+    /// figure is derivable. The denominator of every share, and a figure
+    /// Claudence measured rather than one a provider reported.
+    public let windowTotal: TokenUsage
+    /// Sessions active in the window, heaviest inside it first, ties broken by
+    /// session id so the order is stable between refreshes. Sessions with no
+    /// derivable in-window figure sort last.
+    public let sessions: [SessionWindowShare]
 
     public init(
         window: TimeInterval,
         since: Date,
         until: Date,
-        measuredTotal: TokenUsage,
-        sessions: [SessionTokenShare]
+        windowTotal: TokenUsage,
+        sessions: [SessionWindowShare]
     ) {
         self.window = window
         self.since = since
         self.until = until
-        self.measuredTotal = measuredTotal
+        self.windowTotal = windowTotal
         self.sessions = sessions
     }
 
-    /// One session's share, or nil when it was not active in the window or the
-    /// window measured nothing at all.
+    /// One session's share, or nil when it was not active in the window, its
+    /// in-window figure is not derivable, or the window measured nothing at all.
     public func share(ofSession sessionID: String) -> Double? {
         sessions.first { $0.sessionID == sessionID }?.share
     }

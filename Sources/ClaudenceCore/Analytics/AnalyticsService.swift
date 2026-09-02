@@ -234,26 +234,61 @@ public struct AnalyticsService: Sendable {
             }
         }
 
+        var measured: [String: TokenUsage] = [:]
+        Self.enumerateIncreases(in: rows, range: range, sessions: sessions) { _, sampledAt, delta in
+            let key = Self.hourString(for: sampledAt, calendar: calendar)
+            measured[key, default: .zero] += delta
+        }
+
+        return starts.map { start in
+            let key = Self.hourString(for: start, calendar: calendar)
+            return HourPoint(hour: key, date: start, usage: measured[key])
+        }
+    }
+
+    /// Walks sample rows in store order and hands each session's rise inside
+    /// `range` to `body`, as `(sessionID, sampledAt, delta)`.
+    ///
+    /// One implementation with two callers: `hourlySeries` buckets the rises by
+    /// hour, `shareOfWindowTokens` buckets them by session. They ask the same
+    /// question of the same rows, and a second copy of this walk would be a
+    /// second place for the high-water rule below to be got wrong.
+    ///
+    /// `body` runs for a session exactly when that session has something to
+    /// difference, which is what makes "not derivable" distinguishable from
+    /// "zero": a session `body` is never called for has no in-window figure,
+    /// while one called with a zero delta was measurably idle.
+    ///
+    /// - Parameters:
+    ///   - rows: from `ClaudenceStore.usageSamples(in:)`, so each session's
+    ///     rows are in time order and are preceded by the last sample taken
+    ///     before the range where one exists.
+    ///   - sessions: used only to tell which sessions began inside the range.
+    private static func enumerateIncreases(
+        in rows: [UsageSampleRow],
+        range: Range<Date>,
+        sessions: [AISession],
+        body: (_ sessionID: String, _ sampledAt: Date, _ delta: TokenUsage) -> Void
+    ) {
         // A session that began inside the range is the one case where a first
         // sample carries no history from before it.
         let startedInRange = Set(
             sessions.filter { range.contains($0.startedAt) }.map(\.id)
         )
 
-        var measured: [String: TokenUsage] = [:]
         // The highest running total each session has reached, not merely the
         // sample before this one. `usage_samples` is not monotonic, and against
         // the previous sample alone every token between the floor of a
-        // regression and the level it fell from is drawn a second time on the
+        // regression and the level it fell from is counted a second time on the
         // way back up.
         var peak: [String: TokenUsage] = [:]
         for row in rows {
             let mark = peak[row.sessionID]
-            peak[row.sessionID] = Self.higher(mark ?? .zero, row.usage)
+            peak[row.sessionID] = higher(mark ?? .zero, row.usage)
 
             let delta: TokenUsage
             if let mark {
-                delta = Self.increase(from: mark, to: row.usage)
+                delta = increase(from: mark, to: row.usage)
             } else if startedInRange.contains(row.sessionID) {
                 delta = row.usage
             } else {
@@ -266,13 +301,7 @@ public struct AnalyticsService: Sendable {
             // The baseline row sits before the range and must not open a bucket
             // of its own even when it is also a session's first sample.
             guard range.contains(row.sampledAt) else { continue }
-            let key = Self.hourString(for: row.sampledAt, calendar: calendar)
-            measured[key, default: .zero] += delta
-        }
-
-        return starts.map { start in
-            let key = Self.hourString(for: start, calendar: calendar)
-            return HourPoint(hour: key, date: start, usage: measured[key])
+            body(row.sessionID, row.sampledAt, delta)
         }
     }
 
@@ -511,62 +540,89 @@ public struct AnalyticsService: Sendable {
         )
     }
 
-    // MARK: Share of recent activity
+    // MARK: Share of the window
 
-    /// The window `shareOfRecentTokens` uses unless told otherwise: five hours,
+    /// The window `shareOfWindowTokens` uses unless told otherwise: five hours,
     /// matching the cadence of the provider's shortest usage window purely so
-    /// the two sit on the same time scale on screen. It is not a share of that
-    /// window and cannot be converted into one. See `RecentTokenShares`.
-    public static let recentActivityWindow: TimeInterval = 5 * 60 * 60
+    /// the two sit on the same time scale on screen. This is a share of the work
+    /// done in those five hours, not of the allowance they belong to, and cannot
+    /// be converted into one. See `WindowTokenShares`.
+    public static let windowSpan: TimeInterval = 5 * 60 * 60
 
-    /// How the sessions active in the last `window` divide up the tokens
-    /// Claudence measured in that period, or nil when the store could not
-    /// answer.
+    /// How the sessions active in the last `window` divide up the tokens spent
+    /// inside it, or nil when the store could not answer.
+    ///
+    /// Both sides of the division are differences of `usage_samples` across the
+    /// window, not lifetime totals filtered to it. A session that has been alive
+    /// for nine hours contributes what it spent in the last five, and its
+    /// earlier work sits on neither side. The full argument, including the
+    /// figures this replaced, is on `WindowTokenShares`.
     ///
     /// The denominator is local and measured, never the provider's window
-    /// capacity, which is not a number this application is given. The reasoning
-    /// is written out on `RecentTokenShares`, and the name of every member here
-    /// says "recent tokens" rather than "window" so the two cannot be confused
-    /// at a call site.
+    /// capacity, which is not a number this application is given.
     ///
     /// Sessions come from `allSessions(since:)`, which filters on last activity,
     /// so "active in the window" means the session did something in it. A
     /// long-running session that has been quiet for six hours is correctly
-    /// absent, and its earlier tokens are not in the denominator either.
-    public func shareOfRecentTokens(
-        window: TimeInterval = AnalyticsService.recentActivityWindow
-    ) -> RecentTokenShares? {
+    /// absent from the list and from the denominator. A session whose samples
+    /// cannot be differenced over the window is present but reports nothing, and
+    /// is likewise on neither side: see `SessionWindowShare`.
+    public func shareOfWindowTokens(
+        window: TimeInterval = AnalyticsService.windowSpan
+    ) -> WindowTokenShares? {
         let until = now()
         let since = until.addingTimeInterval(-max(0, window))
+        let range = since..<max(since, until)
 
         let before = store.unansweredQueries
         let sessions = store.allSessions(since: since)
+        let rows = store.usageSamples(in: range)
         guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
 
-        var measured = TokenUsage.zero
-        for session in sessions { measured += session.combinedUsage }
-        let denominator = measured.total
-
-        let shares = sessions.map { session in
-            SessionTokenShare(
-                sessionID: session.id,
-                projectName: session.projectName,
-                usage: session.combinedUsage,
-                share: denominator > 0
-                    ? Double(session.combinedUsage.total) / Double(denominator)
-                    : nil
-            )
-        }.sorted {
-            $0.usage.total == $1.usage.total
-                ? $0.sessionID < $1.sessionID
-                : $0.usage.total > $1.usage.total
+        // Keyed by session, and a session absent from this map is one nothing
+        // could be differenced for. Absent is not zero, and the two must stay
+        // distinguishable all the way to the screen.
+        var measured: [String: TokenUsage] = [:]
+        Self.enumerateIncreases(in: rows, range: range, sessions: sessions) { sessionID, _, delta in
+            measured[sessionID, default: .zero] += delta
         }
 
-        return RecentTokenShares(
+        var windowTotal = TokenUsage.zero
+        for session in sessions {
+            if let usage = measured[session.id] { windowTotal += usage }
+        }
+        let denominator = windowTotal.total
+
+        let shares = sessions.map { session -> SessionWindowShare in
+            let usage = measured[session.id]
+            return SessionWindowShare(
+                sessionID: session.id,
+                projectName: session.projectName,
+                windowUsage: usage,
+                share: usage.flatMap { spent in
+                    denominator > 0 ? Double(spent.total) / Double(denominator) : nil
+                }
+            )
+        }.sorted { lhs, rhs in
+            // Undrawable sessions sort last rather than as zero-token sessions,
+            // so the order does not imply a reading they do not have.
+            switch (lhs.windowUsage?.total, rhs.windowUsage?.total) {
+            case let (left?, right?):
+                return left == right ? lhs.sessionID < rhs.sessionID : left > right
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return lhs.sessionID < rhs.sessionID
+            }
+        }
+
+        return WindowTokenShares(
             window: window,
             since: since,
             until: until,
-            measuredTotal: measured,
+            windowTotal: windowTotal,
             sessions: shares
         )
     }
