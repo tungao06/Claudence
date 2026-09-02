@@ -436,7 +436,7 @@ opposite: they are drawn twice.
 
 The daily chart is unaffected — it reads `daily_rollups`, not samples.
 
-### 9.3 "Share of the 5h window" is neither  `CONFIRMED`
+### 9.3 "Share of the 5h window" is neither  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -452,8 +452,16 @@ The figure is also not what it claims. Numerator and denominator are each sessio
 database for the window 20:25 to 01:25, session `6ff2ff43` renders 59% having spent about 1% of
 the tokens actually spent in that window, while the session that spent 61% of them renders 25%.
 
-- [ ] Either compute a true in-window figure from `usage_samples` deltas, or rename the row to
-      what it measures. Not both readings under one label.
+- [x] The in-window figure is computed from `usage_samples` deltas and the label stays. The
+      rename was the cheaper half and was rejected: stage 3 projects against the same in-window
+      quantity, so the honest number was needed regardless.
+
+The sample walk that 9.2 corrected is now one private routine shared by the hourly series and the
+window share, so the high-water mark cannot be right in one and wrong in the other. A session with
+nothing to difference inside the window is absent from the map and its row reads `Unavailable`; it
+is on neither side of the division, so it does not sink the other sessions' shares. One refinement
+inherited from the hourly path: a session born inside the window is derivable from a single sample,
+because none of its running total predates the window.
 
 ### 9.4 Burn rate never decays  `DONE 2026-09-03`
 
@@ -522,9 +530,40 @@ already at byte N, and the undercount reaches `daily_rollups` on the next upsert
 durable-corruption class CLAUDE.md records as having shipped once and been found by an audit
 rather than a test, not a display defect, so it is fixed inside stage 1.
 
-- [ ] The engine reads the same query-outcome signal as the analytics layer
-- [ ] A read that did not answer never seeds a zero total over a stored one
-- [ ] Test: a failed read after a prior failure leaves the stored total and the rollup untouched
+- [x] The engine reads the same query-outcome signal as the analytics layer
+- [x] A read that did not answer never seeds a zero total over a stored one
+- [x] Test: a failed read after a prior failure leaves the stored total and the rollup untouched
+
+### 9.5c The same latch inside the subagent tracker  `DONE 2026-09-03`
+
+`SubagentTracker.seedIfNeeded` marked a session seeded before it knew the read's outcome, and
+`subagentTotals(forSession:)` returns an empty array for both "no subagents" and "the query
+failed". Subagent tokens are 36.3% of this machine's month and 82% on one project, so the
+undercount it wrote back is not a rounding error. Fixed the same way, with its own counter,
+because a frozen session and a withheld subagent figure are different faults.
+
+### 9.5d A failed cursor read re-scans the whole transcript  `FOUND 2026-09-03`
+
+The same ambiguity in the opposite direction, and the more expensive one.
+`CursorStoring.cursor(forSession:)` returns nil for both "no cursor stored" and "the read threw"
+(`ClaudenceStore.swift:654`), and both `TranscriptReader.readIncremental` overloads take nil as
+"start at zero". A failed cursor read therefore re-parses up to 19.9 MB of records and adds the
+whole file to an accumulator already seeded with the stored total, then writes the doubled figure
+back to the session row, the subagent row and the rollup.
+
+- [ ] The reader distinguishes "no cursor" from "the cursor could not be read"
+- [ ] A cursor read that did not answer skips the session for the pass rather than starting at zero
+- [ ] Test: a failing cursor read against a stored total and a non-zero offset leaves both alone
+
+### 9.5e The menu bar prints a failed aggregate as zero  `FOUND 2026-09-03`
+
+`MonitorEngine.todayTotal` (`MonitorEngine.swift:395`) is `store.dailyTotals(days: 1).first?.usage
+?? .zero` and caches the result for the TTL, so a failed aggregate publishes `Tokens today 0` in
+the menu bar header as a measurement. Nothing durable is written, which is why it is not with the
+others, but it breaks the first rule. It is fixed together with 9.6 because both change what
+`todayUsage` means and both land in `MenuBarContent`.
+
+- [ ] `MonitorSnapshot.todayUsage` becomes optional and the header renders the unavailable state
 
 ### 9.6 `Today` reads zero after local midnight  `CONFIRMED`
 
