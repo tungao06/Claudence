@@ -129,6 +129,21 @@ struct BurnSample: Sendable, Equatable {
     static let unavailable = BurnSample()
 }
 
+/// The session responsible for the largest share of the current burn (9.11).
+/// Nil in `DashboardData` is the ordinary "nothing is burning" state, not an
+/// absence of data: a share of zero has no largest member.
+struct BurnLeaderInfo: Sendable, Equatable {
+    /// Identifies the session for the caller that wants to act on it; not
+    /// itself shown.
+    let sessionID: String
+    /// What the sessions list and the history table already call this
+    /// session, so the leader line names it the same way the rest of the
+    /// window does.
+    let displayName: String
+    /// This session's share of the summed burn rate, 0 to 1.
+    let share: Double
+}
+
 /// Everything the dashboard window draws, in one value.
 struct DashboardData: Sendable, Equatable {
     /// Usage windows exactly as the source reported them.
@@ -205,6 +220,19 @@ struct DashboardData: Sendable, Equatable {
     /// same caption whatever the age of the rates behind it.
     let priceTableStaleDays: Int?
 
+    /// Each usage window's projected exhaustion, keyed by `UsageWindow.name`
+    /// (9.11). A window absent from this map gets no tube caption beyond the
+    /// reset; the meter never invents `rateUnavailable` for one the adapter
+    /// never asked about.
+    let projections: [String: UsageProjection]
+    /// The name of the window projected to run out first, among those that
+    /// run out at all before they reset. Nil when none does, which the meter
+    /// leaves unmarked rather than picking one arbitrarily.
+    let bindingWindowName: String?
+    /// The session responsible for the largest share of the current burn.
+    /// Nil is the ordinary "nothing burning" state.
+    let burnLeader: BurnLeaderInfo?
+
     init(
         windows: [UsageWindow] = [],
         usageUnavailableReason: String? = nil,
@@ -223,7 +251,10 @@ struct DashboardData: Sendable, Equatable {
         todayCost: Double? = nil,
         unpricedSessionCount: Int = 0,
         todayVersusYesterday: Double? = nil,
-        priceTableStaleDays: Int? = nil
+        priceTableStaleDays: Int? = nil,
+        projections: [String: UsageProjection] = [:],
+        bindingWindowName: String? = nil,
+        burnLeader: BurnLeaderInfo? = nil
     ) {
         self.windows = windows
         self.usageUnavailableReason = usageUnavailableReason
@@ -243,6 +274,9 @@ struct DashboardData: Sendable, Equatable {
         self.unpricedSessionCount = unpricedSessionCount
         self.todayVersusYesterday = todayVersusYesterday
         self.priceTableStaleDays = priceTableStaleDays
+        self.projections = projections
+        self.bindingWindowName = bindingWindowName
+        self.burnLeader = burnLeader
     }
 
     /// Window keys as the usage API names them. These are the same keys
@@ -272,6 +306,20 @@ struct DashboardData: Sendable, Equatable {
 
     func burn(for session: AISession) -> BurnSample {
         burnRates[session.id] ?? .unavailable
+    }
+
+    /// A window's projected exhaustion, or `.rateUnavailable(.windowIncomplete)`
+    /// when the adapter never recorded one for it (e.g. a window the payload
+    /// did not report). Never a fabricated case: the fallback names the same
+    /// reason `UsageProjector` gives a window with no percentage or reset.
+    func projection(for window: UsageWindow) -> UsageProjection {
+        projections[window.name] ?? .rateUnavailable(.windowIncomplete)
+    }
+
+    /// Whether `window` is the one projected to run out first among those that
+    /// run out at all before they reset (9.11).
+    func isBindingWindow(_ window: UsageWindow) -> Bool {
+        bindingWindowName == window.name
     }
 
     /// Nothing measured at all. Used to pick the honest opening state.

@@ -142,6 +142,18 @@ private enum DashboardWindows {
     ]
 }
 
+/// The 9.11 projection tile beside `DashboardWindows.healthy`, matching the
+/// plan's own worked example: 21% on five hours holds until reset, 66% on
+/// seven days is the one that runs out first.
+private enum DashboardProjections {
+    static let healthy: [String: UsageProjection] = [
+        DashboardData.WindowKey.fiveHour: .holdsUntilReset,
+        DashboardData.WindowKey.sevenDay: .exhausts(at: DashboardClock.ahead(2 * DashboardClock.day + 6 * DashboardClock.hour)),
+        DashboardData.WindowKey.modelScopedPrefix + "opus": .rateUnavailable(.notMoving),
+    ]
+    static let bindingWindowName = DashboardData.WindowKey.sevenDay
+}
+
 private enum DashboardPaths {
     static let short = "/Users/preview/code/claudence"
     /// Long enough to force head truncation in a 216 pt table column.
@@ -235,6 +247,16 @@ private enum DashboardSessions {
         // No key for `enormous`: an unmeasured burn rate is an ordinary state
         // and the row must say "Rate unavailable" rather than show a zero.
     ]
+
+    /// `working` at 12,400 tokens/min against 240 and 3,050 for the other two
+    /// measured sessions is 79% of the summed rate: `BurnAttribution.leader`
+    /// over `burnRates` above, worked by hand so the fixture and the arithmetic
+    /// cannot drift apart silently.
+    static let burnLeader = BurnLeaderInfo(
+        sessionID: working.id,
+        displayName: working.projectName,
+        share: 12_400.0 / (12_400.0 + 240.0 + 3_050.0)
+    )
 }
 
 private enum DashboardSeries {
@@ -426,7 +448,10 @@ private enum DashboardFixture {
         history: DashboardHistory.mixed,
         todayUsage: DashboardUsage.medium,
         todayCost: 3.42,
-        unpricedSessionCount: 0
+        unpricedSessionCount: 0,
+        projections: DashboardProjections.healthy,
+        bindingWindowName: DashboardProjections.bindingWindowName,
+        burnLeader: DashboardSessions.burnLeader
     )
 
     /// Two windows at 1%, for the minimum-fill floor and the shape it draws.

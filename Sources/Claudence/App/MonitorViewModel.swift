@@ -36,6 +36,23 @@ final class MonitorViewModel {
     private(set) var usageState: UsageState = MonitorSnapshot.empty.usage
     private(set) var menuBarState = MenuBarState()
 
+    /// Recent `usedPercent` readings of each usage window, kept to project
+    /// when it will run out (9.11). Fed in `publish(_:at:)`, whenever
+    /// `usageState` actually changes value, which is exactly the cadence the
+    /// usage loop in `start()` already runs at, so nothing here adds a second
+    /// wake. Nothing new is fetched either: `UsageProjector` only divides over
+    /// readings the app already holds.
+    ///
+    /// `@ObservationIgnored` because nothing reads this property directly. A
+    /// view never observes it; `DashboardAdapter.refreshDashboard` reads it
+    /// through `projection(for:now:)` and `bindingWindow(now:)` at its own
+    /// explicit refresh points and copies the result into `DashboardData`,
+    /// which is what views actually track.
+    ///
+    /// Untouched by `isLiveOnly`: the readings come from the usage endpoint,
+    /// which that flag never gates.
+    @ObservationIgnored private var usageProjector = UsageProjector()
+
     /// What the store reported when it was opened at launch. Captured once,
     /// same as before: a store that fell back to memory at launch stays
     /// degraded for the life of the process (see `ClaudenceStore.baselineHealth`),
@@ -214,6 +231,26 @@ final class MonitorViewModel {
     var usageUnavailableReason: String? {
         if case .unavailable(let reason) = usageState { return reason }
         return nil
+    }
+
+    /// When `window` would run out at its current rate, per `UsageProjector`.
+    /// Division over readings already kept in `usageProjector`; nothing new is
+    /// read for this call.
+    func projection(for window: UsageWindow, now: Date = Date()) -> UsageProjection {
+        usageProjector.projection(for: window, now: now)
+    }
+
+    /// Which of the currently reported usage windows would run out first,
+    /// among those that run out before they reset at all. Nil when none does.
+    func bindingWindow(now: Date = Date()) -> (window: UsageWindow, at: Date)? {
+        usageProjector.bindingWindow(among: usageState.windows, now: now)
+    }
+
+    /// The session responsible for the largest share of the current burn, and
+    /// that share, over the rates `burnRates` already holds. Nil when nothing
+    /// is burning, which is an ordinary state and not an absence of data.
+    var burnLeader: (sessionID: String, share: Double)? {
+        BurnAttribution.leader(rates: burnRates.mapValues(\.tokensPerMinute))
     }
 
     func burnRate(for session: AISession) -> BurnRate {
@@ -407,6 +444,14 @@ final class MonitorViewModel {
         }
         if usageState != snapshot.usage {
             usageState = snapshot.usage
+            // Gated on the same `usageState` change the property assignment
+            // above is: a snapshot published for session churn alone carries
+            // no new usage reading, and recording it anyway would spend a
+            // ring slot on a repeat `UsageProjector.record` already knows how
+            // to collapse, for no gain.
+            for window in usageState.windows {
+                usageProjector.record(window, at: date)
+            }
         }
         let next = MonitorViewModel.menuBarState(for: snapshot)
         if menuBarState != next {

@@ -69,7 +69,37 @@ struct PowerMeterView: View {
             } else {
                 tubes
                 banner
+                burnLeaderLine
             }
+        }
+    }
+
+    /// Names the session responsible for the largest share of the current
+    /// burn (9.11), when there is one. `BurnAttribution.leader` returns nil
+    /// while nothing is burning, which is an ordinary state, not a missing
+    /// measurement, so the line simply does not draw rather than saying
+    /// "unavailable" about a rate of zero.
+    ///
+    /// Glyph and words, no colour: this line identifies *who*, not *how bad*,
+    /// so it borrows none of the severity tokens the tubes and the banner
+    /// above already spend colour on.
+    @ViewBuilder
+    private var burnLeaderLine: some View {
+        if let leader = data.burnLeader {
+            HStack(spacing: Theme.Space.xs) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: Theme.Bar.statusGlyph, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                Text("\(leader.displayName) is driving the burn, \(Format.share(leader.share)) of it")
+                    .font(Theme.Typography.help)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "\(leader.displayName) is responsible for \(Format.share(leader.share)) of the current burn."
+            )
         }
     }
 
@@ -206,8 +236,70 @@ struct PowerMeterView: View {
                 // this card that does not say what it counts down to. The
                 // design wrote the explanation; nothing was attached to it.
                 .tooltip(tip: "reset")
+            // The projection (9.11), beside the reset it is measured against:
+            // the gap between the two is the whole decision, so it belongs in
+            // this same block rather than a separate card.
+            projectionLine(for: window)
+            if data.isBindingWindow(window) {
+                bindingBadge(window)
+            }
         }
         .multilineTextAlignment(.center)
+    }
+
+    /// The projection, printed under the reset it is measured against.
+    ///
+    /// Four cases, three of which are not a time (9.11): a rate that empties
+    /// the window prints when; a rate that does not is the ordinary case and
+    /// the reset above already answers it, so nothing further is said; and the
+    /// two `rateUnavailable` reasons this card can actually reach, too few
+    /// samples, or a share that has not moved, get their own honest words
+    /// rather than one blanket label, because they answer different questions.
+    /// `windowIncomplete` prints nothing: `resetCaption` already says `reset
+    /// unknown` for that window, and a second line saying the same thing in
+    /// different words would not add information.
+    @ViewBuilder
+    private func projectionLine(for window: UsageWindow) -> some View {
+        switch data.projection(for: window) {
+        case .exhausts(let at):
+            Text("Empties \(Format.resetStamp(at, now: now) ?? "soon")")
+                .font(Theme.Typography.micro)
+                .foregroundStyle(Theme.textQuaternary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        case .holdsUntilReset:
+            EmptyView()
+        case .rateUnavailable(.notEnoughSamples):
+            Text("Rate unavailable")
+                .font(Theme.Typography.micro)
+                .foregroundStyle(Theme.textQuinary)
+                .lineLimit(1)
+        case .rateUnavailable(.notMoving):
+            Text("Not spending")
+                .font(Theme.Typography.micro)
+                .foregroundStyle(Theme.textQuinary)
+                .lineLimit(1)
+        case .rateUnavailable(.windowIncomplete):
+            EmptyView()
+        }
+    }
+
+    /// Marks the window projected to run out first, among those that run out
+    /// at all before they reset (9.11). Glyph and word, not colour alone, and
+    /// no colour this card does not already use: the tint is the same
+    /// `Theme.color(for: Severity)` the reading and the banner draw from, keyed
+    /// off this window's own severity rather than a fourth hue invented for
+    /// the badge.
+    private func bindingBadge(_ window: UsageWindow) -> some View {
+        let severity = window.usedPercent.map { Constants.UsageThreshold.severity(forPercent: min(100, max(0, $0))) }
+        return HStack(spacing: Theme.Space.xxs) {
+            Image(systemName: "arrow.down.right.circle.fill")
+                .font(.system(size: Theme.Bar.statusGlyph, weight: .semibold))
+            Text("binds first")
+        }
+        .font(Theme.Typography.micro)
+        .foregroundStyle(severity.map(Theme.color(for:)) ?? Theme.textTertiary)
+        .accessibilityHidden(true)
     }
 
     /// The bare duration the design prints under the window's name — `4h 35m`,
@@ -324,6 +416,29 @@ struct PowerMeterView: View {
         if let remaining = Format.timeUntil(window.resetsAt, now: now) {
             text += " Resets in \(remaining)."
         }
+        text += " \(spokenProjection(for: window))"
+        if data.isBindingWindow(window) {
+            text += " This window binds first."
+        }
         return text
+    }
+
+    /// The projection line, spoken. Kept apart from `projectionLine(for:)` so
+    /// the visual and the spoken form can each say what fits their medium
+    /// without one constraining the other's wording, the same split
+    /// `sentence(_:)` already keeps from the tube's own reading.
+    private func spokenProjection(for window: UsageWindow) -> String {
+        switch data.projection(for: window) {
+        case .exhausts(let at):
+            return "Projected to empty \(Format.resetStamp(at, now: now) ?? "before the reset")."
+        case .holdsUntilReset:
+            return "Holds until reset at the current rate."
+        case .rateUnavailable(.notEnoughSamples):
+            return "Rate unavailable."
+        case .rateUnavailable(.notMoving):
+            return "Not spending."
+        case .rateUnavailable(.windowIncomplete):
+            return ""
+        }
     }
 }

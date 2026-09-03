@@ -24,7 +24,15 @@ extension MonitorViewModel {
                 tokenScaleMaximum: tokenScaleMaximum,
                 burnRates: burnSamples(),
                 seriesUnavailableReason: "History is not being recorded",
-                todayUsage: nil
+                todayUsage: nil,
+                // The projection, the binding window and the burn leader all
+                // come from the usage endpoint and the in-process burn
+                // trackers, neither of which needs a database. A store this
+                // application cannot open is a reason to withhold history, not
+                // a reason to withhold these.
+                projections: usageProjections(now: now),
+                bindingWindowName: bindingWindow(now: now)?.window.name,
+                burnLeader: burnLeaderInfo()
             )
             return
         }
@@ -97,8 +105,35 @@ extension MonitorViewModel {
             // now; the sessions-that-ran-today count is the history table's
             // Today range, which reads the same rows.
             todayVersusYesterday: isLiveOnly ? nil : analytics.dayOverDay()?.fractionalChange,
-            priceTableStaleDays: Self.priceTableStaleDays(analytics.priceProvenance, now: now)
+            priceTableStaleDays: Self.priceTableStaleDays(analytics.priceProvenance, now: now),
+            projections: usageProjections(now: now),
+            bindingWindowName: bindingWindow(now: now)?.window.name,
+            burnLeader: burnLeaderInfo()
         )
+    }
+
+    /// One projection per currently reported usage window (9.11), read
+    /// through `projection(for:now:)` rather than computed here: the arithmetic
+    /// lives in `UsageProjector` and this file only maps it onto the window
+    /// keys `DashboardData` renders by.
+    private func usageProjections(now: Date) -> [String: UsageProjection] {
+        var result: [String: UsageProjection] = [:]
+        for window in usageState.windows {
+            result[window.name] = projection(for: window, now: now)
+        }
+        return result
+    }
+
+    /// The burn leader as the dashboard wants it: the session's own display
+    /// name attached, the same name the sessions list and history table use.
+    /// A session that has since left the live set (finished, or the process
+    /// exited) still has a share until its rate decays out of the tracker; the
+    /// name then falls back to the session id rather than disappearing, since
+    /// the id is at least honest about which session it was.
+    private func burnLeaderInfo() -> BurnLeaderInfo? {
+        guard let leader = burnLeader else { return nil }
+        let name = sessions.first { $0.id == leader.sessionID }?.projectName ?? leader.sessionID
+        return BurnLeaderInfo(sessionID: leader.sessionID, displayName: name, share: leader.share)
     }
 
     private func burnSamples() -> [String: BurnSample] {
