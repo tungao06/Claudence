@@ -210,11 +210,18 @@ argued from code, not seen. A human should open the popover and check it before 
 
 **~1.5 days**
 
-- [ ] Daily rollups
-- [ ] Grouping by project
-- [ ] 7 and 30 day graphs
-- [ ] Cost estimation from a per-model price table, always labeled "Estimated"
-- [ ] A model missing from the price table renders `Cost unavailable`, not zero
+- [x] Daily rollups
+- [x] Grouping by project
+- [x] 7 and 30 day graphs. Half of this shipped as written and half as something better: the
+      dashboard's daily chart is 7 days (`DashboardAdapter` asks `analytics.dailySeries(days: 7)`),
+      and the 30-day question is answered by the monthly table from 9.13 rather than by a second
+      chart. A thirty-point line of daily totals says less about a month than twelve rows naming
+      the projects, their sessions, their Opus-against-Sonnet split and the API-equivalent figure.
+      If a 30-day chart is ever wanted it is a range on an existing view, not new machinery.
+- [x] Cost estimation from a per-model price table, always labeled "Estimated"
+- [x] A model missing from the price table renders `Cost unavailable`, not zero. `CostEstimate`
+      carries `unpricedSessions` beside the figure so the caption says how incomplete the estimate
+      is rather than presenting a partial total as a whole one.
 
 ---
 
@@ -222,11 +229,16 @@ argued from code, not seen. A human should open the popover and check it before 
 
 **~1 day**
 
-- [ ] `UNUserNotificationCenter` integration and permission request
-- [ ] Usage at 90%
-- [ ] Session completed
-- [ ] Session failed
-- [ ] Deduplicate by session and event type; rate limit per session
+- [x] `UNUserNotificationCenter` integration and permission request
+- [x] Usage at 90%
+- [x] Session completed
+- [ ] Session failed. **Not shipped, and not an omission.** `NotificationEvent` carries the four
+      cases something can actually emit -- `usageThreshold`, `sessionCompleted`, `sessionIdle`,
+      `sessionNeedsInput` -- and a failed session is not among them because no source distinguishes
+      a session that failed from one that ended. This is the same rule that keeps `ERROR` out of
+      the session states: never ship UI for a state with no data source. The case gets written when
+      something can derive it, not before.
+- [x] Deduplicate by session and event type; rate limit per session
 
 Permission-required notifications ship only if M1 proved that state derivable.
 
@@ -236,12 +248,20 @@ Permission-required notifications ship only if M1 proved that state derivable.
 
 **~1.5 days**
 
-- [ ] VoiceOver labels on every indicator
-- [ ] Keyboard navigation
-- [ ] Launch at login via `SMAppService`
-- [ ] Settings, including the plain-language privacy disclosure
-- [ ] Empty states: Claude Code absent, zero sessions, Keychain denied, network down
-- [ ] Verify the performance budget: idle CPU under 0.5%, resident memory under 60 MB, cold start under 1 s
+- [x] VoiceOver labels on every indicator. Each one is a spoken sentence built beside the drawn
+      element rather than a repetition of it, and the elements that draw a severity speak the word
+      as well as the colour.
+- [ ] Keyboard navigation. Partial, and recorded as partial rather than checked off: the quit item,
+      the settings dialogs' default actions and the detail sheet's escape are bound, and
+      `UsageChart` is focusable and selects a point when focus arrives. What is missing is moving
+      between points from the keyboard once it has focus, and a focus order through the popover's
+      session list. A friend who navigates by keyboard cannot drive this application yet.
+- [x] Launch at login via `SMAppService`
+- [x] Settings, including the plain-language privacy disclosure
+- [x] Empty states: Claude Code absent, zero sessions, Keychain denied, network down
+- [ ] Verify the performance budget: idle CPU under 0.5%, resident memory under 60 MB, cold start
+      under 1 s. The idle figure is the one M-perf below is still re-measuring; the other three have
+      not been measured on a build of this branch at all.
 
 ---
 
@@ -870,17 +890,25 @@ collect feedback with. That is why Stage 1 precedes this.
 
 **~1.5 days**
 
-- [ ] An onboarding screen, before the Keychain prompt, stating what is read (`message.usage`,
+- [x] An onboarding screen, before the Keychain prompt, stating what is read (`message.usage`,
       tool names, file paths, a hash of commands, the plan tier) and what is never read (message
-      text, tool results, command strings). The Keychain request arrives with its reason already
-      given; today it arrives cold, and a friend who clicks Deny sees an app that looks broken.
-- [ ] Detect an absent Claude Code and say what to install, rather than showing an empty meter.
+      text, tool results, command strings). `OnboardingView`, shown from `NSWindow` rather than a
+      SwiftUI `Window` scene because `MenuBarExtra` builds no content until its popover is first
+      opened and there is therefore no mounted view to open a scene from. Every sentence is
+      `PrivacySettings.Copy` verbatim, except the subagent paragraph, which is drawn from the
+      privacy section of `CLAUDE.md` because that file's disclosure has no block for it yet.
+      Dismissing the window by its close button counts as consent to proceed, the same as the
+      button, so this never reappears on a relaunch because the wrong control was used.
+- [x] Detect an absent Claude Code and say what to install, rather than showing an empty meter.
       Core landed 2026-09-03 as `ClaudeCodePresence`, with both languages and tests; the screen
-      that shows it is the remaining half.
-- [ ] Import the user's existing `~/.claude/projects` history immediately after consent
+      that shows it is `OnboardingView.presenceSection`, which renders the bilingual title and
+      detail through the language just chosen above it.
+- [x] Import the user's existing `~/.claude/projects` history immediately after consent
       (this pulls 9.12 forward into this stage), with a visible report of what was read and what
-      could not be.
-- [ ] Language choice on the first screen, defaulting to the system language.
+      could not be. Three ranges rather than a date picker -- everything, 30 days, 90 days --
+      because a friend's first decision about their own history should not require knowing when
+      their oldest session was.
+- [x] Language choice on the first screen, defaulting to the system language.
 
 ### 9.10b Thai and English  `UN-PARKED`
 
@@ -931,15 +959,27 @@ invariant recorded under *Parked* still binds: session rows and their cursors go
       a secure timestamp, without which notarisation refuses the submission; the dmg script
       notarises and staples when both a Developer ID signature and a `notarytool` keychain profile
       are present, and prints one line and moves on when they are not.
-- [ ] The version is visible in Settings and in the report file. There is no update check.
-- [ ] An `Entitlement` type with one implementation that answers "everything on" and makes no
+- [x] The version is visible in Settings and in the report file. There is no update check.
+      `AppVersion.stamp` in the privacy pane and on the onboarding footer, and
+      `ProblemReport.Environment.appVersion`/`.appBuild` in the file the friend sends.
+- [x] An `Entitlement` type with one implementation that answers "everything on" and makes no
       request. It exists so a paid tier can be gated later without a refactor, and so the privacy
-      contract can name the third outbound request before anyone writes it.
-- [ ] Remove `AIProviderType`. Claude Code is the only provider, permanently, and a seam with one
+      contract can name the third outbound request before anyone writes it. `FullEntitlement` has
+      no stored properties and `isGranted` is neither `async` nor `throws`, so it has nowhere to
+      keep a session or a Keychain reference and no signature through which a request could return.
+      Tests pin all three.
+- [x] Remove `AIProviderType`. Claude Code is the only provider, permanently, and a seam with one
       implementation and no planned second is a claim the code makes that the product does not.
+      The type is gone; one vestige stays deliberately, the `provider` column in the sessions
+      table, written as the literal `"claudeCode"` because dropping a column costs a migration that
+      buys nothing. `ClaudenceStore` says so at the write site.
 - [ ] The Pro plan's windows are five to twenty times smaller than the maintainer's. Verify the
       thresholds, the menu bar reading and the notifications against a Pro account before the
-      first friend does.
+      first friend does. **Cannot be done on this machine.** There is no Pro account here and the
+      usage endpoint reports the tier of whoever is signed in, so this is not a test that can be
+      written -- it is an observation someone with a Pro account has to make. It stays open until a
+      friend on Pro runs the build and reports what their meter said, and it should be the first
+      thing asked of the first friend.
 
 ---
 
@@ -965,11 +1005,17 @@ measures percent per minute rather than tokens per minute: the endpoint reports 
 window whose size it never states, so a token rate cannot be turned into one without inventing
 the capacity. What remains of this item is the tile that shows it.
 
-- [ ] Projected exhaustion time per window, shown beside the reset time in the same tile, because
-      the gap between those two is the entire decision
-- [ ] Which window binds first. 21% on 5h and 66% on 7d are given equal visual weight today, and
-      the 7-day one is the one that ends the day
-- [ ] The session responsible for the largest share of the current burn, named
+- [x] Projected exhaustion time per window, shown beside the reset time in the same tile, because
+      the gap between those two is the entire decision. `PowerMeterView.projectionLine(for:)`,
+      printed under the reset it is measured against, and spoken separately for VoiceOver so the
+      two figures do not arrive as one run-on sentence.
+- [x] Which window binds first. 21% on 5h and 66% on 7d are given equal visual weight today, and
+      the 7-day one is the one that ends the day. The binding window is marked in its own tube and
+      said aloud, rather than being left to the reader to work out from two percentages.
+- [x] The session responsible for the largest share of the current burn, named. Glyph and words,
+      no colour: the line answers *who*, not *how bad*, and the tubes above it already spend the
+      severity tokens. It does not draw at all while nothing is burning, because a rate of zero is
+      an ordinary state and not a missing measurement.
 - [x] `Rate unavailable` until there are enough samples. A projection from one sample is a
       fabricated number, and this is the feature most able to produce one. Four outcomes, three of
       which are not a time: fewer than two readings or less than five minutes between them, a share
@@ -1027,8 +1073,12 @@ Sonnet share, and the API-equivalent figure. Sorted by tokens.
 - [x] State in the table's own footnote whether subagent tokens are inside the figure. After 9.1
       they are, and a reader cannot tell by looking. `MonthlyUsageReport.includesSubagentTokens`
       carries the fact as data, so the view prints it rather than asserting it.
-- [ ] `Est. cost: unavailable` on a row whose tokens are known reads as zero. Say that the tokens
-      are known and the price is not, in the cell
+- [x] `Est. cost: unavailable` on a row whose tokens are known reads as zero. Say that the tokens
+      are known and the price is not, in the cell. Two different nils now read differently: a
+      project with nothing recorded shows `Format.cost(nil)`, and a project whose tokens are known
+      but whose model is missing from the price table says so. The distinction lives in the view,
+      not in `Format.cost`, because that function is handed a number and has no way to know which
+      kind of nil produced it.
 
 ### 9.14 Reframe the money  `LABELS DONE 2026-09-03`
 
@@ -1040,10 +1090,13 @@ and the question it actually answers is whether the subscription is earning its 
 
 - [x] Label it as an API equivalent rather than a cost. Every surface: the tile, the projects
       column, the session detail row, both tooltips, and what VoiceOver says.
-- [ ] Show the plan's price beside it, so the comparison is on screen rather than in the reader's
+- [x] Show the plan's price beside it, so the comparison is on screen rather than in the reader's
       head. Published prices are deliberately not hard-coded: they go stale silently and nobody
       here measured them, so the price is a preference the user sets once and the comparison
-      appears only when it is set.
+      appears only when it is set. Both figures name their own period rather than being left to
+      imply a comparison neither earns alone -- the tile above is what today's tokens would have
+      cost on the API, and the line below is a fixed monthly charge. The plan's own name carries
+      the line when the tier is known.
 
 ---
 
