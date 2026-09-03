@@ -806,23 +806,23 @@ lean on it rather than adding a test target late.
 Approved after all four user perspectives independently named the same things, without seeing
 each other's answers.
 
-### 9.9 Remove what does not earn its place
+### 9.9 Remove what does not earn its place  `UI HALF DONE 2026-09-03`
 
-**~0.5 day, and it is a net deletion**
+**~0.5 day, and it is a net deletion.** Measured: 135 lines in, 557 out.
 
-- [ ] **The subagent detail sheet, entirely.** Thirteen of roughly twenty slots are unavailable by
+- [x] **The subagent detail sheet, entirely.** Thirteen of roughly twenty slots are unavailable by
       construction rather than for want of data today, and the code says so in six separate
       comments. The four facts that do exist — parent, agent type, tokens, share of parent — move
       inline into the subagent row on the parent sheet. What is lost is the per-subagent cache
       split, which is real data honestly derived; it is not worth a navigation step.
-- [ ] **Tool Mix and Files Touched.** No reader named a decision that changes on `Read 41, Edit 19`,
+- [x] **Tool Mix and Files Touched.** No reader named a decision that changes on `Read 41, Edit 19`,
       and Files Touched shows three truncated chips of a session that touched sixty files.
-- [ ] **The diagnostic facts**: PID, Kind, Registry, Session id, CC version, Transcript, Tail
+- [x] **The diagnostic facts**: PID, Kind, Registry, Session id, CC version, Transcript, Tail
       offset. These exist for whoever is debugging the reader, and `--diagnose --counters` already
       serves that reader from the terminal. This supersedes the previous plan's intention to spend
       a day plumbing `Kind`, `Registry`, `Transcript` and `Tail offset` into `AISession`: removing
       them costs nothing and removes four permanent `Unavailable` labels.
-- [ ] **`Git branch`**, which is not a removal but a correction, and the reason the tile survives.
+- [x] **`Git branch`**, which is not a removal but a correction, and the reason the tile survives.
       `SessionFactsView` hardcodes it to nil with a reason that is false: `TranscriptReader.swift:216`
       collects the branch, `MonitorEngine.swift:182` assigns it, and `MenuBarContent.swift:340`
       already displays it.
@@ -875,6 +875,8 @@ collect feedback with. That is why Stage 1 precedes this.
       text, tool results, command strings). The Keychain request arrives with its reason already
       given; today it arrives cold, and a friend who clicks Deny sees an app that looks broken.
 - [ ] Detect an absent Claude Code and say what to install, rather than showing an empty meter.
+      Core landed 2026-09-03 as `ClaudeCodePresence`, with both languages and tests; the screen
+      that shows it is the remaining half.
 - [ ] Import the user's existing `~/.claude/projects` history immediately after consent
       (this pulls 9.12 forward into this stage), with a visible report of what was read and what
       could not be.
@@ -883,6 +885,10 @@ collect feedback with. That is why Stage 1 precedes this.
 ### 9.10b Thai and English  `UN-PARKED`
 
 **~3 days**
+
+`Phrase` landed 2026-09-03, with `AppLanguage`, the endonyms a language picker needs, and the
+Gregorian calendar forced in both the locale and the calendar. What remains is the conversion of
+every user-facing literal and the lint test that keeps them converted.
 
 The plan as written under 9.5 in the previous revision stands: a `Phrase { en, th }` value type
 in Core so an untranslated string is a compile error; Gregorian year forced twice; a lint test
@@ -893,6 +899,10 @@ glyphs — are recorded under *Parked* below and apply unchanged.
 ### 9.10c A report the friend can send
 
 **~1 day**
+
+`ProblemReport` landed 2026-09-03: the text, its file name, and tests that assert the home
+directory appears as `~`, that a count the store could not answer reads `unavailable` rather than
+zero, and that the file says what it does not contain. The button that writes it is what remains.
 
 The two defects that were inside the error-monitoring request are already Stage 1 work (9.5).
 What returns here is the part the sceptic rejected for a single user: a button that writes one
@@ -914,9 +924,13 @@ invariant recorded under *Parked* still binds: session rows and their cursors go
 
 **~1 day**
 
-- [ ] `Scripts/make-app.sh` signs with a Developer ID and notarizes with `notarytool` when
+- [x] `Scripts/make-app.sh` signs with a Developer ID and notarizes with `notarytool` when
       `CODESIGN_IDENTITY` names one, and falls back to the self-signed certificate otherwise.
-      The account does not exist yet; the script must not wait for it.
+      The account does not exist yet; the script must not wait for it. Done 2026-09-03: the app
+      script picks Developer ID over the self-signed certificate and adds the hardened runtime and
+      a secure timestamp, without which notarisation refuses the submission; the dmg script
+      notarises and staples when both a Developer ID signature and a `notarytool` keychain profile
+      are present, and prints one line and moves on when they are not.
 - [ ] The version is visible in Settings and in the report file. There is no update check.
 - [ ] An `Entitlement` type with one implementation that answers "everything on" and makes no
       request. It exists so a paid tier can be gated later without a refactor, and so the privacy
