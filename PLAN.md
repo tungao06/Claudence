@@ -348,7 +348,7 @@ building.
 
 ---
 
-## Stage 1 — Correctness  `RE-OPENED 2026-09-03 BY ITS OWN AUDIT`
+## Stage 1 — Correctness  `DONE 2026-09-03, AUDITED AND RE-CLOSED`
 
 Every item in this stage is closed, and four defects of one class were found by the work rather
 than by the audits: 9.5b in the engine, 9.5c in the subagent tracker, 9.5d in the transcript
@@ -402,50 +402,62 @@ They read `daily_rollups`, which in this mode holds only what the current run wr
 over a figure that was not today's. Arithmetically sound and still a fabricated measurement, which
 is the reading of that rule this file should keep.
 
-### 9.15 What the stage's own audit found  `OPEN 2026-09-03`
+### 9.15 What the stage's own audit found  `DONE 2026-09-03`
 
 The seventeen commits were audited as a whole before stage 2 started, against the promise that
 every number the application prints is either derived or absent. The promise did not hold, and
 two of the findings are the same class of defect the stage was written to remove, relocated one
 layer up by the fixes themselves.
 
-- [ ] **Blocker.** `MonitorEngine.swift:218`: when the subagent tracker withholds its answer it
+- [x] **Blocker.** `MonitorEngine.swift:218`: when the subagent tracker withholds its answer it
       returns an empty array, and the engine sets `subagentUsage = .zero` and upserts. The
       collapse the tracker fix prevents is written by its caller instead. The tracker test asserts
       only that the tracker writes nothing; nothing drove the engine over the skip.
-- [ ] **Blocker.** `SubagentTracker.swift:207`: a failed directory listing is not distinguished
+- [x] **Blocker.** `SubagentTracker.swift:207`: a failed directory listing is not distinguished
       from a session with no subagents, so the same zero is written down, and `byParent` is
       clobbered with the empty set on that pass.
-- [ ] **Major.** The displayed burn rate never recomputes while a session is quiet, because a
+- [x] **Major.** The displayed burn rate never recomputes while a session is quiet, because a
       quiet session produces no filesystem event: the registry file is not heartbeat-updated and
       the transcript stops growing. 9.4 corrected the model and not the surface. Measured during
       the audit: a registry file untouched for eight hours beside a live figure on screen.
-- [ ] **Major.** `ClaudenceStore.swift:662`: `rollupBuckets` walks with an unbounded range, so
+- [x] **Major.** `ClaudenceStore.swift:662`: `rollupBuckets` walks with an unbounded range, so
       every session's first sample counts in full and a session live at launch puts its whole
       pre-observation total on the launch day. The three callers of the walk disagree by exactly
       that quantity.
-- [ ] **Major.** `upsert` subtracts a session's previous total from its start day, which the
+- [x] **Major.** `upsert` subtracts a session's previous total from its start day, which the
       repair has just spread across several days, so the next write re-collapses it and a session
       that ends between repairs keeps the wrong day permanently. The repair also has no trigger
       for a session that predates today and then exits.
-- [ ] **Major.** `MonitorViewModel.swift:41`: `storeHealth` is captured once at launch, so a store
+- [x] **Major.** `MonitorViewModel.swift:41`: `storeHealth` is captured once at launch, so a store
       that degrades later never reaches the interface while every read silently skips.
-- [ ] **Minor.** `dailyTotals` has no upper bound on `day`, so a rollup row dated in the future is
+- [x] **Minor.** `dailyTotals` has no upper bound on `day`, so a rollup row dated in the future is
       summed into today, and `lastActivityAt` takes an unclamped transcript timestamp.
-- [ ] **Minor.** `rollupBuckets` writes a `session_count` row for a zero-usage session, so a day
+- [x] **Minor.** `rollupBuckets` writes a `session_count` row for a zero-usage session, so a day
       whose only row is such a session returns a measured-looking zero to the chart and to
       `DayOverDayDelta`.
-- [ ] **Minor.** `unansweredQueries` is one global counter bracketed by three concurrent callers,
+- [x] **Minor.** `unansweredQueries` is one global counter bracketed by three concurrent callers,
       so an unrelated failing query can make an answered read look unanswered. Harmless once the
       blockers above are fixed, because a spurious skip is retried, but it is a false negative in
       a mechanism the whole stage now rests on.
-- [ ] **Minor.** `MonitorEngine.swift:255` records a session as upserted whether or not the write
+- [x] **Minor.** `MonitorEngine.swift:255` records a session as upserted whether or not the write
       succeeded, so a failed write is never retried.
-- [ ] **Minor.** Nothing prunes `usage_samples` and the only index is `(session_id, sampled_at)`,
+- [x] **Minor.** Nothing prunes `usage_samples` and the only index is `(session_id, sampled_at)`,
       while `usageSamples(in:)` filters on `sampled_at` alone. Measured cadence is 17 to 36 samples
       an hour per active session, so a month is tens of milliseconds per repair and a year is
-      about half a second, above the idle budget at a 60 second throttle. The throttle is
-      defensible now and not for a year of history; 9.12 imports that history.
+      about half a second, above the idle budget at a 60 second throttle. Fixed by an index on
+      `sampled_at` and by collapsing samples older than eight days to one per session per local
+      day, on the two rare repairs rather than the throttled one. The collapse is what makes it
+      safe: deleting the rows instead moves whole days of history onto session start days, which
+      is what the test asserts by failing that way against a plain delete.
+
+
+All eleven are fixed and each is covered by a test that was proven against the old behaviour: the
+subagent collapse fails on the row, the count, the rollup and the published snapshot; the shared
+counter misreported 454 of 500 reads; a plain delete of old samples piles twelve days of history
+onto one session's start day. What the audit is worth recording for: two of its findings were the
+stage's own fixes moving the defect one layer up rather than removing it, and both were invisible
+to the tests written with those fixes, because each type under test was behaving correctly. The
+test that finds that class has to drive the caller, not the callee.
 
 Nothing in stage 2 or 3 starts until this stage is done. The application currently prints
 several figures that are confidently wrong, and a monitoring tool that cannot be trusted is
