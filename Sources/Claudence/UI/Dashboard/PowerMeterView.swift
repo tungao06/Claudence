@@ -277,7 +277,7 @@ struct PowerMeterView: View {
             Text(
                 Strings.empties.format(
                     in: language,
-                    Format.resetStamp(at, now: now) ?? Strings.soon.string(in: language)
+                    Format.resetStamp(at, now: now, in: language) ?? Strings.soon.string(in: language)
                 )
             )
                 .font(Theme.Typography.micro)
@@ -330,9 +330,9 @@ struct PowerMeterView: View {
             // A reset that has passed still has a clock time worth printing:
             // the window may simply not have been re-read yet, and "reset
             // unknown" beside a timestamp the source did report would be false.
-            return Format.resetStamp(window.resetsAt, now: now) ?? Strings.resetUnknown.string(in: language)
+            return Format.resetStamp(window.resetsAt, now: now, in: language) ?? Strings.resetUnknown.string(in: language)
         }
-        guard let stamp = Format.resetStamp(window.resetsAt, now: now) else {
+        guard let stamp = Format.resetStamp(window.resetsAt, now: now, in: language) else {
             return remaining
         }
         // Two lines rather than one: the tube column is 372 pt wide shared
@@ -355,7 +355,7 @@ struct PowerMeterView: View {
                 Image(systemName: Theme.glyph(for: state.severity))
                     .font(.system(size: Theme.Bar.severityGlyph, weight: .semibold))
                     .foregroundStyle(Theme.color(for: state.severity))
-                Text(Theme.name(for: state.severity).capitalized)
+                PhraseText(Theme.namePhrase(for: state.severity).capitalizedInEnglish)
                     .font(Theme.Typography.label)
                     .foregroundStyle(Theme.color(for: state.severity))
                 Text(sentence(state, in: language))
@@ -375,7 +375,7 @@ struct PowerMeterView: View {
             .accessibilityLabel(
                 Strings.severitySentence.format(
                     in: language,
-                    Theme.name(for: state.severity).capitalized,
+                    Theme.namePhrase(for: state.severity).capitalizedInEnglish.string(in: language),
                     sentence(state, in: language)
                 )
             )
@@ -436,7 +436,7 @@ struct PowerMeterView: View {
             in: language,
             window.displayName,
             Format.percent(percent),
-            Theme.name(for: severity)
+            Theme.namePhrase(for: severity).string(in: language)
         )
         if let remaining = Format.timeUntil(window.resetsAt, now: now) {
             text += Strings.spokenResetsIn.format(in: language, remaining)
@@ -457,7 +457,7 @@ struct PowerMeterView: View {
         case .exhausts(let at):
             return Strings.spokenProjectedEmpty.format(
                 in: language,
-                Format.resetStamp(at, now: now) ?? Strings.beforeTheReset.string(in: language)
+                Format.resetStamp(at, now: now, in: language) ?? Strings.beforeTheReset.string(in: language)
             )
         case .holdsUntilReset:
             return Strings.spokenHoldsUntilReset.string(in: language)

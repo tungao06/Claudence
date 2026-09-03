@@ -285,7 +285,7 @@ struct SubagentListView: View {
     private func spoken(_ subagent: AISubagent, share: Double?, status: SessionStatus) -> String {
         var parts: [String] = [name(subagent)]
         if let type = subagent.agentType, !type.isEmpty { parts.append(type) }
-        parts.append(Theme.name(for: status))
+        parts.append(Theme.namePhrase(for: status).string(in: language))
         parts.append(Self.tokensSuffix.format(in: language, Format.tokens(subagent.usage.total)))
         if let share {
             parts.append(Self.ofParentSession.format(in: language, Format.percent(share * 100)))

@@ -563,7 +563,7 @@ struct MenuBarContent: View {
             return Phrase(en: "tokens \u{00B7} cost unavailable", th: "token \u{00B7} ไม่มีข้อมูลมูลค่า")
         }
         let unpriced = model.dashboard.unpricedSessionCount
-        let costText = Format.cost(cost)
+        let costText = Format.cost(cost, in: language)
         guard unpriced > 0 else {
             return Phrase(
                 en: "tokens \u{00B7} \(costText) est.",
@@ -587,7 +587,7 @@ struct MenuBarContent: View {
             )
         }
         let unpriced = model.dashboard.unpricedSessionCount
-        let costText = Format.cost(cost)
+        let costText = Format.cost(cost, in: language)
         guard unpriced > 0 else {
             return Phrase(
                 en: "Estimated cost today, \(costText). This is an estimate, not a bill.",

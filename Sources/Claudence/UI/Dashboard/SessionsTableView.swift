@@ -353,7 +353,7 @@ struct SessionsTableView: View {
         let isCompleted = session.status == .completed
         var parts = [
             "\(session.projectName).",
-            "\(Theme.name(for: session.status)).",
+            "\(Theme.namePhrase(for: session.status).string(in: language)).",
             Strings.spokenPeriod.format(in: language, activityText(session, isCompleted: isCompleted)),
             Strings.spokenTokens.format(in: language, Format.tokens(session.combinedUsage.total)),
         ]

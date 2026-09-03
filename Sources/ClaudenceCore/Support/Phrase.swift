@@ -116,4 +116,17 @@ extension Phrase {
     public static func untranslated(_ text: String) -> Phrase {
         Phrase(en: text, th: text)
     }
+
+    /// The English half with its first letter capitalised, the Thai half
+    /// untouched.
+    ///
+    /// Thai has no letter case, so `String.capitalized` is a no-op on it, and
+    /// calling it there would be a line of code that reads as if it does
+    /// something. This exists so the call sites that used to write
+    /// `Theme.name(for:).capitalized` -- the severity word in a banner, which
+    /// the design draws capitalised even though the token is lower case --
+    /// say what they mean in both languages rather than in one.
+    public var capitalizedInEnglish: Phrase {
+        Phrase(en: en.prefix(1).uppercased() + en.dropFirst(), th: th)
+    }
 }

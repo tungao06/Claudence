@@ -235,7 +235,7 @@ struct StatTilesView: View {
             spoken: spokenCost
         ) {
             if let cost = data.todayCost {
-                value(Format.cost(cost))
+                value(Format.cost(cost, in: language))
                 caption(.untranslated(costCaption), ink: Self.amberTint.ink)
             } else {
                 UnavailableView(
@@ -423,7 +423,7 @@ struct StatTilesView: View {
         if let cost = data.todayCost {
             text = Strings.spokenApiEquivalent.format(
                 in: language,
-                Format.cost(cost),
+                Format.cost(cost, in: language),
                 costCaption.capitalized
             )
         } else {

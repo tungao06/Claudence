@@ -118,7 +118,7 @@ struct ProjectBreakdownView: View {
                 isKnown: true
             )
             numericCell(
-                Format.cost(row.estimatedCost),
+                Format.cost(row.estimatedCost, in: language),
                 width: DashboardMetrics.projectCostColumn,
                 isKnown: row.estimatedCost != nil
             )
@@ -200,7 +200,7 @@ struct ProjectBreakdownView: View {
             Strings.spokenTokens.format(in: language, Format.tokens(row.usage.total)),
         ]
         if let cost = row.estimatedCost {
-            parts.append(Strings.spokenApiEquivalent.format(in: language, Format.cost(cost)))
+            parts.append(Strings.spokenApiEquivalent.format(in: language, Format.cost(cost, in: language)))
         } else {
             parts.append(Strings.spokenApiEquivalentUnavailable.string(in: language))
         }

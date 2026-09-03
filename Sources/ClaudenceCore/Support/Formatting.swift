@@ -145,3 +145,77 @@ public enum Format {
         return s
     }
 }
+
+extension Format {
+
+    /// The words `Format` glues around its own numbers. Everything else this
+    /// type produces is digits, a currency symbol, or a unit abbreviation, and
+    /// those are the same sentence in both languages.
+    public enum Words {
+        public static let tomorrow = Phrase(en: "Tomorrow", th: "พรุ่งนี้")
+        public static let yesterday = Phrase(en: "Yesterday", th: "เมื่อวาน")
+        public static let unavailable = Phrase(en: "unavailable", th: "ไม่มีข้อมูล")
+    }
+
+    /// `resetStamp`, in the language the screen is in.
+    ///
+    /// The clock format still follows the machine rather than the chosen
+    /// language: whether 15:00 or 3:00 PM is the right way to write a time is a
+    /// system convention the user has already set, and overriding it because
+    /// they picked Thai in this application would be presumptuous. The month
+    /// name does follow the language, because that is a word rather than a
+    /// convention.
+    ///
+    /// The calendar defaults to the language's own, which is Gregorian in both
+    /// -- `AppLanguage.thai.calendar` pins that deliberately, because `th_TH`
+    /// otherwise supplies the Buddhist calendar and prints 2569 for 2026.
+    public static func resetStamp(
+        _ date: Date?,
+        now: Date = Date(),
+        in language: AppLanguage,
+        calendar: Calendar? = nil
+    ) -> String? {
+        guard let date else { return nil }
+        let calendar = calendar ?? language.calendar
+        let time = clockFormatter.string(from: date)
+
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(date, inSameDayAs: tomorrow) {
+            return "\(Words.tomorrow.string(in: language)) \(time)"
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday) {
+            return "\(Words.yesterday.string(in: language)) \(time)"
+        }
+        return "\(dayFormatter(for: language).string(from: date)), \(time)"
+    }
+
+    /// `cost`, with the absent case spoken in the screen's language. The figure
+    /// itself stays `$0.00`: it is an API-equivalent amount in US dollars, and
+    /// the currency does not change because the reader does.
+    public static func cost(_ value: Double?, in language: AppLanguage) -> String {
+        guard let value else { return Words.unavailable.string(in: language) }
+        return String(format: "$%.2f", value)
+    }
+
+    /// One formatter per language, built once each, for the same reason the
+    /// English one is built once: a `DateFormatter` per call re-runs locale
+    /// lookup for a format that never varies, and these are read on every
+    /// popover render.
+    private static let dayFormatters: [AppLanguage: DateFormatter] = {
+        var built: [AppLanguage: DateFormatter] = [:]
+        for language in AppLanguage.allCases {
+            let formatter = DateFormatter()
+            formatter.locale = language.locale
+            formatter.calendar = language.calendar
+            formatter.setLocalizedDateFormatFromTemplate("MMMd")
+            built[language] = formatter
+        }
+        return built
+    }()
+
+    private static func dayFormatter(for language: AppLanguage) -> DateFormatter {
+        dayFormatters[language] ?? dayFormatter
+    }
+}

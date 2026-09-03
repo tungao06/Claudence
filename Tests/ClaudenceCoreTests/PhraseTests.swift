@@ -83,4 +83,75 @@ struct PhraseTests {
         let unit = Phrase.untranslated("MB")
         #expect(unit.string(in: .english) == unit.string(in: .thai))
     }
+
+    /// Thai has no letter case, so capitalising it is a no-op that would read
+    /// in the source as if it did something.
+    @Test("capitalising touches the English half only")
+    func capitalisationIsEnglishOnly() {
+        let phrase = Phrase(en: "critical", th: "วิกฤต").capitalizedInEnglish
+        #expect(phrase.en == "Critical")
+        #expect(phrase.th == "วิกฤต")
+    }
+
+    // MARK: - The words Format glues around its own numbers
+
+    /// `Format` produces digits, a currency symbol and three English words.
+    /// The digits are the same in both languages and the words were not.
+    @Test("the reset stamp names the day in the reader's language")
+    func resetStampSpeaksBothLanguages() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Bangkok") ?? .current
+        let now = Date(timeIntervalSince1970: 1_788_000_000)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: now)!
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
+
+        let englishTomorrow = Format.resetStamp(tomorrow, now: now, in: .english, calendar: calendar)
+        let thaiTomorrow = Format.resetStamp(tomorrow, now: now, in: .thai, calendar: calendar)
+        #expect(englishTomorrow?.hasPrefix("Tomorrow") == true)
+        #expect(thaiTomorrow?.hasPrefix("พรุ่งนี้") == true)
+
+        let englishYesterday = Format.resetStamp(yesterday, now: now, in: .english, calendar: calendar)
+        let thaiYesterday = Format.resetStamp(yesterday, now: now, in: .thai, calendar: calendar)
+        #expect(englishYesterday?.hasPrefix("Yesterday") == true)
+        #expect(thaiYesterday?.hasPrefix("เมื่อวาน") == true)
+
+        // Same day is the clock alone in both, with no day word to translate.
+        #expect(Format.resetStamp(now, now: now, in: .thai, calendar: calendar)
+            == Format.resetStamp(now, now: now, in: .english, calendar: calendar))
+    }
+
+    /// A date far enough out to be named rather than called tomorrow. The
+    /// month is a Thai word and the year is still 2026, not the Buddhist 2569.
+    @Test("a named day is a Thai month on a Gregorian year")
+    func namedDayIsThaiAndGregorian() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Bangkok") ?? .current
+        let now = Date(timeIntervalSince1970: 1_788_000_000)
+        let nextWeek = calendar.date(byAdding: .day, value: 7, to: now)!
+
+        let thai = try #require(Format.resetStamp(nextWeek, now: now, in: .thai, calendar: calendar))
+        let english = try #require(
+            Format.resetStamp(nextWeek, now: now, in: .english, calendar: calendar)
+        )
+        #expect(thai != english)
+        #expect(!thai.contains("2569"))
+
+        // The year the day formatter is built on, checked directly rather than
+        // inferred from a stamp that does not print one.
+        let yearFormatter = DateFormatter()
+        yearFormatter.locale = AppLanguage.thai.locale
+        yearFormatter.calendar = AppLanguage.thai.calendar
+        yearFormatter.dateFormat = "yyyy"
+        #expect(yearFormatter.string(from: nextWeek) == "2026")
+    }
+
+    @Test("an absent cost says so in the reader's language, and a present one does not change")
+    func costSpeaksBothLanguages() {
+        #expect(Format.cost(nil, in: .english) == "unavailable")
+        #expect(Format.cost(nil, in: .thai) == "ไม่มีข้อมูล")
+        // The figure is an API-equivalent amount in US dollars. The currency
+        // does not change because the reader does.
+        #expect(Format.cost(4.5, in: .thai) == "$4.50")
+        #expect(Format.cost(4.5, in: .english) == Format.cost(4.5, in: .thai))
+    }
 }

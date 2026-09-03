@@ -160,9 +160,9 @@ struct MonthlyUsageTableView: View {
     /// to know which kind of nil it was handed.
     private func apiEquivalentText(_ row: MonthlyProjectRow) -> String {
         if let cost = row.apiEquivalent {
-            return Format.cost(cost)
+            return Format.cost(cost, in: language)
         }
-        guard row.usage.total > 0 else { return Format.cost(nil) }
+        guard row.usage.total > 0 else { return Format.cost(nil, in: language) }
         return Strings.tokensKnownNoPrice.string(in: language)
     }
 
@@ -181,7 +181,7 @@ struct MonthlyUsageTableView: View {
             ),
         ]
         if let cost = row.apiEquivalent {
-            parts.append(Strings.spokenApiEquivalent.format(in: language, Format.cost(cost)))
+            parts.append(Strings.spokenApiEquivalent.format(in: language, Format.cost(cost, in: language)))
         } else if row.usage.total > 0 {
             parts.append(Strings.spokenTokensKnownNoPrice.string(in: language))
         } else {

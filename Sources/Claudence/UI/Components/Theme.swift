@@ -523,20 +523,10 @@ enum Theme {
         }
     }
 
-    /// Spoken and written name of a severity. Used in every accessibility label.
-    static func name(for severity: Severity) -> String {
-        switch severity {
-        case .healthy: return "healthy"
-        case .attention: return "attention"
-        case .warning: return "warning"
-        case .critical: return "critical"
-        }
-    }
-
-    /// `name(for:)` in both languages. The two live side by side rather than
-    /// replacing one another: every caller of the `String` form migrates on
-    /// its own schedule, and a caller that has not yet converted must keep
-    /// compiling. See PLAN.md 9.10b.
+    /// Spoken and written name of a severity. Used in every accessibility
+    /// label. There was a `String` form of this beside it while the three
+    /// areas of the interface converted to `Phrase` in parallel; it is gone,
+    /// because a second route to the same word is how the two get to disagree.
     static func namePhrase(for severity: Severity) -> Phrase {
         switch severity {
         case .healthy: return Phrase(en: "healthy", th: "ปกติ")
@@ -606,24 +596,6 @@ enum Theme {
 
     /// Short on-screen text. States with no data source say so rather than
     /// pretending to be a state we can prove. See spec section 6.
-    static func name(for status: SessionStatus) -> String {
-        guard status.isDerivable else { return "Unsupported state" }
-        switch status {
-        case .running: return "Working"
-        case .idle: return "Idle"
-        case .completed: return "Completed"
-        // Not "Waiting", which reads either as "waiting on me" or as "sitting
-        // around" and so fails to separate this row from the Idle row directly
-        // above it. "Needs you" states who is being waited on, which is the
-        // only thing the reader has to act on, and is short enough to survive
-        // the row's truncation.
-        case .waiting: return "Needs you"
-        default: return "Unsupported state"
-        }
-    }
-
-    /// `name(for:)` in both languages, added beside the `String` form rather
-    /// than replacing it for the reason given on `namePhrase(for: Severity)`.
     static func namePhrase(for status: SessionStatus) -> Phrase {
         guard status.isDerivable else {
             return Phrase(en: "Unsupported state", th: "สถานะที่ยังไม่รองรับ")
@@ -632,6 +604,11 @@ enum Theme {
         case .running: return Phrase(en: "Working", th: "กำลังทำงาน")
         case .idle: return Phrase(en: "Idle", th: "ว่าง")
         case .completed: return Phrase(en: "Completed", th: "เสร็จแล้ว")
+        // Not "Waiting", which reads either as "waiting on me" or as "sitting
+        // around" and so fails to separate this row from the Idle row directly
+        // above it. "Needs you" states who is being waited on, which is the
+        // only thing the reader has to act on, and is short enough to survive
+        // the row's truncation.
         case .waiting: return Phrase(en: "Needs you", th: "ต้องการคุณ")
         default: return Phrase(en: "Unsupported state", th: "สถานะที่ยังไม่รองรับ")
         }

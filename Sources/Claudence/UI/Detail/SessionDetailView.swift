@@ -184,7 +184,7 @@ struct SessionDetailView: View {
             dot: identity.dot,
             name: session.projectName,
             status: StatusPill(status: session.status, identity: identity),
-            statusWord: Theme.name(for: session.status),
+            statusWord: Theme.namePhrase(for: session.status),
             path: session.displayPath,
             activity: session.currentActivity?.display(in: language)
         )
@@ -382,7 +382,7 @@ struct DetailHeader: View {
     let status: StatusPill
     /// The status as a word, for the spoken label. The pill already carries it
     /// visibly; this is so the header reads as one sentence.
-    let statusWord: String
+    let statusWord: Phrase
     let path: String
     let activity: String?
 
@@ -435,7 +435,7 @@ struct DetailHeader: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Self.nameAndStatus.format(in: language, name, statusWord))
+        .accessibilityLabel(Self.nameAndStatus.format(in: language, name, statusWord.string(in: language)))
     }
 
     private static let workingDirectory = Phrase(en: "Working directory %@", th: "โฟลเดอร์ทำงาน %@")
@@ -1090,7 +1090,7 @@ struct ContextWell: View {
                     Self.usedSeverityEstimated.format(
                         in: language,
                         Format.percent(percent),
-                        Theme.name(for: severity).capitalized
+                        Theme.namePhrase(for: severity).capitalizedInEnglish.string(in: language)
                     )
                 )
                     .font(Theme.Typography.caption)
@@ -1109,7 +1109,11 @@ struct ContextWell: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            Self.contextWindowEstimated.format(in: language, Format.percent(percent), Theme.name(for: severity))
+            Self.contextWindowEstimated.format(
+                in: language,
+                Format.percent(percent),
+                Theme.namePhrase(for: severity).string(in: language)
+            )
         )
     }
 }

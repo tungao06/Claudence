@@ -190,7 +190,7 @@ struct PowerHero: View {
                 // true at the instant it was rendered, and this view does not
                 // tick. "23:40" stays true, and is the form anyone planning
                 // around the limit actually needs.
-                if let stamp = Format.resetStamp(resetsAt) {
+                if let stamp = Format.resetStamp(resetsAt, in: language) {
                     Text(stamp)
                         .font(Theme.Typography.micro)
                         .foregroundStyle(Theme.textQuaternary)
@@ -203,7 +203,7 @@ struct PowerHero: View {
     }
 
     private func resetLabel(time: String) -> Phrase {
-        guard let stamp = Format.resetStamp(resetsAt) else {
+        guard let stamp = Format.resetStamp(resetsAt, in: language) else {
             return Phrase(en: "Resets in \(time)", th: "รีเซ็ตใน \(time)")
         }
         return Phrase(
