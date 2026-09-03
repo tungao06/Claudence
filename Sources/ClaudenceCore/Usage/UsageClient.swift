@@ -153,7 +153,7 @@ public actor UsageClient: UsageProviding {
 
     private var cache: CacheEntry?
     private var failureCount = 0
-    private var retryNotBefore: Date?
+    private var retryNotBeforeDate: Date?
     private var lastReason: Phrase?
     /// A token refreshed this run. Held in memory only, never written back.
     private var refreshedAccessToken: RedactedSecret?
@@ -198,7 +198,7 @@ public actor UsageClient: UsageProviding {
             return .available(windows: cache.windows, fetchedAt: cache.fetchedAt)
         }
 
-        if let retryNotBefore, instant < retryNotBefore {
+        if let retryNotBeforeDate, instant < retryNotBeforeDate {
             if let cache { return .available(windows: cache.windows, fetchedAt: cache.fetchedAt) }
             return .unavailable(reason: lastReason ?? UsageState.defaultUnavailableReason)
         }
@@ -208,7 +208,7 @@ public actor UsageClient: UsageProviding {
             let fetchedAt = now()
             cache = CacheEntry(windows: windows, fetchedAt: fetchedAt)
             failureCount = 0
-            retryNotBefore = nil
+            retryNotBeforeDate = nil
             lastReason = nil
             return .available(windows: windows, fetchedAt: fetchedAt)
         } catch let failure as UsageFailure {
@@ -216,6 +216,15 @@ public actor UsageClient: UsageProviding {
         } catch {
             return record(.transport("request failed"))
         }
+    }
+
+    /// When this client will next let a request through, or nil when nothing
+    /// is being held back.
+    ///
+    /// Exposed so the interface can say when the reading will come back rather
+    /// than only that it is missing. See `UsageProviding.retryNotBefore`.
+    public var retryNotBefore: Date? {
+        get async { retryNotBeforeDate }
     }
 
     /// Drops the cached value. The next `fetch()` goes to the network.
@@ -230,7 +239,7 @@ public actor UsageClient: UsageProviding {
         failureCount += 1
         let exponent = Double(min(failureCount - 1, 10))
         let delay = min(Self.backoffCap, Self.backoffBase * pow(2, exponent))
-        retryNotBefore = now().addingTimeInterval(delay)
+        retryNotBeforeDate = now().addingTimeInterval(delay)
 
         // A transient failure must not blank a value the user was already
         // looking at. An auth or parse failure has no honest number to serve.

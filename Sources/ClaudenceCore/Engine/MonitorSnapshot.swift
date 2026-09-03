@@ -17,6 +17,14 @@ public struct MonitorSnapshot: Sendable, Equatable {
     /// figure and said it had one.
     public var todayUsage: TokenUsage?
     public var updatedAt: Date
+    /// When the usage provider will next try the network, when it is inside
+    /// its own backoff after a failure. Nil when nothing is being held back.
+    ///
+    /// It rides on the snapshot rather than being asked for separately because
+    /// it is only meaningful beside the usage state it explains: `unavailable`
+    /// with nothing more said reads as broken, and the two together read as
+    /// "the endpoint refused, and it will be asked again at this time."
+    public var usageRetryAt: Date?
 
     /// The state a snapshot is in before the first usage fetch returns. Not
     /// an error: it is the ordinary opening condition of every launch.
@@ -26,12 +34,14 @@ public struct MonitorSnapshot: Sendable, Equatable {
         sessions: [AISession] = [],
         usage: UsageState = .unavailable(reason: MonitorSnapshot.notYetFetched),
         todayUsage: TokenUsage? = nil,
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        usageRetryAt: Date? = nil
     ) {
         self.sessions = sessions
         self.usage = usage
         self.todayUsage = todayUsage
         self.updatedAt = updatedAt
+        self.usageRetryAt = usageRetryAt
     }
 
     public static let empty = MonitorSnapshot()

@@ -345,11 +345,49 @@ struct MenuBarContent: View {
 
     // MARK: - Power
 
+    /// What the application is doing about a reading it does not have.
+    ///
+    /// "Usage unavailable" on its own is true and useless: it says a number is
+    /// missing and nothing about whether anything is being done, so a rate
+    /// limit and a permanently broken sign-in look identical, and both read as
+    /// an application that has given up. This line is the difference. It is
+    /// derived from the provider's own backoff deadline -- not a guess, not a
+    /// spinner that spins whether or not anything is happening.
+    ///
+    /// It is computed at render and does not tick. The popover re-renders when
+    /// the loop publishes, and the loop now wakes when this deadline expires,
+    /// so the countdown is accurate at every moment anyone is looking at it
+    /// and the alternative -- a one-second timer running for the life of an
+    /// accessory process -- is the exact cost CLAUDE.md's animation rule
+    /// exists to keep out.
+    @ViewBuilder
+    private var retryLine: some View {
+        if let retryAt = model.usageRetryAt {
+            let remaining = Format.timeUntil(retryAt)
+            HStack(spacing: Theme.Space.xs) {
+                Text(Theme.Glyph.refresh)
+                    .font(Theme.Typography.micro)
+                    .foregroundStyle(Theme.textQuaternary)
+                    .accessibilityHidden(true)
+                PhraseText(
+                    remaining == nil ? Strings.retryingNow : Strings.retryingIn,
+                    remaining ?? ""
+                )
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.textTertiary)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     @ViewBuilder
     private var powerSection: some View {
         if let reason = model.usageUnavailableReason {
             // Never a fabricated bar at some default fill. See spec section 9.4.
-            UnavailableView(UnavailableView.usageUnavailable, reason: reason)
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                UnavailableView(UnavailableView.usageUnavailable, reason: reason)
+                retryLine
+            }
                 .padding(.horizontal, Theme.Popover.margin)
                 .padding(.bottom, Theme.Popover.margin)
         } else {
@@ -750,6 +788,15 @@ private enum Strings {
     )
     static let sevenDay = Phrase(en: "7 day", th: "7 วัน")
     static let weeklyScoped = Phrase(en: "weekly scoped", th: "รายสัปดาห์เฉพาะโมเดล")
+    static let retryingIn = Phrase(
+        en: "Asking again in %@",
+        th: "จะลองใหม่ในอีก %@"
+    )
+    /// The deadline has passed and the next pass of the loop has not landed
+    /// yet, which is a window of about a second. Saying "in 0s" would be worse
+    /// than saying what is actually true.
+    static let retryingNow = Phrase(en: "Asking again now", th: "กำลังลองใหม่")
+
     static let liveSessions = Phrase(en: "LIVE SESSIONS", th: "Session ที่เปิดอยู่")
     static let noLiveSessions = Phrase(en: "No live sessions", th: "ไม่มี session ที่เปิดอยู่")
     static let liveOnly = Phrase(en: "Live only", th: "โหมดสดเท่านั้น")

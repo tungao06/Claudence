@@ -34,6 +34,14 @@ final class MonitorViewModel {
     /// its own 60-second cadence, so the windows in the popover and the label
     /// should not be invalidated by session churn.
     private(set) var usageState: UsageState = MonitorSnapshot.empty.usage
+    /// When the usage endpoint will be asked again, while the provider is
+    /// inside its own backoff after a failure. Nil when nothing is held back.
+    ///
+    /// Read by the popover, which says it out loud, and by the refresh loop,
+    /// which wakes on it. Both matter: a meter that says only "unavailable"
+    /// reads as broken, and a loop that does not know about the deadline
+    /// leaves the recovery until its next ordinary tick.
+    private(set) var usageRetryAt: Date?
     private(set) var menuBarState = MenuBarState()
 
     /// Recent `usedPercent` readings of each usage window, kept to project
@@ -195,15 +203,31 @@ final class MonitorViewModel {
         //   event is required to hit.
         // - Store health. See `refreshStoreHealth()`.
         usageTask = Task { [weak self, engine] in
+            // Whether this pass is the loop coming back early because the
+            // provider's backoff expired. A retry bypasses the engine's own
+            // rate limit; without that the loop would wake on time and then
+            // decline to ask. See `UsagePollSchedule`.
+            var isRetry = false
             while !Task.isCancelled {
                 // Read on every pass rather than captured once, so changing the
                 // interval in Settings takes effect at the next tick instead of
                 // at the next launch.
                 let interval = self?.usageRefreshInterval ?? Constants.Usage.cacheTTL
-                await engine.refreshUsage(minimumInterval: interval)
+                await engine.refreshUsage(force: isRetry, minimumInterval: interval)
                 await self?.refreshBurnRates()
                 self?.refreshStoreHealth()
-                try? await Task.sleep(for: .seconds(interval))
+
+                // Sleep until the ordinary tick or the end of the provider's
+                // backoff, whichever comes first, so a reading that becomes
+                // available again reaches the screen when it does rather than
+                // whenever the interval next happens to land.
+                let wake = UsagePollSchedule.next(
+                    interval: interval,
+                    retryAt: self?.usageRetryAt,
+                    now: Date()
+                )
+                isRetry = wake.isRetry
+                try? await Task.sleep(for: .seconds(wake.delay))
             }
         }
     }
@@ -476,6 +500,9 @@ final class MonitorViewModel {
         lastPublishedAt = date
         if self.snapshot != snapshot {
             self.snapshot = snapshot
+        }
+        if usageRetryAt != snapshot.usageRetryAt {
+            usageRetryAt = snapshot.usageRetryAt
         }
         if usageState != snapshot.usage {
             usageState = snapshot.usage

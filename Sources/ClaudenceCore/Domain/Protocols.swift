@@ -32,11 +32,29 @@ public protocol UsageProviding: SourceAdapter, Sendable {
     ///   it. The engine passes the user's chosen refresh interval, so a shorter
     ///   choice is not swallowed by a provider's own fixed cache.
     func fetch(minimumInterval: TimeInterval) async -> UsageState
+
+    /// When the provider will next attempt the network, when it is currently
+    /// refusing to.
+    ///
+    /// Nil means nothing is being held back. A date means the last attempt
+    /// failed and the provider is inside its own backoff, which is a state the
+    /// interface has to be able to name: "unavailable" with no more said reads
+    /// as broken, and the honest reading is "the endpoint refused, and this is
+    /// when it will be asked again."
+    ///
+    /// Defaulted rather than required, because the stubs the tests use have no
+    /// backoff to report and a protocol that made them say so would be
+    /// ceremony.
+    var retryNotBefore: Date? { get async }
 }
 
 extension UsageProviding {
     public func fetch() async -> UsageState {
         await fetch(minimumInterval: Constants.Usage.cacheTTL)
+    }
+
+    public var retryNotBefore: Date? {
+        get async { nil }
     }
 }
 

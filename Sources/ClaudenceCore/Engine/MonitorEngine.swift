@@ -361,12 +361,18 @@ public actor MonitorEngine {
         // the provider's cache have to agree, or the tighter of the two wins
         // silently.
         let state = await usageProvider.fetch(minimumInterval: force ? 0 : minimumInterval)
+        // Asked after the fetch, not before: a successful call clears the
+        // backoff, and a snapshot carrying a deadline the client has just
+        // dropped would tell the interface to say "retrying" about a reading
+        // that is already on screen.
+        let retryAt = await usageProvider.retryNotBefore
         publishIfChanged(
             MonitorSnapshot(
                 sessions: snapshot.sessions,
                 usage: state,
                 todayUsage: snapshot.todayUsage,
-                updatedAt: Date()
+                updatedAt: Date(),
+                usageRetryAt: retryAt
             )
         )
     }
