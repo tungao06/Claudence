@@ -14,16 +14,24 @@
 # the image still installs correctly; it just opens with Finder's default
 # layout instead of the arranged one.
 #
-# The disk image is not notarised and cannot be: notarisation needs an Apple
-# Developer account, which this project deliberately does not have. On the
-# machine that built it that costs nothing. On any other machine Gatekeeper will
-# refuse the first launch, and the receiving user has to either right-click the
-# app and choose Open, or run:
+# Notarisation, since 2026-09-03: the image is notarised when this machine can,
+# and is not when it cannot, and the script says which happened either way. It
+# needs two things, both absent until there is an Apple Developer account:
+#
+#   - the app inside signed with a Developer ID identity and the hardened
+#     runtime, which Scripts/make-app.sh does by itself when one exists;
+#   - notarytool credentials stored as a keychain profile, created once with
+#     `xcrun notarytool store-credentials <name> --apple-id ... --team-id ...`
+#     and named here through NOTARY_PROFILE, defaulting to "claudence".
+#
+# Without them the image still builds and still installs. What the receiving
+# user meets is Gatekeeper refusing the first launch, so they have to
+# right-click the app and choose Open, or run:
 #
 #     xattr -dr com.apple.quarantine /Applications/Claudence.app
 #
-# Say so when handing the image to someone rather than letting them meet the
-# dialog cold.
+# Say so when handing an un-notarised image to someone rather than letting them
+# meet the dialog cold.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -162,5 +170,34 @@ fi
 
 rm -f "$DMG"
 hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" -quiet
+
+# --- notarisation, when this machine can ------------------------------------
+#
+# Ordered so that a machine with no account does nothing slow and says nothing
+# alarming: the app's own signature is read first, and only a Developer ID
+# signature is worth submitting. `notarytool submit --wait` blocks for as long
+# as Apple takes, which is usually a minute or two, and `stapler staple` writes
+# the ticket into the image so a machine with no network still launches it.
+NOTARY_PROFILE="${NOTARY_PROFILE:-claudence}"
+APP_AUTHORITY="$(codesign -dvv "$APP" 2>&1 | awk -F'=' '/Authority=/ {print $2; exit}')"
+
+if [[ "$APP_AUTHORITY" != *"Developer ID Application"* ]]; then
+    echo "not notarised: $APP is not signed with a Developer ID identity."
+    echo "               receiving users must right-click Open, or clear the quarantine flag."
+elif ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+    echo "not notarised: no notarytool credentials in keychain profile '$NOTARY_PROFILE'."
+    echo "               create them once with: xcrun notarytool store-credentials $NOTARY_PROFILE"
+else
+    IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk -F'\"' '/Developer ID Application/ {print $2; exit}')"
+    # The image carries its own signature as well as the app's. Notarisation
+    # accepts an unsigned image, but a signed one tells the user who built it
+    # before it is ever opened.
+    [ -n "$IDENTITY" ] && codesign --force --sign "$IDENTITY" --timestamp "$DMG"
+    echo "notarising $DMG ..."
+    xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$DMG"
+    echo "notarised and stapled."
+fi
 
 echo "built $DMG"

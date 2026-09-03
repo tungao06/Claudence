@@ -20,13 +20,48 @@ BIN="$ROOT/.build/$CONFIG/Claudence"
 # Resolve to a SHA-1 hash rather than the common name. If the certificate was
 # ever created twice, codesign refuses the name outright with "ambiguous" and
 # the build silently loses its stable identity. A hash is unambiguous.
+#
+# Distribution changed on 2026-09-03: the app is handed to other people, so a
+# Developer ID identity is used when the machine has one and the self-signed
+# certificate is the fallback. The account does not exist yet and this script
+# must not wait for it, so detection is ordered and silent:
+#
+#   1. CODESIGN_IDENTITY, when set, wins. It is what CI or a release script
+#      would pass.
+#   2. A "Developer ID Application" identity in the keychain, which only exists
+#      once there is an Apple Developer account.
+#   3. The self-signed "Claudence Dev" certificate, for this machine.
+#   4. Ad-hoc, which works and re-prompts for Keychain access on every rebuild.
+#
+# A Developer ID signature also gets the hardened runtime and a secure
+# timestamp, because notarisation refuses a signature without them. The
+# self-signed path deliberately keeps `--timestamp=none`: a timestamp server
+# will not vouch for a certificate no authority issued.
 DEFAULT_IDENTITY="Claudence Dev"
+SIGN_FLAGS=(--force --timestamp=none)
+IDENTITY_KIND="self-signed"
+
 if [ -n "${CODESIGN_IDENTITY:-}" ]; then
     IDENTITY="$CODESIGN_IDENTITY"
+    IDENTITY_KIND="explicit"
+    case "$IDENTITY" in
+        *"Developer ID Application"*) IDENTITY_KIND="developer-id" ;;
+    esac
 else
-    IDENTITY="$(security find-certificate -a -c "$DEFAULT_IDENTITY" -Z 2>/dev/null \
-        | awk '/SHA-1 hash:/ {print $3; exit}')"
-    IDENTITY="${IDENTITY:--}"
+    IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+    if [ -n "$IDENTITY" ]; then
+        IDENTITY_KIND="developer-id"
+    else
+        IDENTITY="$(security find-certificate -a -c "$DEFAULT_IDENTITY" -Z 2>/dev/null \
+            | awk '/SHA-1 hash:/ {print $3; exit}')"
+        IDENTITY="${IDENTITY:--}"
+        [ "$IDENTITY" = "-" ] && IDENTITY_KIND="ad-hoc"
+    fi
+fi
+
+if [ "$IDENTITY_KIND" = "developer-id" ]; then
+    SIGN_FLAGS=(--force --options runtime --timestamp)
 fi
 
 swift build -c "$CONFIG" --product Claudence
@@ -37,12 +72,20 @@ cp "$BIN" "$APP/Contents/MacOS/Claudence"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
+codesign "${SIGN_FLAGS[@]}" --sign "$IDENTITY" "$APP"
 
-if [ "$IDENTITY" = "-" ]; then
-    echo "warning: ad-hoc signed. macOS will re-prompt for Keychain access after every rebuild."
-    echo "         run Scripts/make-signing-cert.sh once to fix this permanently."
-else
-    echo "signed with: $IDENTITY"
-fi
+case "$IDENTITY_KIND" in
+    ad-hoc)
+        echo "warning: ad-hoc signed. macOS will re-prompt for Keychain access after every rebuild."
+        echo "         run Scripts/make-signing-cert.sh once to fix this permanently."
+        ;;
+    developer-id)
+        echo "signed with Developer ID: $IDENTITY (hardened runtime, secure timestamp)"
+        echo "note: notarisation happens in Scripts/make-dmg.sh, on the image rather than the app."
+        ;;
+    *)
+        echo "signed with: $IDENTITY"
+        echo "note: self-signed. Gatekeeper on another machine will refuse this build."
+        ;;
+esac
 echo "built $APP"
