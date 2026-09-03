@@ -453,6 +453,9 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 SettingsHeader()
+                // First, because it changes every word below it. See the file's
+                // own note on why it is here as well as on the first-run screen.
+                LanguageSettings(preferences: preferences)
                 MotionSettings(preferences: preferences)
                 MenuBarSettings(preferences: preferences)
                 SessionsSettings(preferences: preferences)

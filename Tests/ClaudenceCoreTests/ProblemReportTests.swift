@@ -15,7 +15,7 @@ struct ProblemReportTests {
         storedSessions: Int? = 42
     ) -> ProblemReport.Environment {
         ProblemReport.Environment(
-            appVersion: "0.1.0",
+            appVersion: "0.1.1",
             appBuild: "1",
             operatingSystem: "26.6.2",
             storeHealth: health,
