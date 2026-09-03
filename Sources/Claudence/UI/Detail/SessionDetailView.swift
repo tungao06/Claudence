@@ -294,10 +294,10 @@ struct SessionDetailView: View {
     private var costRows: [MetricColumn.Row] {
         [
             MetricColumn.Row(
-                name: "Estimated cost",
+                name: "API equivalent",
                 value: costEstimator.estimate(usage: total, model: session.model).map(Format.cost),
                 tip: "cost",
-                unavailable: "Cost unavailable",
+                unavailable: "API equivalent unavailable",
                 estimated: true
             ),
             MetricColumn.Row(

@@ -26,7 +26,7 @@ struct StatTilesView: View {
     /// `liveIndicators` is: this strip is a leaf several levels under the
     /// composition root and has no other reason to know a preference exists.
     ///
-    /// `Tokens today` and `Est. cost today` are both totals over every session
+    /// `Tokens today` and `API equivalent today` are both totals over every session
     /// that ran today, ended ones included, which is a figure live-only mode
     /// has nothing to reconstruct once a session leaves the live registry; the
     /// day-over-day delta compounds that by comparing against yesterday, which
@@ -216,9 +216,17 @@ struct StatTilesView: View {
         }
     }
 
+    /// Labelled as an API equivalent rather than as a cost.
+    ///
+    /// On a subscription this figure is not an amount owed and never was: the
+    /// monthly bill is fixed and this number does not appear on it. What it is good
+    /// for is the one job no token count can do, which is comparing 632k of
+    /// Sonnet against 632k of Opus, and the question a reader actually has is
+    /// whether the subscription is earning its price. Calling it a cost invited
+    /// the other question, the one it answers wrongly.
     private var costTile: some View {
         tile(
-            label: "Est. cost today",
+            label: "API equivalent today",
             tint: Self.amberTint,
             tooltipKey: "cost",
             spoken: spokenCost
@@ -228,7 +236,7 @@ struct StatTilesView: View {
                 caption(costCaption, ink: Self.amberTint.ink)
             } else {
                 UnavailableView(
-                    "Cost unavailable",
+                    "API equivalent unavailable",
                     reason: unpricedReason ?? "No price is known for one of today's models",
                     compact: true
                 )
@@ -374,10 +382,10 @@ struct StatTilesView: View {
 
     private var spokenCost: String {
         guard let cost = data.todayCost else {
-            return "Estimated cost unavailable. "
+            return "API equivalent unavailable. "
                 + (unpricedReason ?? "No price is known for one of today's models") + "."
         }
-        return "Estimated cost today, \(Format.cost(cost)). \(costCaption.capitalized). "
-            + "This is an estimate, not a billing amount."
+        return "API equivalent today, \(Format.cost(cost)). \(costCaption.capitalized). "
+            + "This is what today's tokens would have cost on the API, not an amount owed."
     }
 }

@@ -194,7 +194,7 @@ struct DashboardData: Sendable, Equatable {
     /// Not the same range as `projects`, which is every session ever stored.
     /// Both were drawn unlabelled on one window, a $3.42 tile beside project
     /// rows summing to $5.43, and the two now name their ranges on screen: the
-    /// tile is titled `Est. cost today` and the projects card is subtitled
+    /// tile is titled `API equivalent today` and the projects card is subtitled
     /// `all time`.
     let todayCost: Double?
     /// How many of today's sessions had no price table entry. Shown in words

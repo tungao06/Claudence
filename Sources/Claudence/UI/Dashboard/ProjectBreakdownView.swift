@@ -71,7 +71,7 @@ struct ProjectBreakdownView: View {
                 .frame(width: DashboardMetrics.projectSessionsColumn, alignment: .trailing)
             columnTitle("Tokens")
                 .frame(width: DashboardMetrics.projectTokensColumn, alignment: .trailing)
-            columnTitle("Est. cost")
+            columnTitle("API equiv.")
                 .frame(width: DashboardMetrics.projectCostColumn, alignment: .trailing)
             columnTitle("Avg time")
                 .frame(width: DashboardMetrics.projectDurationColumn, alignment: .trailing)
@@ -196,9 +196,9 @@ struct ProjectBreakdownView: View {
             "\(Format.tokens(row.usage.total)) tokens.",
         ]
         if let cost = row.estimatedCost {
-            parts.append("Estimated cost \(Format.cost(cost)).")
+            parts.append("API equivalent \(Format.cost(cost)).")
         } else {
-            parts.append("Estimated cost unavailable.")
+            parts.append("API equivalent unavailable.")
         }
         if let average = row.averageDuration {
             parts.append("Average session \(Format.duration(average)).")

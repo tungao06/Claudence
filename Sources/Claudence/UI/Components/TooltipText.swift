@@ -86,8 +86,8 @@ enum TooltipText {
             body: "All tokens across every session today, measured from the transcript files. Measured, not estimated."
         ),
         "cost": Entry(
-            title: "Estimated cost today",
-            body: "Estimate from a per-model price table, over the sessions that did work today. It is an estimate, never the amount actually billed. A model missing from the table reads Cost unavailable. The Projects table below covers all time, not today, so the two totals are not meant to match."
+            title: "API equivalent today",
+            body: "What today's tokens would have cost on the API, from a per-model price table, over the sessions that did work today. On a subscription this is not an amount owed and does not appear on any bill. It is here because it is the only unit that compares 632k of Sonnet against 632k of Opus, and because it answers whether the subscription is earning its price. A model missing from the table reads API equivalent unavailable. The Projects table below covers all time, not today, so the two totals are not meant to match."
         ),
         "active": Entry(
             title: "Active sessions",
@@ -227,8 +227,8 @@ enum TooltipText {
             body: "Interactive sessions with a live process. Liveness is confirmed by pid plus process start time, never by counting processes named claude."
         ),
         "cost": Entry(
-            title: "Estimated cost",
-            body: "Estimate from a per-model price table. It is an estimate, never the amount actually billed. A model missing from the table reads Cost unavailable."
+            title: "API equivalent",
+            body: "What these tokens would have cost on the API, from a per-model price table. On a subscription it is not an amount owed. A model missing from the table reads API equivalent unavailable."
         ),
         "ctx": Entry(
             title: "Context window",
