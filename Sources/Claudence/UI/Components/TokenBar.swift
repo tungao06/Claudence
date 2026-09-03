@@ -39,9 +39,11 @@ struct TokenBar: View {
         th: "ไม่มีข้อมูลการใช้งาน token"
     )
 
-    /// For a caller that has not yet converted its own strings to `Phrase`.
-    /// See `PowerHero`'s own note for why this keeps the default and the
-    /// `Phrase` overload does not.
+    /// One initialiser. There was a `String` one beside this while the three
+    /// areas of the interface converted in parallel, and it defaulted to the
+    /// English sentence, so a caller that simply omitted the argument drew
+    /// English on a Thai screen. Every caller is converted, so the default is
+    /// the phrase itself and there is no route that produces one language.
     init(
         usage: TokenUsage?,
         scaleMaximum: Int? = nil,
@@ -50,27 +52,7 @@ struct TokenBar: View {
         isExpandable: Bool = true,
         startsExpanded: Bool = false,
         expansion: Binding<Bool>? = nil,
-        unavailableMessage: String = "Token usage unavailable"
-    ) {
-        self.usage = usage
-        self.scaleMaximum = scaleMaximum
-        self.severity = severity
-        self.height = height
-        self.isExpandable = isExpandable
-        self.expansion = expansion
-        self.unavailableMessage = .untranslated(unavailableMessage)
-        _localExpanded = State(initialValue: startsExpanded)
-    }
-
-    init(
-        usage: TokenUsage?,
-        scaleMaximum: Int? = nil,
-        severity: Severity = .healthy,
-        height: CGFloat = Theme.Bar.row,
-        isExpandable: Bool = true,
-        startsExpanded: Bool = false,
-        expansion: Binding<Bool>? = nil,
-        unavailableMessage: Phrase
+        unavailableMessage: Phrase = TokenBar.tokenUsageUnavailable
     ) {
         self.usage = usage
         self.scaleMaximum = scaleMaximum

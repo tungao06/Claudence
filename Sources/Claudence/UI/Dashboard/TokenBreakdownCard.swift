@@ -58,7 +58,7 @@ struct TokenBreakdownCard: View {
                 privacyFooter
             } else {
                 UnavailableView(
-                    Strings.tokenUsageUnavailable,
+                    TokenBar.tokenUsageUnavailable,
                     reason: Strings.noTranscriptToday
                 )
                 privacyFooter
@@ -245,10 +245,6 @@ struct TokenBreakdownCard: View {
 private enum Strings {
     static let title = Phrase(en: "Token breakdown", th: "รายละเอียด token")
     static let defaultSubtitle = Phrase(en: "today · all projects", th: "วันนี้ · ทุกโปรเจกต์")
-    static let tokenUsageUnavailable = Phrase(
-        en: "Token usage unavailable",
-        th: "ไม่มีข้อมูลการใช้ token"
-    )
     static let noTranscriptToday = Phrase(
         en: "No transcript has been read for today yet",
         th: "ยังไม่มีการอ่าน transcript ของวันนี้"

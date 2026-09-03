@@ -113,7 +113,7 @@ struct StatTilesView: View {
                 value(Format.tokens(usage.total))
                 changeCaption(ink: Self.warmTint.ink)
             } else {
-                UnavailableView(Strings.tokenUsageUnavailable, compact: true)
+                UnavailableView(TokenBar.tokenUsageUnavailable, compact: true)
             }
         }
     }
@@ -443,10 +443,6 @@ struct StatTilesView: View {
 
 private enum Strings {
     static let tokensToday = Phrase(en: "Tokens today", th: "Token วันนี้")
-    static let tokenUsageUnavailable = Phrase(
-        en: "Token usage unavailable",
-        th: "ไม่มีข้อมูลการใช้ token"
-    )
     static let vsYesterday = Phrase(en: "%@ vs yesterday", th: "%@ เทียบกับเมื่อวาน")
     static let acrossAllProjects = Phrase(en: "across all projects", th: "รวมทุกโปรเจกต์")
 

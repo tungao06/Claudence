@@ -154,4 +154,26 @@ struct PhraseTests {
         #expect(Format.cost(4.5, in: .thai) == "$4.50")
         #expect(Format.cost(4.5, in: .english) == Format.cost(4.5, in: .thai))
     }
+
+    /// A `Phrase` interpolated into a string yields Swift's struct dump, not
+    /// the sentence.
+    ///
+    /// This is not a hypothetical. `Diagnose.swift` printed
+    /// `"unavailable: \(reason)"` from when `UsageState.unavailable` carried a
+    /// `String`, and the retype to `Phrase` left the call site compiling and
+    /// printing `Phrase(en: "not run", th: "not run")` at a human. An audit
+    /// found it; the compiler could not.
+    ///
+    /// The test stays because the hazard does. Adding
+    /// `CustomStringConvertible` to `Phrase` would silence it by picking a
+    /// language on the caller's behalf, which is the one thing this type
+    /// exists to stop, so a caller has to name the half it wants and this
+    /// pins what happens when it does not.
+    @Test("interpolating a Phrase yields its dump, not its text")
+    func interpolatingAPhraseDoesNotYieldItsText() {
+        let reason = Phrase(en: "not run", th: "not run")
+        let interpolated = "unavailable: \(reason)"
+        #expect(interpolated != "unavailable: \(reason.en)")
+        #expect(interpolated == "unavailable: \(String(describing: reason))")
+    }
 }

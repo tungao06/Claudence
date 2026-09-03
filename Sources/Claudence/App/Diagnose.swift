@@ -134,7 +134,11 @@ enum Diagnose {
 
         switch state {
         case .unavailable(let reason):
-            print("  unavailable: \(reason)")
+            // `.en`, not the `Phrase` itself. `UsageState` carries a `Phrase`
+            // now, and interpolating one prints Swift's struct dump rather
+            // than the sentence. This output is read by the maintainer against
+            // the source, so English is the right half to print.
+            print("  unavailable: \(reason.en)")
         case .available(let windows, _):
             for window in windows {
                 let reset = Format.timeUntil(window.resetsAt).map { " resets in \($0)" } ?? ""

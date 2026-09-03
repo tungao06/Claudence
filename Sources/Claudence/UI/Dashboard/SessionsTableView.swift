@@ -408,7 +408,6 @@ private enum Strings {
     static let ranFor = Phrase(en: " · %@ run", th: " · ทำงานนาน %@")
     static let noActivityRecorded = Phrase(en: "No activity recorded", th: "ไม่มีกิจกรรมบันทึกไว้")
     static let tokenEnergy = Phrase(en: "token energy", th: "พลังงาน token")
-    static let tokenRate = Phrase(en: "Token rate", th: "อัตราการใช้ token")
 
     static let spokenPeriod = Phrase(en: "%@.", th: "%@")
     static let spokenTokens = Phrase(en: "%@ tokens.", th: "%@ token")
