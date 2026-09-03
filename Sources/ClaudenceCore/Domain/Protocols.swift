@@ -201,6 +201,10 @@ public enum CursorRead: Sendable, Equatable {
 public protocol CursorStoring: Sendable, StoreOutcomeReporting {
     func cursor(forSession sessionID: String) -> ReadCursor?
     func saveCursor(_ cursor: ReadCursor, forSession sessionID: String)
+    /// `cursor(forSession:)` with its ambiguity resolved. A requirement rather
+    /// than only an extension member so a store that composes another one can
+    /// answer it differently; the default below is what every plain store uses.
+    func readCursor(forSession sessionID: String) -> CursorRead
 }
 
 extension CursorStoring {

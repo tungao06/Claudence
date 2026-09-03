@@ -251,6 +251,16 @@ final class MonitorViewModel {
     /// and is called when a detail view opens rather than on every snapshot.
     func refreshWindowShares() async {
         guard let analytics else { return }
+        // The share is a rollup-era figure: it differences `usage_samples` over
+        // the five-hour window. In live-only mode those samples start at the
+        // moment the mode was switched on, so the percentage would answer a
+        // shorter question than its label asks. The detail sheet hides the row;
+        // this stops the work as well, and clears whatever the last persistent
+        // pass left behind.
+        guard !isLiveOnly else {
+            if !windowShares.isEmpty { windowShares = [:] }
+            return
+        }
         let shares = await Task.detached(priority: .utility) {
             guard let result = analytics.shareOfWindowTokens() else { return [String: Double]() }
             var mapped: [String: Double] = [:]

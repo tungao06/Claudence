@@ -114,6 +114,9 @@ struct SessionDetailView: View {
     @State private var openSubagentID: String?
     /// Set only by `--render-ui`. See `RenderableScrollView`.
     @Environment(\.isOffscreenRender) private var isOffscreenRender
+    /// Whether persistence is off, which decides whether the stored-history row
+    /// in the metric column exists at all. See `EnvironmentValues.liveOnlyMode`.
+    @Environment(\.liveOnlyMode) private var liveOnlyMode
 
     init(
         session: AISession,
@@ -331,13 +334,20 @@ struct SessionDetailView: View {
                 tip: "burn",
                 unavailable: "Unavailable"
             ),
+        ]
+        // Dropped rather than shown unavailable in live-only mode. The share
+        // differences stored samples across five hours, and in that mode the
+        // samples begin when the mode did, so the row would either read
+        // `Unavailable` in a display that hides every other stored figure or,
+        // worse, print a percentage of a window it does not cover.
+        + (liveOnlyMode ? [] : [
             MetricColumn.Row(
                 name: "Share of the 5h window",
                 value: windowShare.map { Format.percent($0 * 100) },
                 tip: nil,
                 unavailable: "Unavailable"
             ),
-        ]
+        ])
     }
 }
 

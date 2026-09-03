@@ -361,6 +361,50 @@ struct FileStatus {
 
 // MARK: - Cursor storage
 
+/// A durable cursor store with an in-memory one behind it, for the state where
+/// the durable one has no database at all.
+///
+/// `StoreHealth.unavailable` means every call is a no-op: `saveCursor` writes
+/// nothing and `readCursor` answers `.none`, which the reader reads as "start at
+/// byte 0". The engine's accumulator is not reset by any of that, so every pass
+/// re-read the whole transcript and added it to a total that already held it,
+/// and the figure grew on every filesystem event. The state is rare, needing
+/// even `:memory:` to fail to open, and the failure in it was unbounded.
+///
+/// Writes go to both, so the memory copy is warm if the durable store is lost
+/// at a reopen. Reads come from memory only while the durable store is
+/// unavailable, so the durable offsets stay the authority whenever there are
+/// any.
+public final class ResilientCursorStore: CursorStoring, @unchecked Sendable {
+    private let durable: any CursorStoring
+    private let memory = TranscriptMemoryCursorStore()
+
+    public init(durable: any CursorStoring) {
+        self.durable = durable
+    }
+
+    public var health: StoreHealth { durable.health }
+    public var unansweredQueries: UInt64 { durable.unansweredQueries }
+    public var unansweredQueriesOnThisThread: UInt64 { durable.unansweredQueriesOnThisThread }
+
+    public func cursor(forSession sessionID: String) -> ReadCursor? {
+        if case .unavailable = durable.health { return memory.cursor(forSession: sessionID) }
+        return durable.cursor(forSession: sessionID)
+    }
+
+    public func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) {
+        memory.saveCursor(cursor, forSession: sessionID)
+        durable.saveCursor(cursor, forSession: sessionID)
+    }
+
+    public func readCursor(forSession sessionID: String) -> CursorRead {
+        if case .unavailable = durable.health {
+            return memory.cursor(forSession: sessionID).map(CursorRead.at) ?? .none
+        }
+        return durable.readCursor(forSession: sessionID)
+    }
+}
+
 /// In-memory cursor store. Sufficient for a single run and for tests; the
 /// durable store owns its own schema and lives elsewhere.
 public final class TranscriptMemoryCursorStore: CursorStoring, @unchecked Sendable {

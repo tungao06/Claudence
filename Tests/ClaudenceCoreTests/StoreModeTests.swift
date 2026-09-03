@@ -203,3 +203,63 @@ struct StoreModeTests {
         #expect(!FileManager.default.fileExists(atPath: databaseURL.path + "-shm"))
     }
 }
+
+/// A store with no database at all answers no cursor and keeps none, and the
+/// reader then starts at byte 0 on every pass while the engine's accumulator
+/// keeps everything the last pass added. The figure grew on every filesystem
+/// event, without bound. `ResilientCursorStore` is what stops it.
+@Suite("Cursors survive a store with no database")
+struct ResilientCursorStoreTests {
+
+    /// A `CursorStoring` that is exactly as much use as an unavailable store:
+    /// none, and honest about it.
+    private final class DeadCursorStore: CursorStoring, @unchecked Sendable {
+        var health: StoreHealth { .unavailable(reason: "no database") }
+        private(set) var saves = 0
+        var unansweredQueries: UInt64 = 0
+        func cursor(forSession sessionID: String) -> ReadCursor? { nil }
+        func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) { saves += 1 }
+        func readCursor(forSession sessionID: String) -> CursorRead { .none }
+    }
+
+    @Test("an unavailable store still resumes within the run")
+    func memoryCarriesTheCursorWhileTheStoreCannot() {
+        let dead = DeadCursorStore()
+        let resilient = ResilientCursorStore(durable: dead)
+
+        #expect(resilient.readCursor(forSession: "one") == .none)
+        resilient.saveCursor(ReadCursor(path: "/a.jsonl", inode: 7, byteOffset: 2_048), forSession: "one")
+
+        // The durable store was still asked, and still could not keep it.
+        #expect(dead.saves == 1)
+        // The next read resumes rather than starting over, which is the whole
+        // difference between a total that settles and one that grows on every
+        // filesystem event.
+        #expect(
+            resilient.readCursor(forSession: "one")
+                == .at(ReadCursor(path: "/a.jsonl", inode: 7, byteOffset: 2_048))
+        )
+    }
+
+    /// While the durable store answers, it is the authority: the memory copy
+    /// exists for the state where there is nothing else, not as a second
+    /// opinion.
+    @Test("a working store is the authority, not the memory copy")
+    func durableStoreWins() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudenceResilientCursors", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+        let resilient = ResilientCursorStore(durable: store)
+        resilient.saveCursor(ReadCursor(path: "/a.jsonl", inode: 7, byteOffset: 2_048), forSession: "one")
+        store.saveCursor(ReadCursor(path: "/a.jsonl", inode: 7, byteOffset: 9_000), forSession: "one")
+
+        #expect(
+            resilient.readCursor(forSession: "one")
+                == .at(ReadCursor(path: "/a.jsonl", inode: 7, byteOffset: 9_000))
+        )
+    }
+}

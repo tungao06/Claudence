@@ -124,5 +124,72 @@ struct SampleRetentionTests {
         #expect(store.usageSamples(sessionID: "one").first?.usage == TokenUsage(freshInput: 60, output: 6))
     }
 
+    /// A sample can be recorded with a moment of its own, so a clock that steps
+    /// backwards, or a write that lands late, puts a higher row id on an
+    /// earlier timestamp. Keeping the highest id would then hand the day's
+    /// reconciled total an endpoint that is not the day's end, and the day would
+    /// come back short. The survivor is chosen by time, not by insertion order.
+    @Test("the survivor is the day's last sample even when it was written first")
+    func collapseKeepsTheLatestTimestampNotTheLatestRow() {
+        let store = makeStore()
+        let now = Date()
+        let day: TimeInterval = 24 * 60 * 60
+        let oldDay = now.addingTimeInterval(-15 * day)
+
+        // Written in the wrong order on purpose: the day's last moment first.
+        store.recordUsageSample(
+            sessionID: "one",
+            usage: TokenUsage(freshInput: 900, output: 90),
+            at: oldDay.addingTimeInterval(6 * 60 * 60)
+        )
+        store.recordUsageSample(
+            sessionID: "one",
+            usage: TokenUsage(freshInput: 100, output: 10),
+            at: oldDay
+        )
+
+        store.compactUsageSamples(
+            olderThan: now.addingTimeInterval(-Double(ClaudenceStore.sampleFullResolutionDays) * day)
+        )
+
+        let remaining = store.usageSamples(sessionID: "one")
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.usage == TokenUsage(freshInput: 900, output: 90))
+    }
+
+    /// The store's own calendar decides what a day is, everywhere. A store
+    /// pinned to another zone, which is how the rollup tests make day
+    /// boundaries deterministic, must collapse by the same definition it
+    /// reconciles by.
+    @Test("a store pinned to another time zone collapses by its own days")
+    func collapseFollowsTheStoresCalendar() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let store = ClaudenceStore(url: nil, calendar: utc)
+        let now = Date()
+        let day: TimeInterval = 24 * 60 * 60
+
+        // Two samples either side of UTC midnight, fifteen days back: two days
+        // by this store's calendar, and one day for anywhere west of Greenwich.
+        let utcMidnight = utc.startOfDay(for: now.addingTimeInterval(-15 * day))
+        store.recordUsageSample(
+            sessionID: "one",
+            usage: TokenUsage(freshInput: 100, output: 10),
+            at: utcMidnight.addingTimeInterval(-30 * 60)
+        )
+        store.recordUsageSample(
+            sessionID: "one",
+            usage: TokenUsage(freshInput: 200, output: 20),
+            at: utcMidnight.addingTimeInterval(30 * 60)
+        )
+
+        store.compactUsageSamples(
+            olderThan: now.addingTimeInterval(-Double(ClaudenceStore.sampleFullResolutionDays) * day)
+        )
+
+        // One survivor per day, so both rows stay: they are two days here.
+        #expect(store.usageSamples(sessionID: "one").count == 2)
+    }
+
     private var hourSpacing: TimeInterval { 60 * 60 }
 }

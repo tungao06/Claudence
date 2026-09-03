@@ -47,7 +47,11 @@ enum Composition {
         // memory on purpose and reports `.healthy`.
         let store = ClaudenceStore(url: preferences.liveOnlyMode ? nil : ClaudenceStore.defaultDatabaseURL)
 
-        let reader = TranscriptReader(cursorStore: store)
+        // The store is wrapped rather than passed directly: a store with no
+        // database at all answers no cursor and persists none, which sends the
+        // reader back to byte 0 on every pass while the engine's accumulator
+        // keeps what the last pass added. See `ResilientCursorStore`.
+        let reader = TranscriptReader(cursorStore: ResilientCursorStore(durable: store))
         let engine = MonitorEngine(
             discovery: SessionRegistryAdapter(),
             transcripts: reader,

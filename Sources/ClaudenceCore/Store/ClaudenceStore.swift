@@ -92,7 +92,21 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     /// is opened `SQLITE_OPEN_FULLMUTEX`, so a query already in flight finishes
     /// safely against the connection it started on.
     private var database: SQLiteDatabase?
-    private let connectionLock = NSLock()
+    /// Held for the whole of every query and for the whole of a reopen, so a
+    /// mode change cannot interleave with a write.
+    ///
+    /// Recursive because `reopen` carries the cursors across by calling the
+    /// store's own reads and writes, which take the lock again. A plain `NSLock`
+    /// deadlocked there.
+    ///
+    /// Holding it across the query rather than only across the reference read
+    /// costs nothing measurable: `SQLiteDatabase` already serialises on its own
+    /// recursive lock and is opened `SQLITE_OPEN_FULLMUTEX`, so two callers
+    /// never ran a statement at the same time anyway. What it buys is that a
+    /// write started before the switch cannot still be in flight against the
+    /// file afterwards, which is the difference between "nothing is written
+    /// once the mode is on" being true and being nearly true.
+    private let connectionLock = NSRecursiveLock()
     private let healthLock = NSLock()
     private var _health: StoreHealth
     private var _unansweredQueries: UInt64 = 0
@@ -238,12 +252,20 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     /// alternative is a torn statement.
     @discardableResult
     public func reopen(url: URL?) -> StoreHealth {
-        let carried = allCursors()
-
-        let (opened, health) = ClaudenceStore.open(url: url)
+        // One critical section from the first read of the old database to the
+        // last write into the new one. Split into three, as it was until the
+        // audit of 2026-09-03, a writer on another thread could save a fresh
+        // cursor into the new database between the swap and the carry loop, and
+        // the loop would then write the older offset over it. The engine's
+        // accumulator does not move when the store does, so the next pass would
+        // resume at the rolled-back offset and add records it already holds.
         connectionLock.lock()
+        defer { connectionLock.unlock() }
+
+        let carried = allCursors()
+        let (opened, health) = ClaudenceStore.open(url: url)
         database = opened
-        connectionLock.unlock()
+
         healthLock.lock()
         _health = health
         baselineHealth = health
@@ -654,25 +676,60 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     public func compactUsageSamples(olderThan cutoff: Date) -> Int {
         let seconds = cutoff.timeIntervalSince1970
         return perform("compact usage samples", default: 0) { database in
-            let before = try database.scalarInt64(
-                "SELECT COUNT(*) FROM usage_samples WHERE sampled_at < \(seconds)"
-            ) ?? 0
-            try database.execute(
-                """
-                DELETE FROM usage_samples
-                 WHERE sampled_at < ?
-                   AND id NOT IN (
-                       SELECT MAX(id) FROM usage_samples
-                        WHERE sampled_at < ?
-                        GROUP BY session_id, date(sampled_at, 'unixepoch', 'localtime')
-                   )
-                """,
-                [.real(seconds), .real(seconds)]
-            )
-            let after = try database.scalarInt64(
-                "SELECT COUNT(*) FROM usage_samples WHERE sampled_at < \(seconds)"
-            ) ?? 0
-            return Int(before - after)
+            let rows = try database.query(
+                "SELECT id, session_id, sampled_at FROM usage_samples WHERE sampled_at < ? ORDER BY id ASC",
+                [.real(seconds)]
+            ) { row in
+                (id: row.int(0), sessionID: row.string(1), sampledAt: row.double(2))
+            }
+            guard !rows.isEmpty else { return 0 }
+
+            // Grouped here rather than in SQL. `date(sampled_at,'unixepoch',
+            // 'localtime')` would answer with the host's zone whatever calendar
+            // this store was given, so a store pinned to another zone, which is
+            // how the rollup tests make day boundaries deterministic, would
+            // collapse by one definition of a day and reconcile by another.
+            //
+            // The survivor is the row with the greatest `sampled_at`, ties
+            // broken by id, not the greatest id. `recordUsageSample` takes the
+            // moment as an argument, so a clock that steps backwards or a
+            // sample recorded late writes a higher id with an earlier
+            // timestamp, and keeping that row would hand the day's reconciled
+            // total an endpoint that is not the day's end.
+            var survivors: [String: (id: Int, sampledAt: Double)] = [:]
+            for row in rows {
+                let day = dayString(for: Date(timeIntervalSince1970: row.sampledAt))
+                let key = "\(row.sessionID)\u{0000}\(day)"
+                if let held = survivors[key],
+                   held.sampledAt > row.sampledAt
+                    || (held.sampledAt == row.sampledAt && held.id > row.id) {
+                    continue
+                }
+                survivors[key] = (id: row.id, sampledAt: row.sampledAt)
+            }
+
+            let kept = Set(survivors.values.map(\.id))
+            let doomed = rows.map(\.id).filter { !kept.contains($0) }
+            guard !doomed.isEmpty else { return 0 }
+
+            // In batches, because SQLite caps how many parameters one statement
+            // may carry and a year of samples is well past it.
+            var removed = 0
+            try database.withTransaction {
+                var index = doomed.startIndex
+                while index < doomed.endIndex {
+                    let end = doomed.index(index, offsetBy: 400, limitedBy: doomed.endIndex) ?? doomed.endIndex
+                    let batch = Array(doomed[index..<end])
+                    let placeholders = Array(repeating: "?", count: batch.count).joined(separator: ", ")
+                    try database.execute(
+                        "DELETE FROM usage_samples WHERE id IN (\(placeholders))",
+                        batch.map { .integer(Int64($0)) }
+                    )
+                    removed += batch.count
+                    index = end
+                }
+            }
+            return removed
         }
     }
 
@@ -1380,7 +1437,9 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         default fallback: T,
         _ body: (SQLiteDatabase) throws -> T
     ) -> T {
-        guard let database = currentDatabase() else {
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        guard let database else {
             // The query never ran. Counted the same as a failure, because from
             // the caller's side the outcome is identical: the fallback below is
             // this type's own default, not a measurement.
