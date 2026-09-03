@@ -393,9 +393,9 @@ public actor SubagentTracker {
         // the same one the engine and the analytics layer read. A health
         // transition is the wrong question: health latches once it is degraded
         // and has nowhere left to move.
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let totals = store.subagentTotals(forSession: sessionID)
-        guard store.unansweredQueries == before else { return false }
+        guard store.unansweredQueriesOnThisThread == before else { return false }
         seeded.insert(sessionID)
         guard !totals.isEmpty else { return true }
 
@@ -418,7 +418,13 @@ public actor SubagentTracker {
 
     /// Namespaced so a subagent's stored offset can never be mistaken for the
     /// parent session's own cursor.
-    static func cursorKey(for descriptor: SubagentDescriptor) -> String {
+    ///
+    /// Public because `--diagnose` reads subagent transcripts through the same
+    /// reader and has to key them the same way. It kept its own key until
+    /// 2026-09-03, which is one fact with two namespaces: harmless while that
+    /// path uses an in-memory cursor store, and a silent full re-read against
+    /// the real one.
+    public static func cursorKey(for descriptor: SubagentDescriptor) -> String {
         "subagent:\(descriptor.parentSessionID):\(descriptor.id)"
     }
 }

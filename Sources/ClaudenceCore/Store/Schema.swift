@@ -27,6 +27,7 @@ public enum Schema {
     static let migrations: [Migration] = [
         Migration(version: 1, statements: migration1),
         Migration(version: 2, statements: migration2),
+        Migration(version: 3, statements: migration3),
     ]
 
     // MARK: - v1
@@ -113,6 +114,23 @@ public enum Schema {
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_daily_rollups_day ON daily_rollups (day)",
+    ]
+
+    // MARK: - v3
+
+    private static let migration3: [String] = [
+        // `usage_samples` is queried two ways and indexed for only one of them.
+        // The primary key covers `(session_id, sampled_at)`, which serves the
+        // per-session burn-rate read, but `usageSamples(in:)` filters on
+        // `sampled_at` alone for the hourly chart, the window share and the
+        // rollup repair, and with no index on that column each of those is a
+        // full table scan. Measured cadence on this machine is 17 to 36 samples
+        // an hour per active session, so a month is tens of thousands of rows
+        // and a year is hundreds of thousands, scanned on every dashboard read.
+        """
+        CREATE INDEX IF NOT EXISTS idx_usage_samples_sampled_at
+            ON usage_samples(sampled_at)
+        """,
     ]
 
     // MARK: - v2

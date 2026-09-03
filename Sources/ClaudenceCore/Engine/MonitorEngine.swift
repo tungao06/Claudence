@@ -262,7 +262,13 @@ public actor MonitorEngine {
             if let model = delta.latestModel {
                 session.model = model
             }
-            if let stamp = delta.latestTimestamp, stamp > session.lastActivityAt {
+            // Clamped to now. The timestamp comes from a record in a file this
+            // process does not write, and a skewed clock or a hand-edited
+            // transcript puts it in the future, where it becomes the session's
+            // residual day and files tokens on a day that has not happened.
+            // `dailyTotals` refuses to sum a future row into today; this is the
+            // other end of the same defect, where the row is written.
+            if let stamp = delta.latestTimestamp, stamp > session.lastActivityAt, stamp <= now {
                 session.lastActivityAt = stamp
             }
 
@@ -291,9 +297,9 @@ public actor MonitorEngine {
                 // path, and marking it done regardless left a session whose
                 // write failed and which then went quiet with a stale row and
                 // a stale rollup for the life of the process.
-                let beforeUpsert = store?.unansweredQueries
+                let beforeUpsert = store?.unansweredQueriesOnThisThread
                 store?.upsert(session: session)
-                if store == nil || store?.unansweredQueries == beforeUpsert {
+                if store == nil || store?.unansweredQueriesOnThisThread == beforeUpsert {
                     lastUpserted[session.id] = session
                 }
             }
@@ -406,9 +412,9 @@ public actor MonitorEngine {
         // failure after it produced nothing to observe and the read was taken
         // as "nothing stored". Latching is fixed in the store, but a transition
         // stays the wrong question even when health is free to move.
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let stored = store.session(id: session.id)
-        guard store.unansweredQueries == before else { return false }
+        guard store.unansweredQueriesOnThisThread == before else { return false }
         seeded.insert(session.id)
         guard let stored else { return true }
         accumulated[session.id] = stored.usage
@@ -484,9 +490,9 @@ public actor MonitorEngine {
 
         repairRollupsIfStale(store: store, live: live, now: now)
 
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let total = store.dailyTotals(days: 1).first?.usage ?? .zero
-        guard store.unansweredQueries == before else { return nil }
+        guard store.unansweredQueriesOnThisThread == before else { return nil }
         todayCache = (total, now)
         return total
     }
@@ -521,11 +527,13 @@ public actor MonitorEngine {
     private func repairRollupsIfStale(store: any ClaudenceStoring, live: [AISession], now: Date) {
         let today = ClaudenceStore.dayString(for: now)
         guard let last = lastRollupRepair else {
+            compactSamples(store: store, now: now)
             store.recomputeRollups()
             lastRollupRepair = (today, now)
             return
         }
         if last.day != today {
+            compactSamples(store: store, now: now)
             store.recomputeRollups()
             lastRollupRepair = (today, now)
             return
@@ -540,6 +548,22 @@ public actor MonitorEngine {
         guard live.contains(where: { ClaudenceStore.dayString(for: $0.startedAt) != today }) else { return }
         store.recomputeRollups()
         lastRollupRepair = (today, now)
+    }
+
+    /// Collapses old samples to one a day, before a repair reads them.
+    ///
+    /// Only on the two rare repairs, the first of a launch and the one a day
+    /// change forces, never on the throttled one: the table it prunes grows by
+    /// tens of rows an hour, so a pass per minute would be work with nothing to
+    /// do. Ordered before `recomputeRollups` so the repair reads the smaller
+    /// table, which is safe because the collapse preserves every day's figure.
+    /// See `ClaudenceStore.compactUsageSamples(olderThan:)`.
+    private func compactSamples(store: any ClaudenceStoring, now: Date) {
+        let cutoff = now.addingTimeInterval(
+            -Double(ClaudenceStore.sampleFullResolutionDays) * 24 * 60 * 60
+        )
+        let removed = store.compactUsageSamples(olderThan: cutoff)
+        if removed > 0 { EngineCounters.shared.countCompactedSamples(removed) }
     }
 
     /// The single write path for `snapshot`.
@@ -584,11 +608,31 @@ public protocol StoreOutcomeReporting {
     /// return value, and no caller may mistake one for the other when seeding
     /// an accumulated total.
     var unansweredQueries: UInt64 { get }
+    /// The same count for the calling thread alone, which is the one a caller
+    /// bracketing its own read should use.
+    ///
+    /// The store-wide count is shared by three callers on three different
+    /// threads -- the engine's actor, the subagent tracker's, and the analytics
+    /// layer on the main one -- so an unrelated query failing between one
+    /// caller's two reads makes that caller's answered read look unanswered. A
+    /// bracket is synchronous and therefore stays on one thread, so a per-thread
+    /// count has no such crosstalk. Defaulted to the store-wide count so a test
+    /// double that counts its own failures keeps working unchanged.
+    var unansweredQueriesOnThisThread: UInt64 { get }
+}
+
+extension StoreOutcomeReporting {
+    public var unansweredQueriesOnThisThread: UInt64 { unansweredQueries }
 }
 
 /// The engine's view of persistence. The store module implements this; keeping
 /// it here means the engine compiles without knowing which database is behind it.
 public protocol ClaudenceStoring: CursorStoring, StoreOutcomeReporting {
+    /// Collapses samples older than `cutoff` to one per session per local day,
+    /// returning how many rows went. See the store's own documentation for why
+    /// this is a collapse and not a delete.
+    @discardableResult
+    func compactUsageSamples(olderThan cutoff: Date) -> Int
     /// The last persisted view of a session, used to seed the engine's
     /// accumulators so a resumed read cursor does not restart its total.
     func session(id: String) -> AISession?

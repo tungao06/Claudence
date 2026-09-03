@@ -218,9 +218,9 @@ extension CursorStoring {
         // retrying, which would otherwise freeze every session forever on a
         // machine whose only fault is that it cannot open a database file.
         if case .unavailable = health { return .none }
-        let before = unansweredQueries
+        let before = unansweredQueriesOnThisThread
         let stored = cursor(forSession: sessionID)
-        guard unansweredQueries == before else { return .unavailable }
+        guard unansweredQueriesOnThisThread == before else { return .unavailable }
         return stored.map(CursorRead.at) ?? .none
     }
 }

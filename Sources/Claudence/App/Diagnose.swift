@@ -76,7 +76,12 @@ enum Diagnose {
                 for descriptor in subs {
                     let subDelta = reader.readIncremental(
                         atPath: descriptor.transcriptPath,
-                        cursorKey: descriptor.id
+                        // The same key production uses. Keyed on the bare id
+                        // here until 2026-09-03, which was a second namespace
+                        // for one fact: harmless while this path uses an
+                        // in-memory cursor store, and a silent full re-read the
+                        // moment it does not.
+                        cursorKey: SubagentTracker.cursorKey(for: descriptor)
                     )
                     subTotal += subDelta.usage
                     let type = descriptor.agentType ?? "unknown"

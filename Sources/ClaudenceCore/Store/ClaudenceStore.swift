@@ -125,6 +125,33 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         return _unansweredQueries
     }
 
+    /// The same count, for the calling thread alone.
+    ///
+    /// `unansweredQueries` is one number for the whole store, and three callers
+    /// bracket their own reads with it from different threads: the engine's
+    /// actor, the subagent tracker's, and the analytics layer on the main one.
+    /// A failing query anywhere between one caller's two reads makes that
+    /// caller's answered read look unanswered, which costs a skipped pass in
+    /// the engine and prints `Usage unavailable` over a figure the store
+    /// actually returned.
+    ///
+    /// The per-thread count has no such crosstalk, because a bracket is
+    /// synchronous: `let before = ...; let value = read(); guard after == before`
+    /// contains no suspension point, so the two reads and the query between them
+    /// run on one thread. The global count stays exactly as it was, for
+    /// diagnostics, where the whole store's behaviour is the question.
+    public var unansweredQueriesOnThisThread: UInt64 {
+        (Thread.current.threadDictionary[ClaudenceStore.threadCountKey] as? UInt64) ?? 0
+    }
+
+    private static let threadCountKey = "com.tungao.claudence.store.unansweredQueries"
+
+    private func noteUnansweredOnThisThread() {
+        let dictionary = Thread.current.threadDictionary
+        let current = (dictionary[ClaudenceStore.threadCountKey] as? UInt64) ?? 0
+        dictionary[ClaudenceStore.threadCountKey] = current &+ 1
+    }
+
     /// The connection, for tests and for diagnostics. `nil` when unavailable.
     public var connection: SQLiteDatabase? { currentDatabase() }
 
@@ -589,10 +616,85 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         }
     }
 
+    // MARK: - Sample retention
+
+    /// How much sample history keeps its full resolution.
+    ///
+    /// Eight days, because the widest window that reads individual samples is
+    /// the seven-day usage share, and a day of slack keeps a query that starts
+    /// mid-day from meeting the compacted region at its own edge.
+    public static let sampleFullResolutionDays = 8
+
+    /// Collapses samples older than `cutoff` to one row per session per local
+    /// day, and reports how many rows went.
+    ///
+    /// Nothing pruned `usage_samples` until 2026-09-03 and nothing was meant
+    /// to: the rollup repair reads every sample to decide which day a session's
+    /// tokens belong to, so deleting them outright would move a month of
+    /// history onto session start days the next time the repair ran. Measured
+    /// cadence here is 17 to 36 samples an hour per active session, which is
+    /// tens of thousands of rows a month and hundreds of thousands a year,
+    /// every one of them read by a repair that runs on a 60 second throttle.
+    ///
+    /// Collapsing rather than deleting is what makes this safe. The walk in
+    /// `UsageSampleWalk` measures the rise between consecutive samples, so the
+    /// tokens spent on a day sit between that day's last sample and the
+    /// previous day's last sample. Keeping exactly those rows preserves every
+    /// day's figure while making the table proportional to sessions times days
+    /// rather than to sessions times minutes. What is lost is resolution
+    /// *within* an old day, which only the hourly chart and the seven-day share
+    /// ever ask for, and neither reaches past `sampleFullResolutionDays`.
+    ///
+    /// The day grouping uses SQLite's own `localtime`, not `Calendar`. The two
+    /// can disagree by an hour across a daylight-saving boundary, which at
+    /// worst keeps one extra row or files one boundary sample under the
+    /// neighbouring day. Both are cheaper than reading every row into memory to
+    /// group it in Swift.
+    @discardableResult
+    public func compactUsageSamples(olderThan cutoff: Date) -> Int {
+        let seconds = cutoff.timeIntervalSince1970
+        return perform("compact usage samples", default: 0) { database in
+            let before = try database.scalarInt64(
+                "SELECT COUNT(*) FROM usage_samples WHERE sampled_at < \(seconds)"
+            ) ?? 0
+            try database.execute(
+                """
+                DELETE FROM usage_samples
+                 WHERE sampled_at < ?
+                   AND id NOT IN (
+                       SELECT MAX(id) FROM usage_samples
+                        WHERE sampled_at < ?
+                        GROUP BY session_id, date(sampled_at, 'unixepoch', 'localtime')
+                   )
+                """,
+                [.real(seconds), .real(seconds)]
+            )
+            let after = try database.scalarInt64(
+                "SELECT COUNT(*) FROM usage_samples WHERE sampled_at < \(seconds)"
+            ) ?? 0
+            return Int(before - after)
+        }
+    }
+
     // MARK: - Aggregates
 
     /// Token totals per local day, oldest first, covering the last `days` days
-    /// including today. Days with no activity are omitted.
+    /// including today.
+    ///
+    /// A day with no row at all is omitted, which is not the same as a day that
+    /// returns zero. `rollupBuckets` writes a row for every session on the day
+    /// it started, `session_count` included, so a day whose only session spent
+    /// nothing comes back as a measured zero rather than as an absence. That is
+    /// the truth of it: a session did run and it did spend nothing, and the
+    /// chart draws a zero for a day that was observed rather than leaving a gap
+    /// that reads as "not watched". Callers that need "no session ran" have to
+    /// ask for the row's `session_count`, not infer it from the total.
+    ///
+    /// The upper bound on `day` is not decoration. `residualDay` comes from
+    /// `max(lastActivityAt, lastSampleAt)` and `lastActivityAt` takes any
+    /// transcript timestamp later than the one it holds, unclamped, so a single
+    /// skewed record files tokens on a day that has not happened yet. Without
+    /// the bound those tokens were summed into today.
     ///
     /// Served straight from `daily_rollups`, so this is an index range scan and
     /// never touches the sessions table.
@@ -1306,6 +1408,7 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     /// failure left no trace at all, and a caller comparing health either side
     /// of a read concluded the read had been answered.
     private func note(failure error: Error, while label: String) {
+        noteUnansweredOnThisThread()
         healthLock.lock()
         defer { healthLock.unlock() }
         _unansweredQueries &+= 1
@@ -1316,6 +1419,7 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     }
 
     private func noteUnanswered() {
+        noteUnansweredOnThisThread()
         healthLock.lock()
         defer { healthLock.unlock() }
         _unansweredQueries &+= 1

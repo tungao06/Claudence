@@ -54,6 +54,9 @@ public final class EngineCounters: @unchecked Sendable {
         /// Passes where a session's subagent directory could not be listed, so
         /// the figure was withheld rather than reported as zero.
         public var withheldSubagentListings = 0
+        /// Sample rows collapsed away by the retention pass, which keeps one
+        /// row per session per day beyond the full-resolution window.
+        public var compactedSamples = 0
 
         public init() {}
     }
@@ -95,6 +98,7 @@ public final class EngineCounters: @unchecked Sendable {
     func countSkippedUnreadCursor() { bump { $0.skippedUnreadCursors += 1 } }
     func countSkippedUnreadSubagentCursor() { bump { $0.skippedUnreadSubagentCursors += 1 } }
     func countWithheldSubagentListing() { bump { $0.withheldSubagentListings += 1 } }
+    func countCompactedSamples(_ rows: Int) { bump { $0.compactedSamples += rows } }
 
     private func bump(_ mutate: (inout Reading) -> Void) {
         lock.lock(); defer { lock.unlock() }
@@ -125,6 +129,7 @@ extension EngineCounters.Reading {
         result.skippedUnreadSubagentCursors =
             skippedUnreadSubagentCursors - earlier.skippedUnreadSubagentCursors
         result.withheldSubagentListings = withheldSubagentListings - earlier.withheldSubagentListings
+        result.compactedSamples = compactedSamples - earlier.compactedSamples
         return result
     }
 
@@ -148,6 +153,7 @@ extension EngineCounters.Reading {
             ("skipped cursors", skippedUnreadCursors),
             ("  subagent cursors", skippedUnreadSubagentCursors),
             ("  subagent listings", withheldSubagentListings),
+            ("samples compacted", compactedSamples),
         ]
         return rows.map { name, count in
             let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)

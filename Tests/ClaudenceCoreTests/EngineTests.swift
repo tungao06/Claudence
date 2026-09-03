@@ -448,6 +448,9 @@ private final class ReadFailingStore: ClaudenceStoring, @unchecked Sendable {
         lock.unlock()
         inner.recomputeRollups()
     }
+    func compactUsageSamples(olderThan cutoff: Date) -> Int {
+        inner.compactUsageSamples(olderThan: cutoff)
+    }
     /// Cursor keys whose read must fail. A set rather than a flag because a
     /// session's own key and its subagents' keys travel through the same
     /// store, and the two skips are different code paths.
@@ -575,6 +578,10 @@ private final class UnavailableStore: ClaudenceStoring, @unchecked Sendable {
         return []
     }
     func recomputeRollups() { countUnanswered() }
+    func compactUsageSamples(olderThan cutoff: Date) -> Int {
+        countUnanswered()
+        return 0
+    }
     func cursor(forSession sessionID: String) -> ReadCursor? { countUnanswered(); return nil }
     func saveCursor(_ cursor: ReadCursor, forSession sessionID: String) { countUnanswered() }
 }

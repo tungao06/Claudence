@@ -112,8 +112,11 @@ func migrationFromVersionOnePreservesData() throws {
     seeded.close()
 
     let migrated = try SQLiteDatabase(url: temp.url)
-    #expect(try Schema.migrate(migrated) == 2)
-    #expect(Schema.current == 2)
+    // Migrating from 1 lands on whatever the ladder's top is, which is the
+    // point of deriving `current` from the list rather than hand-maintaining a
+    // number: adding a step should not need this line edited to say 3.
+    #expect(try Schema.migrate(migrated) == Schema.current)
+    #expect(Schema.current >= 2)
     let tables = try migrated.query(
         "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
     ) { $0.string(0) }

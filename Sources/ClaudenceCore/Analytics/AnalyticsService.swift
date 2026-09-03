@@ -149,10 +149,10 @@ public struct AnalyticsService: Sendable {
         }
         guard let earliest = dates.first else { return [] }
 
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let totals = store.dailyTotals(days: days)
         let sessions = store.allSessions(since: earliest)
-        let answered = Self.answered(before: before, after: store.unansweredQueries)
+        let answered = Self.answered(before: before, after: store.unansweredQueriesOnThisThread)
 
         var usageByDay: [String: TokenUsage] = [:]
         for row in totals { usageByDay[row.day, default: .zero] += row.usage }
@@ -225,10 +225,10 @@ public struct AnalyticsService: Sendable {
         let starts = Self.hourStarts(in: range, calendar: calendar)
         guard !starts.isEmpty else { return [] }
 
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let rows = store.usageSamples(in: range)
         let sessions = store.allSessions(since: range.lowerBound)
-        guard Self.answered(before: before, after: store.unansweredQueries) else {
+        guard Self.answered(before: before, after: store.unansweredQueriesOnThisThread) else {
             return starts.map {
                 HourPoint(hour: Self.hourString(for: $0, calendar: calendar), date: $0, usage: nil)
             }
@@ -352,9 +352,9 @@ public struct AnalyticsService: Sendable {
     public func todayTotal() -> TokenUsage? {
         let day = ClaudenceStore.dayString(for: now(), calendar: calendar)
 
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let totals = store.dailyTotals(days: 1)
-        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueriesOnThisThread) else { return nil }
 
         return totals
             .filter { $0.day == day }
@@ -381,9 +381,9 @@ public struct AnalyticsService: Sendable {
     /// Nil when the store could not answer. Zero is a different claim and is
     /// returned as one.
     private func sessionsToday() -> [AISession]? {
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let sessions = store.allSessions(since: calendar.startOfDay(for: now()))
-        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueriesOnThisThread) else { return nil }
         return sessions
     }
 
@@ -432,9 +432,9 @@ public struct AnalyticsService: Sendable {
     /// inert: every range held the same handful of rows, because a session that
     /// ended left the registry and therefore left the table.
     public func recentSessions(since: Date) -> [AISession]? {
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let sessions = store.allSessions(since: since)
-        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueriesOnThisThread) else { return nil }
         return sessions
     }
 
@@ -460,9 +460,9 @@ public struct AnalyticsService: Sendable {
         let todayKey = ClaudenceStore.dayString(for: today, calendar: calendar)
         let yesterdayKey = ClaudenceStore.dayString(for: yesterday, calendar: calendar)
 
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let totals = store.dailyTotals(days: 2)
-        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueriesOnThisThread) else { return nil }
 
         var byDay: [String: TokenUsage] = [:]
         for row in totals { byDay[row.day, default: .zero] += row.usage }
@@ -507,10 +507,10 @@ public struct AnalyticsService: Sendable {
         let since = until.addingTimeInterval(-max(0, window))
         let range = since..<max(since, until)
 
-        let before = store.unansweredQueries
+        let before = store.unansweredQueriesOnThisThread
         let sessions = store.allSessions(since: since)
         let rows = store.usageSamples(in: range)
-        guard Self.answered(before: before, after: store.unansweredQueries) else { return nil }
+        guard Self.answered(before: before, after: store.unansweredQueriesOnThisThread) else { return nil }
 
         // Keyed by session, and a session absent from this map is one nothing
         // could be differenced for. Absent is not zero, and the two must stay
