@@ -28,6 +28,7 @@ public enum Schema {
         Migration(version: 1, statements: migration1),
         Migration(version: 2, statements: migration2),
         Migration(version: 3, statements: migration3),
+        Migration(version: 4, statements: migration4),
     ]
 
     // MARK: - v1
@@ -198,6 +199,103 @@ public enum Schema {
         "ALTER TABLE sessions ADD COLUMN subagent_output INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE sessions ADD COLUMN subagent_thinking INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE sessions ADD COLUMN subagent_count INTEGER NOT NULL DEFAULT 0",
+    ]
+
+    // MARK: - v4
+
+    private static let migration4: [String] = [
+        // The monthly table's own rollup: (day, project, model) rather than
+        // (day, project). `daily_rollups` is not widened to carry a model
+        // column because every existing reader of it -- `dailyTotals`,
+        // `applyRollup`'s own subtract-then-add, the burn-rate and window-share
+        // paths -- wants one row per (day, project) and would otherwise have
+        // to `GROUP BY` a column it never asked for. A second table costs one
+        // more write per session upsert and leaves every existing query
+        // untouched.
+        //
+        // `day` here is always the session's *start* day, from
+        // `ClaudenceStore.dayString(for: session.startedAt)`, in both
+        // `upsert(session:)` and `recomputeRollups()`. `daily_rollups`
+        // corrects a session that runs past midnight by walking
+        // `usage_samples`, which is what lets `recomputeRollups` split that
+        // session's total across every day it actually touched -- but
+        // `usage_samples` carries no model, so there is nothing to split a
+        // per-model total across days *by*. Rather than invent an
+        // apportionment (guessing which model a post-midnight token belongs
+        // to), both write paths use the one day they can state with
+        // certainty and use it identically, which is also what makes them
+        // trivially agree: neither can drift from the other when both derive
+        // the same bucket key the same way from the same session row. A
+        // session that crosses midnight therefore has its per-model total
+        // dated one day earlier here than in `daily_rollups` -- acceptable
+        // because this table is read as a monthly total, over a range wide
+        // enough that the misfiled day still falls inside it, never as a
+        // single day's figure the way `dailyTotals` is.
+        """
+        CREATE TABLE IF NOT EXISTS daily_model_rollups (
+            day TEXT NOT NULL,
+            project_name TEXT NOT NULL,
+            model TEXT NOT NULL,
+            fresh_input INTEGER NOT NULL DEFAULT 0,
+            cache_creation INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            output INTEGER NOT NULL DEFAULT 0,
+            thinking INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, project_name, model)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_daily_model_rollups_day ON daily_model_rollups (day)",
+
+        // A session's own per-model breakdown, one row per model it actually
+        // used. Parent and subagent tokens stay in separate column groups,
+        // mirroring `sessions.fresh_input` versus `sessions.subagent_fresh_input`
+        // and for the same reason: each side has its own cursor discipline,
+        // so collapsing them into one figure would leave neither resumable.
+        //
+        // This is also what `upsert(session:)` reads back *before* it
+        // overwrites the row, which is how the incremental writer knows what
+        // to subtract from `daily_model_rollups` before it adds the session's
+        // new total -- the model-dimension counterpart of what the `sessions`
+        // row itself already does for `rollupKeyAndUsage`.
+        """
+        CREATE TABLE IF NOT EXISTS session_model_totals (
+            session_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            fresh_input INTEGER NOT NULL DEFAULT 0,
+            cache_creation INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            output INTEGER NOT NULL DEFAULT 0,
+            thinking INTEGER NOT NULL DEFAULT 0,
+            subagent_fresh_input INTEGER NOT NULL DEFAULT 0,
+            subagent_cache_creation INTEGER NOT NULL DEFAULT 0,
+            subagent_cache_read INTEGER NOT NULL DEFAULT 0,
+            subagent_output INTEGER NOT NULL DEFAULT 0,
+            subagent_thinking INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (session_id, model)
+        )
+        """,
+
+        // One subagent's own per-model breakdown. Without this, a subagent's
+        // per-model figure would reset to nothing on every relaunch while its
+        // read cursor resumed from the byte it already reached -- the
+        // model-dimension version of the cursor-and-total trap documented at
+        // the top of this file for `subagent_totals` itself. `subagent_totals`
+        // is not widened in place because its scalar `usage` column is read by
+        // every existing caller as a single number; a second table leaves that
+        // contract alone.
+        """
+        CREATE TABLE IF NOT EXISTS subagent_model_totals (
+            parent_session_id TEXT NOT NULL,
+            subagent_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            fresh_input INTEGER NOT NULL DEFAULT 0,
+            cache_creation INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            output INTEGER NOT NULL DEFAULT 0,
+            thinking INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (parent_session_id, subagent_id, model)
+        )
+        """,
     ]
 
     // MARK: - Migration

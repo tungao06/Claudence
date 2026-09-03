@@ -56,6 +56,13 @@ struct PrivacyTests {
     // field added to either fails here and has to be argued into the allowlist
     // rather than arriving with it.
 
+    // `usageByModel` was added 2026-09-03 for the monthly table's per-model
+    // split (spec 9.13). It carries nothing a `usage.*` field does not
+    // already carry: the same five components, bucketed by `message.model`
+    // -- a value already on the allowlist -- rather than summed across every
+    // model. Left empty in `markedSubagent()`, an empty dictionary still
+    // walks to exactly one path, the field name itself, which is what is
+    // listed below.
     static let permittedSubagentPaths: Set<String> = [
         "id",
         "parentSessionID",
@@ -66,6 +73,7 @@ struct PrivacyTests {
         "usage.cacheRead",
         "usage.output",
         "usage.thinking",
+        "usageByModel",
         "currentActivity.verb",
         "currentActivity.subject",
         "model",
@@ -83,6 +91,7 @@ struct PrivacyTests {
         "usage.cacheRead",
         "usage.output",
         "usage.thinking",
+        "usageByModel",
         "recordsParsed",
         "lastActivityAt",
         "model",

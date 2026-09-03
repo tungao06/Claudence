@@ -77,13 +77,14 @@ private func record(
     input: Int,
     output: Int = 0,
     cacheCreation: Int = 0,
-    cacheRead: Int = 0
+    cacheRead: Int = 0,
+    model: String = "claude-sonnet-5"
 ) -> String {
     """
     {"parentUuid":"\(UUID().uuidString.lowercased())","isSidechain":false,"userType":"external",\
     "cwd":"\(workingDirectory)","sessionId":"\(sessionID)","version":"2.1.257","gitBranch":"main",\
     "type":"assistant","message":{"id":"msg_01Abc","type":"message","role":"assistant",\
-    "model":"claude-sonnet-5","content":[{"type":"text","text":"ordinary response text"}],\
+    "model":"\(model)","content":[{"type":"text","text":"ordinary response text"}],\
     "usage":{"input_tokens":\(input),"cache_creation_input_tokens":\(cacheCreation),\
     "cache_read_input_tokens":\(cacheRead),"output_tokens":\(output),\
     "output_tokens_details":{"thinking_tokens":0},"service_tier":"standard"}},\
@@ -298,6 +299,55 @@ struct HistoryImporterTests {
         #expect(subagentRows.first?.usage == TokenUsage(freshInput: 50, output: 5))
         #expect(subagentRows.first?.agentType == "Explore")
         #expect(subagentRows.first?.taskDescription == "map the store")
+    }
+
+    @Test("an import populates the per-model split, parent and subagent both")
+    func importPopulatesModelSplit() throws {
+        let projects = makeProjectsRoot()
+        let sessionID = UUID().uuidString.lowercased()
+        let workingDirectory = "/Users/tester/model-split-project"
+        writeTranscript(
+            projectsDirectory: projects, sessionID: sessionID, workingDirectory: workingDirectory,
+            lines: [
+                record(sessionID: sessionID, workingDirectory: workingDirectory,
+                       timestamp: "2026-02-01T09:00:00.000Z", input: 100, output: 10, model: "claude-sonnet-5"),
+                record(sessionID: sessionID, workingDirectory: workingDirectory,
+                       timestamp: "2026-02-01T09:01:00.000Z", input: 60, output: 6, model: "claude-opus-5"),
+            ]
+        )
+        writeSubagent(
+            projectsDirectory: projects, sessionID: sessionID, workingDirectory: workingDirectory,
+            agentID: "agent-a", agentType: "Explore", description: "map the store",
+            lines: [record(sessionID: sessionID, workingDirectory: workingDirectory,
+                            timestamp: "2026-02-01T09:05:00.000Z", input: 50, output: 5, model: "claude-haiku-4-5")]
+        )
+
+        let calendar = utcCalendar()
+        let store = ClaudenceStore(url: nil, calendar: calendar)
+        let importer = makeImporter(projectsDirectory: projects, store: store, calendar: calendar)
+
+        let report = importer.importHistory(startingFrom: Date(timeIntervalSince1970: 0))
+        #expect(report.sessionsImported == 1)
+        #expect(report.failures.isEmpty)
+
+        let session = try #require(store.session(id: sessionID))
+        #expect(session.usageByModel["claude-sonnet-5"] == TokenUsage(freshInput: 100, output: 10))
+        #expect(session.usageByModel["claude-opus-5"] == TokenUsage(freshInput: 60, output: 6))
+        #expect(session.subagentUsageByModel["claude-haiku-4-5"] == TokenUsage(freshInput: 50, output: 5))
+
+        // The parent split sums to the parent total, the combined split to
+        // the combined total -- the same reconciliation the live path keeps.
+        let parentSummed = session.usageByModel.values.reduce(TokenUsage.zero, +)
+        #expect(parentSummed == session.usage)
+        let combinedSummed = session.combinedUsageByModel.values.reduce(TokenUsage.zero, +)
+        #expect(combinedSummed == session.combinedUsage)
+
+        let report30d = store.monthlyTotals(since: Date(timeIntervalSince1970: 0))
+        let project = try #require(report30d.rows.first { $0.projectName == "model-split-project" })
+        #expect(project.usageByModel["claude-sonnet-5"] == TokenUsage(freshInput: 100, output: 10))
+        #expect(project.usageByModel["claude-opus-5"] == TokenUsage(freshInput: 60, output: 6))
+        #expect(project.usageByModel["claude-haiku-4-5"] == TokenUsage(freshInput: 50, output: 5))
+        #expect(project.usage == session.combinedUsage)
     }
 
     @Test("an absent projects directory is an ordinary empty report, not a failure")

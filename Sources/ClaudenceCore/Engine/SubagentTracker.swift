@@ -9,6 +9,10 @@ public struct AISubagent: Sendable, Equatable, Identifiable {
     /// Claude Code, not from any message content.
     public let taskDescription: String?
     public var usage: TokenUsage
+    /// This subagent's own transcript, split by `message.model`. See
+    /// `AISession.usageByModel` for the attribution rule; the same one
+    /// applies here since both are read through the same `DeltaBuilder`.
+    public var usageByModel: [String: TokenUsage]
     public var currentActivity: Activity?
     public var model: String?
     public var lastActivityAt: Date?
@@ -20,6 +24,7 @@ public struct AISubagent: Sendable, Equatable, Identifiable {
         agentType: String? = nil,
         taskDescription: String? = nil,
         usage: TokenUsage = .zero,
+        usageByModel: [String: TokenUsage] = [:],
         currentActivity: Activity? = nil,
         model: String? = nil,
         lastActivityAt: Date? = nil,
@@ -30,6 +35,7 @@ public struct AISubagent: Sendable, Equatable, Identifiable {
         self.agentType = agentType
         self.taskDescription = taskDescription
         self.usage = usage
+        self.usageByModel = usageByModel
         self.currentActivity = currentActivity
         self.model = model
         self.lastActivityAt = lastActivityAt
@@ -63,6 +69,7 @@ public struct SubagentTotal: Sendable, Equatable {
     public var agentType: String?
     public var taskDescription: String?
     public var usage: TokenUsage
+    public var usageByModel: [String: TokenUsage]
     public var recordsParsed: Int
     public var lastActivityAt: Date?
     public var model: String?
@@ -73,6 +80,7 @@ public struct SubagentTotal: Sendable, Equatable {
         agentType: String? = nil,
         taskDescription: String? = nil,
         usage: TokenUsage = .zero,
+        usageByModel: [String: TokenUsage] = [:],
         recordsParsed: Int = 0,
         lastActivityAt: Date? = nil,
         model: String? = nil
@@ -82,6 +90,7 @@ public struct SubagentTotal: Sendable, Equatable {
         self.agentType = agentType
         self.taskDescription = taskDescription
         self.usage = usage
+        self.usageByModel = usageByModel
         self.recordsParsed = recordsParsed
         self.lastActivityAt = lastActivityAt
         self.model = model
@@ -97,6 +106,7 @@ extension SubagentTotal {
             agentType: subagent.agentType,
             taskDescription: subagent.taskDescription,
             usage: subagent.usage,
+            usageByModel: subagent.usageByModel,
             recordsParsed: subagent.recordsParsed,
             lastActivityAt: subagent.lastActivityAt,
             model: subagent.model
@@ -112,6 +122,7 @@ extension SubagentTotal {
             agentType: agentType,
             taskDescription: taskDescription,
             usage: usage,
+            usageByModel: usageByModel,
             model: model,
             lastActivityAt: lastActivityAt,
             recordsParsed: recordsParsed
@@ -264,6 +275,7 @@ public actor SubagentTracker {
                 agentType: descriptor.agentType ?? previous?.agentType,
                 taskDescription: descriptor.taskDescription ?? previous?.taskDescription,
                 usage: previous?.usage ?? .zero,
+                usageByModel: previous?.usageByModel ?? [:],
                 currentActivity: previous?.currentActivity,
                 model: previous?.model,
                 lastActivityAt: previous?.lastActivityAt,
@@ -276,6 +288,7 @@ public actor SubagentTracker {
             let changed = delta.recordsParsed > 0 || delta.usage != .zero
 
             current.usage += delta.usage
+            current.usageByModel = mergeUsageByModel(current.usageByModel, delta.usageByModel)
             current.recordsParsed += delta.recordsParsed
             if let activity = delta.latestActivity { current.currentActivity = activity }
             if let model = delta.latestModel { current.model = model }
@@ -341,6 +354,16 @@ public actor SubagentTracker {
     /// A recycled id cannot inherit these totals: a subagent id is namespaced
     /// by its parent session id, and a parent session id is a UUID from Claude
     /// Code rather than a pid.
+    /// Drops every subagent total this process holds, for the moment the stored
+    /// history is deleted underneath it. See
+    /// `MonitorEngine.forgetAccumulatedTotals`, which is the only caller and
+    /// which explains why a cleared store must clear these too.
+    public func forgetEverything() {
+        accumulated.removeAll()
+        byParent.removeAll()
+        seeded.removeAll()
+    }
+
     public func forget(sessionID: String) {
         seeded.remove(sessionID)
         guard let ids = byParent.removeValue(forKey: sessionID) else { return }

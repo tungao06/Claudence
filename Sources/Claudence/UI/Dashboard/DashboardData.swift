@@ -233,6 +233,17 @@ struct DashboardData: Sendable, Equatable {
     /// Nil is the ordinary "nothing burning" state.
     let burnLeader: BurnLeaderInfo?
 
+    /// The account's own tier name, e.g. `Max 5x` (9.14). Nil when Claude
+    /// Code's account file could not be read or names a tier
+    /// `AccountPlanReader` does not recognise -- see that type for why an
+    /// unrecognised tier is never guessed at rather than shown as a nil.
+    let accountPlanDisplayName: String?
+    /// What this subscription costs, in US dollars per month, exactly as the
+    /// user typed it into Settings (9.14). Nil until they set it once:
+    /// CLAUDE.md forbids hard-coding a published subscription price, so this
+    /// figure is supplied by the reader rather than measured by the app.
+    let subscriptionMonthlyPrice: Double?
+
     init(
         windows: [UsageWindow] = [],
         usageUnavailableReason: String? = nil,
@@ -254,7 +265,9 @@ struct DashboardData: Sendable, Equatable {
         priceTableStaleDays: Int? = nil,
         projections: [String: UsageProjection] = [:],
         bindingWindowName: String? = nil,
-        burnLeader: BurnLeaderInfo? = nil
+        burnLeader: BurnLeaderInfo? = nil,
+        accountPlanDisplayName: String? = nil,
+        subscriptionMonthlyPrice: Double? = nil
     ) {
         self.windows = windows
         self.usageUnavailableReason = usageUnavailableReason
@@ -277,6 +290,8 @@ struct DashboardData: Sendable, Equatable {
         self.projections = projections
         self.bindingWindowName = bindingWindowName
         self.burnLeader = burnLeader
+        self.accountPlanDisplayName = accountPlanDisplayName
+        self.subscriptionMonthlyPrice = subscriptionMonthlyPrice
     }
 
     /// Window keys as the usage API names them. These are the same keys

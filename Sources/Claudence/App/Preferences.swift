@@ -1,5 +1,49 @@
+import ClaudenceCore
 import Foundation
 import Observation
+
+// MARK: - Language
+
+/// Which language the interface follows.
+///
+/// Not `AppLanguage` itself, which names only English and Thai: this adds the
+/// one choice a picker needs that a fixed language cannot express, "follow the
+/// system," the same shape `AppearanceMode.auto` already gives the palette
+/// picker. Onboarding is the only screen that reads this today -- see
+/// `OnboardingView` -- because the rest of the interface is not translated
+/// yet (PLAN.md 9.10b). Wiring the preference and the picker ahead of that
+/// conversion means the one screen that already has bilingual copy
+/// (`ClaudeCodePresence`'s title and detail) can honour the choice now,
+/// instead of the picker being inert until 9.10b lands.
+enum LanguagePreference: String, CaseIterable, Identifiable, Sendable {
+    case system
+    case english
+    case thai
+
+    var id: String { rawValue }
+
+    /// The picker's own label. Endonyms throughout, per `AppLanguage.endonym`,
+    /// so a Thai reader finds Thai without first finding the English word for
+    /// it.
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .english: return AppLanguage.english.endonym
+        case .thai: return AppLanguage.thai.endonym
+        }
+    }
+
+    /// The language this choice resolves to right now. `.system` is resolved
+    /// fresh on every call rather than cached, so a system language change
+    /// while the app is running is picked up the next time anything reads it.
+    func resolved(systemLanguage: @autoclosure () -> AppLanguage = .matchingSystem()) -> AppLanguage {
+        switch self {
+        case .system: return systemLanguage()
+        case .english: return .english
+        case .thai: return .thai
+        }
+    }
+}
 
 // MARK: - Menu bar style
 
@@ -224,6 +268,8 @@ final class Preferences {
         static let notifyOnSessionIdle = "com.tungao.claudence.preference.notifyOnSessionIdle"
         static let notifyOnSessionNeedsInput = "com.tungao.claudence.preference.notifyOnSessionNeedsInput"
         static let liveOnlyMode = "com.tungao.claudence.preference.liveOnlyMode"
+        static let languagePreference = "com.tungao.claudence.preference.languagePreference"
+        static let hasCompletedOnboarding = "com.tungao.claudence.preference.hasCompletedOnboarding"
     }
 
     // MARK: Dependencies
@@ -344,6 +390,62 @@ final class Preferences {
         showMenuBarUsage ? menuBarStyle : .minimal
     }
 
+    // MARK: Subscription price
+
+    /// The `UserDefaults` key `subscriptionMonthlyPrice` is stored under.
+    ///
+    /// Exposed rather than kept inside the private `Key` enum below, because
+    /// `DashboardAdapter.refreshDashboard` reads this same key directly: the
+    /// value never touches the engine or a file the way `usageRefreshInterval`
+    /// and `isLiveOnly` do, so there is no seam for it to cross through
+    /// `MonitorViewModel`, and naming the key once here beats duplicating the
+    /// literal string in two files.
+    static let subscriptionMonthlyPriceKey = "com.tungao.claudence.preference.subscriptionMonthlyPrice"
+
+    /// What this subscription costs, in US dollars per month, exactly as the
+    /// user typed it. Nil until they set it once.
+    ///
+    /// CLAUDE.md forbids hard-coding a published subscription price: none of
+    /// them are measured anywhere in this codebase, and a baked-in figure goes
+    /// stale silently the next time Anthropic changes one. This is the one
+    /// dollar figure in the application the user supplies rather than the one
+    /// it derives from token counts and a price list. `StatTilesView`'s cost
+    /// tile is the only reader, and it shows this beside the API-equivalent
+    /// estimate only once it is non-nil, so a friend who never opens Settings
+    /// sees the tile exactly as it read before this existed.
+    var subscriptionMonthlyPrice: Double? {
+        didSet {
+            persist {
+                if let subscriptionMonthlyPrice {
+                    defaults.set(subscriptionMonthlyPrice, forKey: Preferences.subscriptionMonthlyPriceKey)
+                } else {
+                    defaults.removeObject(forKey: Preferences.subscriptionMonthlyPriceKey)
+                }
+            }
+        }
+    }
+
+    // MARK: Language and onboarding
+
+    /// The picker's stored choice. Default `.system`, so a friend who never
+    /// opens the picker still gets the language their Mac is already set to.
+    var languagePreference: LanguagePreference {
+        didSet { persist { defaults.set(languagePreference.rawValue, forKey: Key.languagePreference) } }
+    }
+
+    /// The language to actually render, resolved from the stored choice.
+    /// Nothing writes this directly.
+    var appLanguage: AppLanguage { languagePreference.resolved() }
+
+    /// Whether the first-launch screen has been shown and dismissed. Default
+    /// `false`, checked by `OnboardingWindowController` before it presents
+    /// anything and set once, when that window closes -- see the note there
+    /// on why a click on the window's own close button counts the same as
+    /// finishing the flow.
+    var hasCompletedOnboarding: Bool {
+        didSet { persist { defaults.set(hasCompletedOnboarding, forKey: Key.hasCompletedOnboarding) } }
+    }
+
     // MARK: Launch at login
 
     /// The status macOS reports, refreshed after every attempt. Observed, so a
@@ -383,6 +485,8 @@ final class Preferences {
             Key.notifyOnSessionIdle: false,
             Key.notifyOnSessionNeedsInput: true,
             Key.liveOnlyMode: false,
+            Key.languagePreference: LanguagePreference.system.rawValue,
+            Key.hasCompletedOnboarding: false,
         ])
 
         self.defaults = defaults
@@ -407,6 +511,14 @@ final class Preferences {
         self.notifyOnSessionIdle = defaults.bool(forKey: Key.notifyOnSessionIdle)
         self.notifyOnSessionNeedsInput = defaults.bool(forKey: Key.notifyOnSessionNeedsInput)
         self.liveOnlyMode = defaults.bool(forKey: Key.liveOnlyMode)
+        // Absence, not zero, is the registered default: `object(forKey:)`
+        // returns nil when the key was never written, which is exactly the
+        // "not set yet" state this preference needs to be able to express.
+        self.subscriptionMonthlyPrice = defaults.object(forKey: Preferences.subscriptionMonthlyPriceKey) as? Double
+        self.languagePreference = LanguagePreference(
+            rawValue: defaults.string(forKey: Key.languagePreference) ?? ""
+        ) ?? .system
+        self.hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
         self.launchAtLoginState = launchAtLogin.readState()
         self.launchAtLoginFailure = nil
         isLoading = false

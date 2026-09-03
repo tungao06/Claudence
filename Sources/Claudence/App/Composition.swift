@@ -13,6 +13,9 @@ enum Composition {
         let preferences: Preferences
         let notifications: NotificationBridge
         let storeMode: StoreModeController
+        /// What the onboarding screen's import step calls. See
+        /// `HistoryImportRunner` for why this indirection exists at all.
+        let historyImportRunner: HistoryImportRunner
     }
 
     /// Derived rather than assigned once, because these four preferences can
@@ -67,7 +70,7 @@ enum Composition {
         )
 
         let analytics = AnalyticsService(store: store)
-        let storeMode = StoreModeController(store: store, preferences: preferences)
+        let storeMode = StoreModeController(store: store, preferences: preferences, engine: engine)
         let notifications = NotificationBridge()
         // The master switch and the per-event switches travel together, so a
         // preference that is stored is a preference that is read. A keep-set
@@ -87,12 +90,23 @@ enum Composition {
             analytics: analytics
         )
 
+        // Detached rather than awaited inline: the walk reads every
+        // transcript on disk, is not bounded by the 12 MB single-file
+        // performance budget, and must not block the main actor the way
+        // every other filesystem read in this app is kept off it.
+        let historyImportRunner = HistoryImportRunner { startDate in
+            await Task.detached(priority: .userInitiated) {
+                HistoryImporter(store: store, reader: reader).importHistory(startingFrom: startDate)
+            }.value
+        }
+
         return Services(
             model: model,
             watcher: RegistryWatcher(),
             preferences: preferences,
             notifications: notifications,
-            storeMode: storeMode
+            storeMode: storeMode,
+            historyImportRunner: historyImportRunner
         )
     }
 }

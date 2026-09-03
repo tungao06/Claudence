@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import ClaudenceCore
 
 /// The privacy disclosure required by spec section 3.3.
@@ -35,6 +37,10 @@ import ClaudenceCore
 /// whose files these are, not an engineer.
 struct PrivacySettings: View {
     let storeMode: StoreModeController
+    /// The live session count for the problem report (9.10c). Nothing else on
+    /// this screen needs a view model; this is the one fact that lives on it
+    /// rather than on the store.
+    let model: MonitorViewModel
     @State private var isShowingFullDisclosure = false
     /// Set right before the confirmation opens, from the same summary the
     /// dialog's message is built from, so the counts on screen and the counts
@@ -42,6 +48,15 @@ struct PrivacySettings: View {
     /// moment apart.
     @State private var pendingSummary: ClaudenceStore.StoredDataSummary?
     @State private var isConfirmingLiveOnly = false
+    /// Same reasoning as `pendingSummary`, for the "Clear Stored Data" button
+    /// (9.10d): a separate summary and a separate flag, because this
+    /// confirmation deletes on the spot rather than as a side effect of
+    /// switching modes, and the two must never share one dialog's state.
+    @State private var pendingClearSummary: ClaudenceStore.StoredDataSummary?
+    @State private var isConfirmingClearData = false
+    /// The result of the last "Save a Problem Report" attempt (9.10c). Nil
+    /// before the button has ever been pressed.
+    @State private var reportOutcome: ReportOutcome?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// `SettingsToggle` wants a plain `Binding<Bool>`, but this switch cannot
@@ -87,6 +102,12 @@ struct PrivacySettings: View {
                 if !storeMode.lastDeletionFailures.isEmpty {
                     deletionFailureNotice(storeMode.lastDeletionFailures)
                 }
+
+                clearDataRow
+                    .padding(.top, Theme.Space.xs)
+
+                reportRow
+                    .padding(.top, Theme.Space.xs)
 
                 HStack(alignment: .center, spacing: Theme.Space.m) {
                     Button {
@@ -163,6 +184,178 @@ struct PrivacySettings: View {
         } message: {
             Text(pendingSummary.map(Copy.liveOnlyConfirmMessage) ?? Copy.liveOnlyConfirmFallback)
         }
+        .confirmationDialog(
+            Copy.clearDataConfirmTitle,
+            isPresented: $isConfirmingClearData,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Everything", role: .destructive) {
+                // The engine has to forget along with the store, and forgetting
+                // crosses into an actor, so the work is a task rather than a
+                // straight call. See `StoreModeController.clearStoredData`.
+                Task { await storeMode.clearStoredData() }
+                pendingClearSummary = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingClearSummary = nil
+            }
+            // Same reasoning as the live-only dialog above: a stray Return
+            // key must land on Cancel, not on a destructive delete.
+            .keyboardShortcut(.defaultAction)
+        } message: {
+            Text(pendingClearSummary.map(Copy.clearDataConfirmMessage) ?? Copy.clearDataConfirmFallback)
+        }
+    }
+
+    // MARK: - Clear stored data (9.10d)
+
+    /// Not a date-range delete: one button, everything, `VACUUM`d afterwards.
+    /// `ClaudenceStore.deleteStoredData()` already keeps `sessions` and
+    /// `read_cursors` in the same transaction, which is the invariant
+    /// CLAUDE.md records -- a cursor surviving without its total resumes at
+    /// byte N against a total of zero and corrupts the next rollup.
+    private var clearDataRow: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            pillButton(title: "Clear Stored Data", tint: Theme.critical) {
+                pendingClearSummary = storeMode.storedDataSummary()
+                isConfirmingClearData = true
+            }
+            .accessibilityHint(Copy.clearDataExplanation)
+            SettingsExplanation(text: Copy.clearDataExplanation)
+        }
+    }
+
+    // MARK: - Problem report (9.10c)
+
+    /// What the button writes, told back to the person who pressed it: the
+    /// path it landed at, that nothing was saved because the panel was
+    /// cancelled, or why the write failed. Never silent either way -- a
+    /// button that reports nothing back is indistinguishable from one that
+    /// silently sent something.
+    private enum ReportOutcome: Equatable {
+        case saved(path: String)
+        case cancelled
+        case failed(String)
+    }
+
+    private var reportRow: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            pillButton(title: "Save a Problem Report") {
+                reportOutcome = Self.saveProblemReport(storeMode: storeMode, model: model)
+            }
+            .accessibilityHint(Copy.reportExplanation)
+            SettingsExplanation(text: Copy.reportExplanation)
+            if let reportOutcome {
+                reportOutcomeLine(reportOutcome)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func reportOutcomeLine(_ outcome: ReportOutcome) -> some View {
+        switch outcome {
+        case .saved(let path):
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(Theme.healthy)
+                    .accessibilityHidden(true)
+                Text("Saved to \(path)")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .cancelled:
+            EmptyView()
+        case .failed(let reason):
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(Theme.critical)
+                    .accessibilityHidden(true)
+                Text("Could not save the report: \(reason)")
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.critical)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Builds the report and asks where to put it. Nothing here is sent
+    /// anywhere: `NSSavePanel` writes to a location the user chose, on this
+    /// Mac, and that is the only thing this function does.
+    ///
+    /// `EngineCounters.shared` is read directly rather than threaded in,
+    /// because it already is a process-wide singleton with no owner to pass
+    /// through -- the same reason `--diagnose --counters` reads it the same
+    /// way from the command line.
+    @MainActor
+    private static func saveProblemReport(
+        storeMode: StoreModeController,
+        model: MonitorViewModel
+    ) -> ReportOutcome {
+        let summary = storeMode.storedDataSummary()
+        let environment = ProblemReport.Environment(
+            appVersion: AppVersion.short,
+            appBuild: AppVersion.build,
+            operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+            storeHealth: storeMode.storeHealth,
+            isLiveOnly: storeMode.isLiveOnly,
+            databasePath: summary.fileURL?.path,
+            databaseSizeBytes: summary.fileSizeBytes,
+            liveSessionCount: model.sessions.count,
+            storedSessionCount: summary.sessions,
+            usageSampleCount: summary.usageSamples,
+            rollupDayCount: summary.rollupDays,
+            subagentTotalCount: summary.subagentTotals
+        )
+        let report = ProblemReport(environment: environment, counters: EngineCounters.shared.snapshot)
+
+        let panel = NSSavePanel()
+        panel.title = "Save Problem Report"
+        panel.message = "Nothing is sent anywhere. This writes one file for you to send by hand."
+        panel.nameFieldStringValue = report.suggestedFileName
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return .cancelled
+        }
+        do {
+            try report.text().write(to: url, atomically: true, encoding: .utf8)
+            return .saved(path: url.path)
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Pill button chrome
+    //
+    // The same visual language as "Read the full disclosure" below: a
+    // `surfaceControl` pill with a hairline border. `tint` recolours the label
+    // alone, never the fill -- a destructive action here still reads as a
+    // button first, not as a solid block of critical colour.
+    private func pillButton(
+        title: String,
+        tint: Color = Theme.textSecondary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(Theme.Typography.labelEmphasis)
+                .foregroundStyle(tint)
+                .padding(.vertical, Theme.Space.s)
+                .padding(.horizontal, Theme.Space.l)
+                .contentShape(Rectangle())
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                        .fill(Theme.surfaceControl)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                        .strokeBorder(Theme.separator, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 
     // MARK: - Deletion failures
@@ -298,6 +491,45 @@ struct PrivacySettings: View {
         static let liveOnlyConfirmFallback = """
         Delete the stored history now, or keep the file untouched and simply \
         stop using it. Deletion cannot be undone.
+        """
+
+        // Clear stored data (9.10d). Not a date-range delete: everything, or
+        // nothing -- a friend who wants Claudence to forget wants it to
+        // forget, and a friend who wants to keep some history is not the
+        // person pressing this button.
+
+        static let clearDataExplanation = """
+        Delete everything Claudence has saved on this Mac and reclaim the \
+        space. Live sessions keep running and keep showing their own \
+        numbers; history, day-over-day figures and project totals start over.
+        """
+
+        static let clearDataConfirmTitle = "Clear all stored data?"
+
+        static func clearDataConfirmMessage(_ summary: ClaudenceStore.StoredDataSummary) -> String {
+            let sizeSuffix = summary.fileSizeBytes.map { bytes in
+                " (\(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)))"
+            } ?? ""
+            return """
+            Claudence has \(summary.sessions) session\(summary.sessions == 1 ? "" : "s"), \
+            \(summary.usageSamples) usage sample\(summary.usageSamples == 1 ? "" : "s") and \
+            \(summary.rollupDays) day\(summary.rollupDays == 1 ? "" : "s") of rolled-up history\(sizeSuffix) \
+            stored on this Mac. Delete all of it now and reclaim the space. This cannot be undone.
+            """
+        }
+
+        /// Used only if the confirmation somehow opens with no summary read yet.
+        static let clearDataConfirmFallback = """
+        Delete everything stored on this Mac and reclaim the space. This \
+        cannot be undone.
+        """
+
+        // Problem report (9.10c).
+
+        static let reportExplanation = """
+        Write one file with recent errors, counts and version numbers, with \
+        your home folder abbreviated to ~. Nothing is sent anywhere -- you \
+        choose where it is saved, and it is yours to send by hand or not.
         """
 
         // The full disclosure, behind the button.

@@ -31,6 +31,14 @@ struct MenuBarContent: View {
     /// quietly show stale tokens for as long as it stayed open.
     @State private var detailSessionID: String?
 
+    /// Whether Claude Code is even on this machine. Read once when the
+    /// session list has something to say about it -- see the `.task` below --
+    /// rather than on every render: it is a filesystem check, and the popover
+    /// only needs an answer while there is nothing else in the list to show
+    /// instead. Optimistic default so a machine that plainly has sessions
+    /// never flashes an absent state on the first frame.
+    @State private var claudeCodePresence: ClaudeCodePresence = .present
+
     /// The open session, or nil when nothing is open or when the session it
     /// pointed at has ended. A session that ends while its detail is open
     /// returns the popover to the list rather than stranding a dead view.
@@ -70,6 +78,14 @@ struct MenuBarContent: View {
         // launch, then one per quarter-million tokens.
         .task(id: costRefreshKey) {
             model.refreshDashboard()
+        }
+        // Fires only on the transition to and from an empty session list, not
+        // on every render: the check is a `stat`/`readdir` pair, cheap but
+        // still a filesystem read that has no reason to run while there is a
+        // session on screen to say Claude Code plainly works here.
+        .task(id: model.sessions.isEmpty) {
+            guard model.sessions.isEmpty else { return }
+            claudeCodePresence = ClaudeCodePresence.detect()
         }
     }
 
@@ -374,8 +390,21 @@ struct MenuBarContent: View {
     private var sessionList: some View {
         Group {
             if model.sessions.isEmpty {
-                // Zero sessions is an ordinary state, not an error.
-                UnavailableView("No live sessions", compact: true)
+                if claudeCodePresence.isUsable {
+                    // Zero sessions is an ordinary state, not an error.
+                    UnavailableView("No live sessions", compact: true)
+                } else {
+                    // An absent or never-run Claude Code is a different
+                    // ordinary state, and reads as a broken meter without its
+                    // own message: nothing distinguishes "quiet right now"
+                    // from "there is nothing here to ever read." See
+                    // `ClaudeCodePresence`.
+                    UnavailableView(
+                        claudeCodePresence.title?.string(in: preferences.appLanguage) ?? "No live sessions",
+                        reason: claudeCodePresence.detail?.string(in: preferences.appLanguage),
+                        compact: true
+                    )
+                }
             } else {
                 VStack(alignment: .leading, spacing: Theme.Popover.listGap) {
                     ForEach(model.sessions) { session in

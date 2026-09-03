@@ -208,6 +208,7 @@ final class DeltaBuilder {
     private var gitBranch: String?
     private var workingDirectory: String?
     private var usageByDay: [String: TokenUsage] = [:]
+    private var usageByModel: [String: TokenUsage] = [:]
 
     private let calendar: Calendar
     /// The `[dayStart, dayEnd)` interval `cachedDay` is valid for. A record
@@ -249,6 +250,14 @@ final class DeltaBuilder {
             if let date {
                 usageByDay[dayString(for: date), default: .zero] += block
             }
+            // This record's own model, not `self.model`: `self.model` is
+            // "newest wins" for the delta as a whole, but attribution needs
+            // the model that actually produced *this* usage block. A record
+            // with none is not dropped -- the tokens are real -- it is
+            // counted under a bucket that says so.
+            let recordModel = record.message?.model
+            let modelKey = (recordModel?.isEmpty == false) ? recordModel! : ModelAttribution.unknown
+            usageByModel[modelKey, default: .zero] += block
         }
         if let model = record.message?.model, !model.isEmpty {
             self.model = model
@@ -331,6 +340,7 @@ final class DeltaBuilder {
             gitBranch: gitBranch,
             workingDirectory: workingDirectory,
             usageByDay: usageByDay,
+            usageByModel: usageByModel,
             earliestTimestamp: earliestTimestamp
         )
     }

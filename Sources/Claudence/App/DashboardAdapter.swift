@@ -15,7 +15,24 @@ extension MonitorViewModel {
     /// a title: on a machine with a week of history it drew seven empty columns
     /// beside the real ones, which reads as seven days of zero rather than as
     /// seven days of nothing recorded.
-    func refreshDashboard(days: Int = 7, now: Date = Date()) {
+    func refreshDashboard(
+        days: Int = 7,
+        now: Date = Date(),
+        // Read fresh on every call rather than cached, the same reasoning
+        // `usageRefreshInterval`'s own doc block gives for reading its
+        // preference on every pass: a price typed into Settings should reach
+        // the tile at the next refresh, not at the next launch.
+        //
+        // Read directly from `UserDefaults` rather than threaded through
+        // `MonitorViewModel`, unlike `usageRefreshInterval` and `isLiveOnly`:
+        // this value never reaches the engine or a file, so there is no seam
+        // for it to cross, and `MonitorViewModel` holds no reference to
+        // `Preferences` to read it from. `Preferences.subscriptionMonthlyPriceKey`
+        // names the one key this shares with it, so the string is defined
+        // once even though it is read from two places.
+        subscriptionMonthlyPrice: Double? = UserDefaults.standard
+            .object(forKey: Preferences.subscriptionMonthlyPriceKey) as? Double
+    ) {
         guard let analytics else {
             dashboard = DashboardData(
                 windows: usageState.windows,
@@ -29,10 +46,13 @@ extension MonitorViewModel {
                 // come from the usage endpoint and the in-process burn
                 // trackers, neither of which needs a database. A store this
                 // application cannot open is a reason to withhold history, not
-                // a reason to withhold these.
+                // a reason to withhold these. The account plan and the
+                // subscription price are the same: neither reads the store.
                 projections: usageProjections(now: now),
                 bindingWindowName: bindingWindow(now: now)?.window.name,
-                burnLeader: burnLeaderInfo()
+                burnLeader: burnLeaderInfo(),
+                accountPlanDisplayName: accountPlan?.displayName,
+                subscriptionMonthlyPrice: subscriptionMonthlyPrice
             )
             return
         }
@@ -108,7 +128,9 @@ extension MonitorViewModel {
             priceTableStaleDays: Self.priceTableStaleDays(analytics.priceProvenance, now: now),
             projections: usageProjections(now: now),
             bindingWindowName: bindingWindow(now: now)?.window.name,
-            burnLeader: burnLeaderInfo()
+            burnLeader: burnLeaderInfo(),
+            accountPlanDisplayName: accountPlan?.displayName,
+            subscriptionMonthlyPrice: subscriptionMonthlyPrice
         )
     }
 

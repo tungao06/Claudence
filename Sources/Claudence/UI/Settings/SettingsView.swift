@@ -420,6 +420,10 @@ enum AppVersion {
 struct SettingsView: View {
     @Bindable var preferences: Preferences
     let storeMode: StoreModeController
+    /// Passed through to `PrivacySettings` for one reason: the problem
+    /// report (9.10c) names the live session count, and that number lives on
+    /// the view model, not on the store.
+    let model: MonitorViewModel
 
     var body: some View {
         ScrollView {
@@ -428,8 +432,9 @@ struct SettingsView: View {
                 MotionSettings(preferences: preferences)
                 MenuBarSettings(preferences: preferences)
                 SessionsSettings(preferences: preferences)
+                SubscriptionSettings(preferences: preferences)
                 NotificationSettings(preferences: preferences)
-                PrivacySettings(storeMode: storeMode)
+                PrivacySettings(storeMode: storeMode, model: model)
                 QuitSection()
             }
             .frame(width: Theme.Layout.settingsWidth, alignment: .leading)
@@ -524,10 +529,11 @@ struct SettingsHeader: View {
 struct SettingsScene: Scene {
     let preferences: Preferences
     let storeMode: StoreModeController
+    let model: MonitorViewModel
 
     var body: some Scene {
         Settings {
-            SettingsView(preferences: preferences, storeMode: storeMode)
+            SettingsView(preferences: preferences, storeMode: storeMode, model: model)
         }
     }
 }

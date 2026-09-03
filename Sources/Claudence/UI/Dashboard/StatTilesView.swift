@@ -241,7 +241,29 @@ struct StatTilesView: View {
                     compact: true
                 )
             }
+            if let subscriptionLine {
+                caption(subscriptionLine, ink: Self.amberTint.ink)
+            }
         }
+    }
+
+    /// The plan's own price, named beside the API-equivalent estimate so the
+    /// reader is not recalling it from memory (9.14).
+    ///
+    /// Both figures state their own period rather than being left to imply a
+    /// comparison neither earns on its own: the tile above this line is what
+    /// today's tokens would have cost on the API, and this is a fixed charge
+    /// for the whole month, not the same question asked twice. Nil whenever
+    /// the preference is unset, which is the default -- CLAUDE.md forbids
+    /// hard-coding a published subscription price, so this is the one dollar
+    /// figure on the tile that the reader supplies rather than one Claudence
+    /// measures.
+    private var subscriptionLine: String? {
+        guard let price = data.subscriptionMonthlyPrice else { return nil }
+        guard let plan = data.accountPlanDisplayName else {
+            return "Your plan costs \(Format.cost(price))/mo"
+        }
+        return "\(plan) costs \(Format.cost(price))/mo"
     }
 
     /// The word "estimated" travels with the number wherever it goes, and the
@@ -381,11 +403,17 @@ struct StatTilesView: View {
     }
 
     private var spokenCost: String {
-        guard let cost = data.todayCost else {
-            return "API equivalent unavailable. "
+        var text: String
+        if let cost = data.todayCost {
+            text = "API equivalent today, \(Format.cost(cost)). \(costCaption.capitalized). "
+                + "This is what today's tokens would have cost on the API, not an amount owed."
+        } else {
+            text = "API equivalent unavailable. "
                 + (unpricedReason ?? "No price is known for one of today's models") + "."
         }
-        return "API equivalent today, \(Format.cost(cost)). \(costCaption.capitalized). "
-            + "This is what today's tokens would have cost on the API, not an amount owed."
+        if let subscriptionLine {
+            text += " \(subscriptionLine)."
+        }
+        return text
     }
 }

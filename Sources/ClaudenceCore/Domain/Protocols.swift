@@ -113,6 +113,15 @@ public struct TranscriptDelta: Sendable, Equatable {
     /// session that ran past midnight lands on every day it touched instead of
     /// only the one it started on.
     public var usageByDay: [String: TokenUsage]
+    /// Billable usage bucketed by each record's own `message.model`.
+    ///
+    /// Every assistant record carries its own usage block and its own model,
+    /// so this is exact attribution, not an apportionment: a session that
+    /// used two models has each record counted under the model that actually
+    /// produced it. A record with no model is counted under
+    /// `ModelAttribution.unknown` rather than dropped or guessed onto
+    /// whichever model was seen elsewhere in the delta.
+    public var usageByModel: [String: TokenUsage]
     /// The earliest record's own timestamp in this delta, kept apart from
     /// `latestTimestamp` because a first import has no registry `startedAt` to
     /// fall back on and needs the transcript's own first moment instead.
@@ -136,6 +145,7 @@ public struct TranscriptDelta: Sendable, Equatable {
         gitBranch: String? = nil,
         workingDirectory: String? = nil,
         usageByDay: [String: TokenUsage] = [:],
+        usageByModel: [String: TokenUsage] = [:],
         earliestTimestamp: Date? = nil,
         outcome: TranscriptReadOutcome = .read
     ) {
@@ -153,6 +163,7 @@ public struct TranscriptDelta: Sendable, Equatable {
         self.gitBranch = gitBranch
         self.workingDirectory = workingDirectory
         self.usageByDay = usageByDay
+        self.usageByModel = usageByModel
         self.earliestTimestamp = earliestTimestamp
         self.outcome = outcome
     }

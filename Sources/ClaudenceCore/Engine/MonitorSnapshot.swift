@@ -199,4 +199,5 @@ public struct BurnRateTracker: Sendable {
 struct SubagentFigure: Sendable, Equatable {
     var usage: TokenUsage
     var count: Int
+    var usageByModel: [String: TokenUsage] = [:]
 }

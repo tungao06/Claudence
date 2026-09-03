@@ -34,6 +34,8 @@ private func makeSession(
     usage: TokenUsage = .zero,
     subagentUsage: TokenUsage = .zero,
     subagentCount: Int = 0,
+    usageByModel: [String: TokenUsage] = [:],
+    subagentUsageByModel: [String: TokenUsage] = [:],
     model: String? = "claude-opus-4",
     version: String? = "2.0.1"
 ) -> AISession {
@@ -50,6 +52,8 @@ private func makeSession(
         usage: usage,
         subagentUsage: subagentUsage,
         subagentCount: subagentCount,
+        usageByModel: usageByModel,
+        subagentUsageByModel: subagentUsageByModel,
         model: model,
         claudeCodeVersion: version
     )
@@ -617,6 +621,139 @@ func rollupsFollowProjectRename() {
     #expect(rows.first?.1 == 500)
     #expect(rows.first?.2 == 1)
     #expect(store.dailyTotals(days: 1).first?.usage.freshInput == 500)
+}
+
+// MARK: - Model rollups
+
+@Test("a session's per-model split lands in daily_model_rollups and sums to the combined total")
+func modelRollupsSplitAndReconcile() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+    let now = Date()
+
+    store.upsert(session: makeSession(
+        id: "two-models", project: "P", startedAt: now,
+        usage: TokenUsage(freshInput: 100, output: 10),
+        subagentUsage: TokenUsage(freshInput: 40, output: 4),
+        subagentCount: 1,
+        usageByModel: ["claude-sonnet-5": TokenUsage(freshInput: 100, output: 10)],
+        subagentUsageByModel: ["claude-opus-5": TokenUsage(freshInput: 40, output: 4)]
+    ))
+
+    let rows = try! store.connection!.query(
+        "SELECT model, fresh_input, output FROM daily_model_rollups WHERE project_name = 'P' ORDER BY model"
+    ) { (model: $0.string(0), freshInput: $0.int(1), output: $0.int(2)) }
+
+    #expect(rows.count == 2)
+    #expect(rows.first { $0.model == "claude-sonnet-5" }?.freshInput == 100)
+    #expect(rows.first { $0.model == "claude-opus-5" }?.freshInput == 40)
+
+    let summedFreshInput = rows.reduce(0) { $0 + $1.freshInput }
+    #expect(summedFreshInput == 140) // matches the session's combinedUsage.freshInput
+
+    let report = store.monthlyTotals(since: now.addingTimeInterval(-60))
+    #expect(report.includesSubagentTokens)
+    let project = try! #require(report.rows.first { $0.projectName == "P" })
+    #expect(project.usage.freshInput == 140)
+    #expect(project.usageByModel.values.reduce(0) { $0 + $1.freshInput } == project.usage.freshInput)
+}
+
+@Test("the incremental model rollup and a full repair agree")
+func modelRollupsIncrementalAndRepairAgree() {
+    let temp = TempDatabase()
+    let store = ClaudenceStore(url: temp.url)
+    let now = Date()
+
+    store.upsert(session: makeSession(
+        id: "s1", project: "P", startedAt: now,
+        usage: TokenUsage(freshInput: 100),
+        usageByModel: ["claude-sonnet-5": TokenUsage(freshInput: 100)]
+    ))
+    store.upsert(session: makeSession(
+        id: "s2", project: "P", startedAt: now,
+        usage: TokenUsage(freshInput: 55),
+        subagentUsage: TokenUsage(freshInput: 5),
+        usageByModel: ["claude-opus-5": TokenUsage(freshInput: 55)],
+        subagentUsageByModel: ["claude-sonnet-5": TokenUsage(freshInput: 5)]
+    ))
+    // Updated a second time, so the incremental writer has actually
+    // subtracted a previous per-model contribution, not only added one.
+    store.upsert(session: makeSession(
+        id: "s1", project: "P", startedAt: now,
+        usage: TokenUsage(freshInput: 300),
+        usageByModel: ["claude-sonnet-5": TokenUsage(freshInput: 300)]
+    ))
+
+    func snapshot() -> [[String: SQLiteValue]] {
+        // Read as plain rows so "before" and "after" can be compared
+        // structurally rather than through a second, hand-written aggregate.
+        try! store.connection!.query(
+            "SELECT day, project_name, model, fresh_input FROM daily_model_rollups ORDER BY day, project_name, model"
+        ) { row in
+            [
+                "day": .text(row.string(0)),
+                "project_name": .text(row.string(1)),
+                "model": .text(row.string(2)),
+                "fresh_input": .integer(Int64(row.int(3))),
+            ]
+        }
+    }
+
+    let before = snapshot()
+    #expect(!before.isEmpty)
+
+    store.recomputeRollups()
+    let after = snapshot()
+
+    #expect(before == after)
+}
+
+@Test("the migration from a database with no model tables preserves existing rows")
+func migrationPreservesRowsAcrossModelMigration() throws {
+    let temp = TempDatabase()
+
+    // A real version 3 file, built by running only migrations 1 through 3.
+    let seeded = try SQLiteDatabase(url: temp.url)
+    for migration in Schema.migrations where migration.version <= 3 {
+        for statement in migration.statements { try seeded.execute(statement) }
+    }
+    try seeded.execute("PRAGMA user_version = 3")
+    try seeded.execute(
+        """
+        INSERT INTO sessions (id, project_name, working_directory, provider, pid, proc_start,
+                              started_at, last_activity_at, model, claude_code_version,
+                              fresh_input, cache_creation, cache_read, output, thinking)
+        VALUES ('legacy', 'Claudence', '/Users/test/Claudence', 'claudeCode', 77, 'ps-77',
+                1772000000, 1772000600, 'claude-opus-4-1', '2.0.14', 11, 22, 33, 44, 55)
+        """
+    )
+    try seeded.execute(
+        "INSERT INTO daily_rollups (day, project_name, fresh_input, session_count) VALUES ('2026-08-30', 'Claudence', 11, 1)"
+    )
+    #expect(try Schema.userVersion(seeded) == 3)
+    seeded.close()
+
+    let migrated = try SQLiteDatabase(url: temp.url)
+    #expect(try Schema.migrate(migrated) == Schema.current)
+    let tables = try migrated.query(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+    ) { $0.string(0) }
+    for expected in ["daily_model_rollups", "session_model_totals", "subagent_model_totals"] {
+        #expect(tables.contains(expected), "missing table \(expected)")
+    }
+    migrated.close()
+
+    let store = ClaudenceStore(url: temp.url)
+    #expect(store.health == .healthy)
+    let legacy = try #require(store.session(id: "legacy"))
+    #expect(legacy.usage == TokenUsage(freshInput: 11, cacheCreation: 22, cacheRead: 33, output: 44, thinking: 55))
+    // The pre-migration rollup row is untouched -- migrating adds tables,
+    // it never rewrites what an earlier version already computed.
+    #expect(store.dailyTotals(days: 60).contains { $0.usage.freshInput == 11 })
+    // No model breakdown exists for a session recorded before the model
+    // tables existed, and reading it back says so honestly rather than
+    // fabricating a bucket.
+    #expect(legacy.usageByModel.isEmpty)
 }
 
 // MARK: - Transactions

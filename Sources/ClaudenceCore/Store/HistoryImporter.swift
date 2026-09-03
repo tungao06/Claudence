@@ -269,8 +269,13 @@ public struct HistoryImporter: Sendable {
         let projectName = existing?.projectName ?? HistoryImporter.projectName(forWorkingDirectory: workingDirectory)
 
         let usage = (existing?.usage ?? .zero) + delta.usage
+        // Exact, the same way `usage` above is: `delta.usageByModel` is a sum
+        // of real records' own model fields, not a guess, and folding it onto
+        // whatever was already stored is the same additive rule the scalar
+        // total follows.
+        let usageByModel = mergeUsageByModel(existing?.usageByModel ?? [:], delta.usageByModel)
 
-        let (subagentUsage, subagentCount) = importSubagents(
+        let (subagentUsage, subagentCount, subagentUsageByModel) = importSubagents(
             sessionID: sessionID,
             workingDirectory: workingDirectory,
             existing: existing,
@@ -289,6 +294,8 @@ public struct HistoryImporter: Sendable {
             usage: usage,
             subagentUsage: subagentUsage,
             subagentCount: subagentCount,
+            usageByModel: usageByModel,
+            subagentUsageByModel: subagentUsageByModel,
             model: delta.latestModel ?? existing?.model,
             claudeCodeVersion: existing?.claudeCodeVersion
         )
@@ -310,7 +317,7 @@ public struct HistoryImporter: Sendable {
         workingDirectory: String,
         existing: AISession?,
         into report: inout Report
-    ) -> (usage: TokenUsage, count: Int) {
+    ) -> (usage: TokenUsage, count: Int, usageByModel: [String: TokenUsage]) {
         guard let descriptors = subagentLocator.listSubagents(
             forSession: sessionID,
             workingDirectory: workingDirectory
@@ -319,15 +326,20 @@ public struct HistoryImporter: Sendable {
             report.failures.append(
                 Failure(path: directory?.path ?? "\(workingDirectory)/subagents", reason: "cannot list subagent directory")
             )
-            return (existing?.subagentUsage ?? .zero, existing?.subagentCount ?? 0)
+            return (
+                existing?.subagentUsage ?? .zero,
+                existing?.subagentCount ?? 0,
+                existing?.subagentUsageByModel ?? [:]
+            )
         }
-        guard !descriptors.isEmpty else { return (.zero, 0) }
+        guard !descriptors.isEmpty else { return (.zero, 0, [:]) }
 
         let existingTotals = Dictionary(
             uniqueKeysWithValues: store.subagentTotals(forSession: sessionID).map { ($0.subagentID, $0) }
         )
 
         var measured = TokenUsage.zero
+        var measuredByModel: [String: TokenUsage] = [:]
         for descriptor in descriptors {
             let previous = existingTotals[descriptor.id]
             let before = store.cursor(forSession: SubagentTracker.cursorKey(for: descriptor))?.byteOffset ?? 0
@@ -341,7 +353,10 @@ public struct HistoryImporter: Sendable {
                 // The last known figure for this one subagent still counts
                 // toward the session's measured total; only its own file
                 // failed to answer this pass.
-                if let previous { measured += previous.usage }
+                if let previous {
+                    measured += previous.usage
+                    measuredByModel = mergeUsageByModel(measuredByModel, previous.usageByModel)
+                }
                 continue
             }
 
@@ -350,21 +365,24 @@ public struct HistoryImporter: Sendable {
             report.subagentFilesRead += 1
 
             let usage = (previous?.usage ?? .zero) + delta.usage
+            let usageByModel = mergeUsageByModel(previous?.usageByModel ?? [:], delta.usageByModel)
             let total = SubagentTotal(
                 parentSessionID: sessionID,
                 subagentID: descriptor.id,
                 agentType: descriptor.agentType ?? previous?.agentType,
                 taskDescription: descriptor.taskDescription ?? previous?.taskDescription,
                 usage: usage,
+                usageByModel: usageByModel,
                 recordsParsed: (previous?.recordsParsed ?? 0) + delta.recordsParsed,
                 lastActivityAt: [previous?.lastActivityAt, delta.latestTimestamp].compactMap { $0 }.max(),
                 model: delta.latestModel ?? previous?.model
             )
             store.upsertSubagentTotal(total)
             measured += usage
+            measuredByModel = mergeUsageByModel(measuredByModel, usageByModel)
         }
 
-        return (measured, descriptors.count)
+        return (measured, descriptors.count, measuredByModel)
     }
 
     /// One cumulative `usage_samples` row per local day `delta.usageByDay`

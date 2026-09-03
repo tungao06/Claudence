@@ -171,6 +171,52 @@ struct TranscriptTests {
         #expect(delta.latestModel == "claude-opus-5")
     }
 
+    @Test("A session that used two models splits between them, and the split sums to the session total")
+    func usageByModelSplitsAndSumsToTotal() {
+        let fixture = TranscriptFixture()
+        fixture.appendLines([
+            fixture.assistantRecord(input: 1, cacheCreation: 10, cacheRead: 100, output: 5, thinking: 2),
+            fixture.assistantRecord(input: 3, cacheCreation: 20, cacheRead: 200, output: 7, thinking: 4),
+            fixture.assistantRecord(
+                model: "claude-opus-5",
+                input: 5, cacheCreation: 30, cacheRead: 300, output: 9, thinking: 6
+            ),
+        ])
+
+        let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
+
+        #expect(delta.usageByModel["claude-sonnet-5"] == TokenUsage(
+            freshInput: 4, cacheCreation: 30, cacheRead: 300, output: 12, thinking: 6
+        ))
+        #expect(delta.usageByModel["claude-opus-5"] == TokenUsage(
+            freshInput: 5, cacheCreation: 30, cacheRead: 300, output: 9, thinking: 6
+        ))
+        // Two buckets, no third. Never computed independently of `usage`.
+        #expect(delta.usageByModel.count == 2)
+        let summed = delta.usageByModel.values.reduce(TokenUsage.zero, +)
+        #expect(summed == delta.usage)
+    }
+
+    @Test("A record with no model is counted under the unknown bucket, and the total still reconciles")
+    func usageByModelCountsMissingModelAsUnknown() {
+        let fixture = TranscriptFixture()
+        fixture.appendLines([
+            fixture.assistantRecord(model: "claude-sonnet-5", input: 1, cacheCreation: 0, cacheRead: 0, output: 2, thinking: 0),
+            // An empty `model` field is the closest a real record gets to
+            // absent: the JSON key is always present in a real transcript,
+            // but its value can be empty on malformed or very old lines.
+            fixture.assistantRecord(model: "", input: 9, cacheCreation: 0, cacheRead: 0, output: 3, thinking: 0),
+        ])
+
+        let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
+
+        #expect(delta.usageByModel["claude-sonnet-5"] == TokenUsage(freshInput: 1, output: 2))
+        #expect(delta.usageByModel[ModelAttribution.unknown] == TokenUsage(freshInput: 9, output: 3))
+        let summed = delta.usageByModel.values.reduce(TokenUsage.zero, +)
+        #expect(summed == delta.usage)
+        #expect(delta.usage == TokenUsage(freshInput: 10, output: 5))
+    }
+
     // MARK: - Incremental tailing
 
     @Test("A second read after appending returns only the new tokens")

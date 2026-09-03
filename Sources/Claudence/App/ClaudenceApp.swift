@@ -8,6 +8,10 @@ struct ClaudenceApp: App {
     /// content until the popover is first opened, so an observer that lived
     /// there was not listening yet the first time Settings changed the theme.
     @State private var appearance: AppearanceController
+    /// Same reasoning as `appearance`, for a stronger case: this has to show
+    /// something *before* the popover has ever been opened, not merely stay
+    /// correct once it has. See `OnboardingWindowController`.
+    @State private var onboarding: OnboardingWindowController
 
     init() {
         let services = Composition.makeServices()
@@ -15,6 +19,23 @@ struct ClaudenceApp: App {
         let appearance = AppearanceController(preferences: services.preferences)
         _appearance = State(initialValue: appearance)
         appearance.start()
+
+        let onboarding = OnboardingWindowController(preferences: services.preferences)
+        _onboarding = State(initialValue: onboarding)
+        // Deferred by one run loop turn for the same reason `appearance.start()`
+        // defers touching `NSApp`: it is still nil while `init()` runs, and an
+        // `NSWindow` built against a nil `NSApp` is the same crash-before-anything-
+        // draws trap documented on `applyAppearance`.
+        Task { @MainActor in
+            onboarding.presentIfNeeded {
+                OnboardingView(
+                    preferences: services.preferences,
+                    historyImportRunner: services.historyImportRunner,
+                    presence: ClaudeCodePresence.detect(),
+                    onFinish: { onboarding.finish() }
+                )
+            }
+        }
     }
 
     var body: some Scene {
@@ -71,6 +92,19 @@ struct ClaudenceApp: App {
                     services.model.isLiveOnly = isLiveOnly
                     services.model.refreshDashboard()
                 }
+                // Covers the one path `start()`'s own guard cannot close by
+                // itself: the popover was opened, and so this `.task` already
+                // ran and returned early, before onboarding finished. That
+                // `.task` never fires a second time -- this content stays
+                // mounted for the life of the process -- so finishing
+                // onboarding needs its own way back in. The ordinary path
+                // never reaches this at all: onboarding's own window is what
+                // is on screen at launch, and by the time anyone opens the
+                // popover for the first time this preference is already true.
+                .onChange(of: services.preferences.hasCompletedOnboarding) { _, completed in
+                    guard completed else { return }
+                    Task { await start() }
+                }
         } label: {
             MenuBarLabel(model: services.model, preferences: services.preferences)
         }
@@ -88,7 +122,7 @@ struct ClaudenceApp: App {
         // a layout that was correct.
         .defaultSize(width: Theme.Layout.dashboardWidth, height: 780)
 
-        SettingsScene(preferences: services.preferences, storeMode: services.storeMode)
+        SettingsScene(preferences: services.preferences, storeMode: services.storeMode, model: services.model)
     }
 
     private func rebuildNotificationFilter() {
@@ -99,6 +133,11 @@ struct ClaudenceApp: App {
     /// idle machine does no work. Usage runs on its own cadence inside the view
     /// model: filesystem churn must never trigger a network request.
     private func start() async {
+        // Nothing here runs -- and, in particular, nothing asks the Keychain
+        // for a token -- until the onboarding screen has been dismissed once.
+        // See `OnboardingWindowController` and the `hasCompletedOnboarding`
+        // observer above for how this guard gets a second chance to pass.
+        guard services.preferences.hasCompletedOnboarding else { return }
         guard !services.model.isRunning else { return }
 
         // The refresh interval reaches outside its own view and is applied

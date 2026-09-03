@@ -16,6 +16,11 @@ public actor MonitorEngine {
     private var snapshot = MonitorSnapshot.empty
     private var burnTrackers: [String: BurnRateTracker] = [:]
     private var accumulated: [String: TokenUsage] = [:]
+    /// This session's own per-model breakdown, accumulated from
+    /// `delta.usageByModel` the same way `accumulated` accumulates
+    /// `delta.usage`. Parent transcript only; the subagent side is recomputed
+    /// fresh each pass below, the same way `subagentUsage` already is.
+    private var accumulatedByModel: [String: [String: TokenUsage]] = [:]
     private var subagentsBySession: [String: [AISubagent]] = [:]
     /// The last subagent total this process established for a session, seeded
     /// from the store. Used only when a pass cannot establish a new one.
@@ -183,6 +188,10 @@ public actor MonitorEngine {
             accumulated[session.id] = running
             session.usage = running
 
+            let runningByModel = mergeUsageByModel(accumulatedByModel[session.id] ?? [:], delta.usageByModel)
+            accumulatedByModel[session.id] = runningByModel
+            session.usageByModel = runningByModel
+
             if let activity = delta.latestActivity {
                 session.currentActivity = activity
             }
@@ -226,7 +235,11 @@ public actor MonitorEngine {
                     let measured = spawned.reduce(TokenUsage.zero) { $0 + $1.usage }
                     session.subagentUsage = measured
                     session.subagentCount = spawned.count
-                    lastKnownSubagents[session.id] = SubagentFigure(usage: measured, count: spawned.count)
+                    let measuredByModel = mergeUsageByModel(spawned.map(\.usageByModel))
+                    session.subagentUsageByModel = measuredByModel
+                    lastKnownSubagents[session.id] = SubagentFigure(
+                        usage: measured, count: spawned.count, usageByModel: measuredByModel
+                    )
                 case .withheld(let known):
                     // The tracker refuses to write a figure it could not
                     // establish, and until 2026-09-03 this line wrote it for
@@ -243,10 +256,12 @@ public actor MonitorEngine {
                     let figure = lastKnownSubagents[session.id]
                         ?? SubagentFigure(
                             usage: known.reduce(TokenUsage.zero) { $0 + $1.usage },
-                            count: known.count
+                            count: known.count,
+                            usageByModel: mergeUsageByModel(known.map(\.usageByModel))
                         )
                     session.subagentUsage = figure.usage
                     session.subagentCount = figure.count
+                    session.subagentUsageByModel = figure.usageByModel
                     if !known.isEmpty { subagentsBySession[session.id] = known }
                 }
             }
@@ -418,17 +433,54 @@ public actor MonitorEngine {
         seeded.insert(session.id)
         guard let stored else { return true }
         accumulated[session.id] = stored.usage
+        accumulatedByModel[session.id] = stored.usageByModel
         // The durable subagent figure, which is what a pass that cannot read
         // the subagent directory falls back to rather than zero.
         lastKnownSubagents[session.id] = SubagentFigure(
             usage: stored.subagentUsage,
-            count: stored.subagentCount
+            count: stored.subagentCount,
+            usageByModel: stored.subagentUsageByModel
         )
         // A session read back from the store carries no per-record detail: the
         // schema keeps tokens, not tool names or paths. Those accumulators stay
         // empty and rebuild from the records read after the resume point, which
         // is honest about what this process has actually observed.
         return true
+    }
+
+    /// Drops every accumulated total this process holds, for the moment the
+    /// stored history is deleted underneath it.
+    ///
+    /// The pairing rule again, from the third direction. `deleteStoredData`
+    /// removes the session rows and the read cursors together, which is correct
+    /// on its own: a cursor without its total resumes at byte N against a total
+    /// of zero. What it cannot reach is this process's memory, where the totals
+    /// are still whole. Left alone, the next pass would read every transcript
+    /// from byte 0, because the cursors are gone, and add a file the
+    /// accumulator already contains: the same double count the reopen carry and
+    /// the withheld-answer skips exist to prevent, arriving through a delete
+    /// button instead.
+    ///
+    /// Clearing here restores the pair. Cursors are at zero and totals are at
+    /// zero, so the next pass re-reads each transcript once and arrives at the
+    /// figure the file actually holds.
+    public func forgetAccumulatedTotals() async {
+        accumulated.removeAll()
+        accumulatedByModel.removeAll()
+        accumulatedTools.removeAll()
+        accumulatedPaths.removeAll()
+        accumulatedTrail.removeAll()
+        accumulatedRecords.removeAll()
+        lastRequestUsage.removeAll()
+        lastUpserted.removeAll()
+        lastKnownSubagents.removeAll()
+        subagentsBySession.removeAll()
+        seeded.removeAll()
+        // The burn trackers hold rates rather than totals, and a rate measured
+        // against a total that no longer exists is not a rate. They go too.
+        burnTrackers.removeAll()
+        todayCache = nil
+        await subagents?.forgetEverything()
     }
 
     /// A session that disappeared from discovery has ended. Its accumulator is
@@ -450,6 +502,7 @@ public actor MonitorEngine {
             store?.markEnded(sessionID: id, at: date)
             burnTrackers[id] = nil
             accumulated[id] = nil
+            accumulatedByModel[id] = nil
             lastUpserted[id] = nil
             // Every per-session accumulator, not only the token one. Leaving
             // any of these behind lets a recycled session id inherit another

@@ -78,6 +78,32 @@ public struct TokenUsage: Sendable, Codable, Equatable {
     }
 }
 
+/// The bucket a record with no `message.model` is attributed to. Every
+/// assistant record carries its own model, so this is rare in practice; when
+/// it happens the tokens are still real and still belong to a total, so they
+/// are counted here rather than silently dropped or guessed onto whichever
+/// model was seen last.
+public enum ModelAttribution {
+    public static let unknown = "unknown"
+}
+
+/// Merges per-model usage dictionaries, summing `TokenUsage` for a model
+/// present in more than one. The one place this arithmetic is written, used
+/// everywhere a transcript delta's or a subagent's per-model breakdown is
+/// folded into a running accumulator.
+public func mergeUsageByModel(_ dictionaries: [[String: TokenUsage]]) -> [String: TokenUsage] {
+    var result: [String: TokenUsage] = [:]
+    for dictionary in dictionaries {
+        for (model, usage) in dictionary { result[model, default: .zero] += usage }
+    }
+    return result
+}
+
+/// Convenience overload for the common two-or-few-dictionaries call site.
+public func mergeUsageByModel(_ dictionaries: [String: TokenUsage]...) -> [String: TokenUsage] {
+    mergeUsageByModel(dictionaries)
+}
+
 // MARK: - Activity
 
 /// What a session is currently doing, derived from tool name plus file path only.
@@ -119,6 +145,16 @@ public struct AISession: Sendable, Identifiable, Equatable {
     /// can be displayed and so nothing double-counts.
     public var subagentUsage: TokenUsage
     public var subagentCount: Int
+    /// This session's own transcript, split by `message.model`. Exact
+    /// attribution: every assistant record carries its own model and its own
+    /// usage block, so this is a sum of real records, not an apportionment.
+    /// A record with no model is counted under `ModelAttribution.unknown`.
+    public var usageByModel: [String: TokenUsage]
+    /// The same split for every subagent this session spawned, summed
+    /// together. Kept apart from `usageByModel` for the same reason
+    /// `subagentUsage` is kept apart from `usage`: each has its own cursor
+    /// discipline, and collapsing them would leave neither resumable.
+    public var subagentUsageByModel: [String: TokenUsage]
     public var model: String?
     public let claudeCodeVersion: String?
     /// Tool-use counts by name, accumulated across the session. Names only.
@@ -159,6 +195,8 @@ public struct AISession: Sendable, Identifiable, Equatable {
         usage: TokenUsage = .zero,
         subagentUsage: TokenUsage = .zero,
         subagentCount: Int = 0,
+        usageByModel: [String: TokenUsage] = [:],
+        subagentUsageByModel: [String: TokenUsage] = [:],
         model: String? = nil,
         claudeCodeVersion: String? = nil,
         toolCounts: [String: Int] = [:],
@@ -182,6 +220,8 @@ public struct AISession: Sendable, Identifiable, Equatable {
         self.usage = usage
         self.subagentUsage = subagentUsage
         self.subagentCount = subagentCount
+        self.usageByModel = usageByModel
+        self.subagentUsageByModel = subagentUsageByModel
         self.model = model
         self.claudeCodeVersion = claudeCodeVersion
         self.toolCounts = toolCounts
@@ -196,6 +236,13 @@ public struct AISession: Sendable, Identifiable, Equatable {
     /// What this session actually cost: its own transcript plus every subagent
     /// it spawned. Every total shown to the user uses this.
     public var combinedUsage: TokenUsage { usage + subagentUsage }
+
+    /// `combinedUsage`, split by model. Sums to `combinedUsage` by
+    /// construction: it is the same two figures, `usage` and `subagentUsage`,
+    /// merged by model instead of collapsed to one number.
+    public var combinedUsageByModel: [String: TokenUsage] {
+        mergeUsageByModel(usageByModel, subagentUsageByModel)
+    }
 
     /// Tool mix, busiest first. The interface shows the top few.
     public var toolMix: [(name: String, count: Int)] {

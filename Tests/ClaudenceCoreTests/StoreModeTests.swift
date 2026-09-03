@@ -263,3 +263,99 @@ struct ResilientCursorStoreTests {
         )
     }
 }
+
+/// Deleting the stored history takes the read cursors with the session rows,
+/// which is the right pairing on disk and leaves this process holding totals for
+/// transcripts it is about to read again from byte 0. That is the double count
+/// the whole of stage 1 was about, reachable through a delete button.
+@Suite("Clearing the store clears what the engine is carrying")
+struct ClearedStoreTests {
+
+    private struct StubDiscovery: SessionDiscovering {
+        let sourceName = "stub-discovery"
+        let sessions: [AISession]
+        func discover() -> [AISession] { sessions }
+    }
+
+    /// Answers the whole file every time, which is what a reader with no cursor
+    /// does. The engine must therefore not be adding it to anything.
+    private struct WholeFileTranscripts: TranscriptReading, @unchecked Sendable {
+        let sourceName = "whole-file"
+        let usage: TokenUsage
+        func readIncremental(sessionID: String, workingDirectory: String) -> TranscriptDelta {
+            TranscriptDelta(usage: usage, recordsParsed: 3)
+        }
+    }
+
+    @Test("a cleared store leaves the engine's totals at zero, not ahead of it")
+    func forgettingKeepsCursorAndTotalPaired() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudenceClearedStore", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+        let session = AISession(
+            id: "one",
+            pid: 4242,
+            procStart: "Tue Sep  1 19:27:02 2026",
+            projectName: "Claudence",
+            workingDirectory: "/Users/tester/project/Claudence",
+            status: .running,
+            startedAt: Date(),
+            lastActivityAt: Date()
+        )
+        let fileTotal = TokenUsage(freshInput: 100, cacheRead: 400, output: 20)
+        let engine = MonitorEngine(
+            discovery: StubDiscovery(sessions: [session]),
+            transcripts: WholeFileTranscripts(usage: fileTotal),
+            store: store
+        )
+
+        await engine.refreshSessions()
+        #expect(await engine.current().sessions.first?.usage == fileTotal)
+
+        // A second pass without a cursor would double it, which is exactly what
+        // the reader does when the cursors are gone.
+        store.deleteStoredData()
+        await engine.forgetAccumulatedTotals()
+        await engine.refreshSessions()
+
+        let after = try #require(await engine.current().sessions.first)
+        #expect(after.usage == fileTotal)
+        #expect(store.session(id: "one")?.usage == fileTotal)
+    }
+
+    /// The failure the test above prevents, stated as its own case: without the
+    /// forgetting, the same two passes add the file twice.
+    @Test("without forgetting, the same two passes would double the total")
+    func withoutForgettingItDoubles() async throws {
+        let store = ClaudenceStore(url: nil)
+        let session = AISession(
+            id: "one",
+            pid: 4242,
+            procStart: "Tue Sep  1 19:27:02 2026",
+            projectName: "Claudence",
+            workingDirectory: "/Users/tester/project/Claudence",
+            status: .running,
+            startedAt: Date(),
+            lastActivityAt: Date()
+        )
+        let fileTotal = TokenUsage(freshInput: 100, cacheRead: 400, output: 20)
+        let engine = MonitorEngine(
+            discovery: StubDiscovery(sessions: [session]),
+            transcripts: WholeFileTranscripts(usage: fileTotal),
+            store: store
+        )
+
+        await engine.refreshSessions()
+        await engine.refreshSessions()
+
+        // Two passes, each answering with the whole file, and nothing told the
+        // engine to forget: the accumulator holds it twice. This is the state a
+        // delete would leave behind, and the reason `forgetAccumulatedTotals`
+        // exists.
+        #expect(await engine.current().sessions.first?.usage == fileTotal + fileTotal)
+    }
+}

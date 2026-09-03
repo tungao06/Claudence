@@ -37,6 +37,9 @@ import ClaudenceCore
 final class StoreModeController {
     private let store: ClaudenceStore
     private let preferences: Preferences
+    /// Held so a delete can clear what the engine is still carrying. See
+    /// `clearStoredData()`.
+    private let engine: MonitorEngine?
 
     /// Files `ClaudenceStore.removeStoredFile` could not remove, most recent
     /// last. Cleared at the start of every `setLiveOnly` call that attempts a
@@ -47,9 +50,10 @@ final class StoreModeController {
     /// sibling, is still sitting in Application Support.
     private(set) var lastDeletionFailures: [URL] = []
 
-    init(store: ClaudenceStore, preferences: Preferences) {
+    init(store: ClaudenceStore, preferences: Preferences, engine: MonitorEngine? = nil) {
         self.store = store
         self.preferences = preferences
+        self.engine = engine
     }
 
     /// Whether the store is currently meant to be in-memory. Reads the stored
@@ -61,6 +65,40 @@ final class StoreModeController {
     /// counts.
     func storedDataSummary() -> ClaudenceStore.StoredDataSummary {
         store.storedDataSummary()
+    }
+
+    /// The store's condition right now. Exposed for the problem report
+    /// (9.10c): that screen has no `MonitorViewModel` of its own, only the
+    /// store this controller already wraps, and `store.health` is otherwise
+    /// only mirrored through `MonitorViewModel.currentStoreHealth`.
+    var storeHealth: StoreHealth { store.health }
+
+    /// Deletes everything the store holds and reclaims the space (9.10d).
+    ///
+    /// Unlike `setLiveOnly(_:deletingStoredData:)`, this does not change where
+    /// persistence points -- the store keeps writing to the same file
+    /// afterwards, empty until the next write repopulates it.
+    ///
+    /// The engine is told to forget as well, and it has to be. The delete takes
+    /// the read cursors with the session rows, which is the correct pairing on
+    /// disk, but this process still holds every session's accumulated total in
+    /// memory. Left alone, the next pass would find no cursor, read each
+    /// transcript from byte 0, and add a file the accumulator already contains:
+    /// the double count this codebase has now prevented from three other
+    /// directions, arriving through a delete button.
+    ///
+    /// After both halves, cursors and totals are at zero together, so each live
+    /// session re-reads its transcript once and arrives at the figure the file
+    /// actually holds. A session on screen may therefore show a total that
+    /// climbs back over a pass or two rather than one that never moved. That is
+    /// the honest consequence of deleting the history it was resumed from.
+    ///
+    /// What does not come back on its own is everything derived from the rows
+    /// that stay gone: `daily_rollups`, the projects breakdown and the session
+    /// history table all read empty until new activity accumulates.
+    func clearStoredData() async {
+        store.deleteStoredData()
+        await engine?.forgetAccumulatedTotals()
     }
 
     /// Turns live-only mode on or off.

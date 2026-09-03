@@ -396,6 +396,11 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         perform("upsert session") { database in
             try database.withTransaction {
                 let previous = try self.rollupKeyAndUsage(for: session.id, in: database)
+                // Read before either table below is touched, for the same
+                // reason `previous` is: this is what the last upsert for this
+                // id actually wrote, and it has to be subtracted from
+                // `daily_model_rollups` before the new breakdown is added.
+                let previousModels = try self.modelTotals(forSession: session.id, in: database)
 
                 try database.execute(
                     """
@@ -466,30 +471,95 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                         sessionCountDelta: -1,
                         in: database
                     )
+                    // Combined, the same way `previous.usage` above is: parent
+                    // and subagent groups from the row just read, merged by
+                    // model. `previous.day`/`previous.project`, not the
+                    // session's new ones, matching the scalar subtraction.
+                    for (model, usage) in mergeUsageByModel(previousModels.own, previousModels.subagent) {
+                        try self.applyModelRollup(
+                            day: previous.day, project: previous.project, model: model,
+                            usage: usage, sign: -1, in: database
+                        )
+                    }
                 }
 
                 // Combined, not parent-only. `rollupKeyAndUsage` subtracts the
                 // same definition, and the subtract-then-add pair is only self
                 // correcting while both sides agree.
+                let newDay = self.dayString(for: session.startedAt)
                 try self.applyRollup(
-                    day: self.dayString(for: session.startedAt),
+                    day: newDay,
                     project: session.projectName,
                     usage: session.combinedUsage,
                     sign: 1,
                     sessionCountDelta: 1,
                     in: database
                 )
+                for (model, usage) in session.combinedUsageByModel {
+                    try self.applyModelRollup(
+                        day: newDay, project: session.projectName, model: model,
+                        usage: usage, sign: 1, in: database
+                    )
+                }
+
+                // `session_model_totals` is absolute, like `sessions` itself,
+                // so it is replaced wholesale rather than patched: a model
+                // that stops appearing in `usageByModel`/`subagentUsageByModel`
+                // (never happens today, since a delta only adds records, but
+                // nothing here should assume that) must not leave a stale row
+                // behind for `recomputeRollups` to keep counting.
+                try database.execute(
+                    "DELETE FROM session_model_totals WHERE session_id = ?",
+                    [.text(session.id)]
+                )
+                let models = Set(session.usageByModel.keys).union(session.subagentUsageByModel.keys)
+                for model in models {
+                    let own = session.usageByModel[model] ?? .zero
+                    let subagent = session.subagentUsageByModel[model] ?? .zero
+                    try database.execute(
+                        """
+                        INSERT INTO session_model_totals (
+                            session_id, model,
+                            fresh_input, cache_creation, cache_read, output, thinking,
+                            subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
+                            subagent_output, subagent_thinking
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            .text(session.id), .text(model),
+                            .integer(Int64(own.freshInput)),
+                            .integer(Int64(own.cacheCreation)),
+                            .integer(Int64(own.cacheRead)),
+                            .integer(Int64(own.output)),
+                            .integer(Int64(own.thinking)),
+                            .integer(Int64(subagent.freshInput)),
+                            .integer(Int64(subagent.cacheCreation)),
+                            .integer(Int64(subagent.cacheRead)),
+                            .integer(Int64(subagent.output)),
+                            .integer(Int64(subagent.thinking)),
+                        ]
+                    )
+                }
             }
         }
     }
 
     public func session(id: String) -> AISession? {
         perform("read session", default: nil) { database in
-            try database.queryFirst(
+            guard var session = try database.queryFirst(
                 "\(Self.sessionColumns) WHERE id = ?",
                 [.text(id)],
                 transform: Self.makeSession
-            )
+            ) else { return nil }
+            // Seeds `usageByModel`/`subagentUsageByModel` from
+            // `session_model_totals`. Read only here, not in `allSessions`,
+            // because the only caller that needs a stored session's model
+            // breakdown is the accumulator seed (`MonitorEngine.seedIfNeeded`,
+            // `HistoryImporter`), both of which look a session up by id.
+            let models = try self.modelTotals(forSession: id, in: database)
+            session.usageByModel = models.own
+            session.subagentUsageByModel = models.subagent
+            return session
         }
     }
 
@@ -788,6 +858,126 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         }
     }
 
+    // MARK: - Monthly totals
+
+    /// One project's contribution to `monthlyTotals(since:)`.
+    public struct MonthlyProjectUsage: Sendable, Equatable {
+        public let projectName: String
+        public let sessionCount: Int
+        /// Combined: parent plus every subagent, the same figure
+        /// `AISession.combinedUsage` is everywhere else in the app.
+        public let usage: TokenUsage
+        /// `usage`, split by `message.model`. Sums to `usage` field by field.
+        /// A model this build's price table does not cover is still a key
+        /// here rather than folded away, so the caller can say "tokens known,
+        /// price not" instead of the row reading as zero.
+        public let usageByModel: [String: TokenUsage]
+
+        public init(projectName: String, sessionCount: Int, usage: TokenUsage, usageByModel: [String: TokenUsage]) {
+            self.projectName = projectName
+            self.sessionCount = sessionCount
+            self.usage = usage
+            self.usageByModel = usageByModel
+        }
+    }
+
+    /// What `monthlyTotals(since:)` returns.
+    public struct MonthlyUsageReport: Sendable, Equatable {
+        /// Sorted by `usage.total`, largest first: "twelve rows" (spec 9.13)
+        /// means the caller takes a prefix of this.
+        public let rows: [MonthlyProjectUsage]
+        /// Whether every row's `usage` (and `usageByModel`) already includes
+        /// subagent tokens. Always true after 9.1: both are `combinedUsage`
+        /// -shaped, by construction of `applyRollup`/`applyModelRollup`. A
+        /// reader cannot tell that by looking at the number, so it travels
+        /// here as data rather than being left for the view to assert in
+        /// prose.
+        public let includesSubagentTokens: Bool
+
+        public init(rows: [MonthlyProjectUsage], includesSubagentTokens: Bool) {
+            self.rows = rows
+            self.includesSubagentTokens = includesSubagentTokens
+        }
+    }
+
+    /// Per-project totals since `since`: session count, combined tokens, and
+    /// the per-model split, for the monthly table (spec 9.13).
+    ///
+    /// Two indexed range scans, exactly like `dailyTotals`: `daily_rollups`
+    /// grouped by project for the session count and the combined total,
+    /// `daily_model_rollups` grouped by project and model for the split. Both
+    /// tables are maintained incrementally by `upsert(session:)`, so this
+    /// never touches `sessions` and never recomputes anything.
+    public func monthlyTotals(since: Date) -> MonthlyUsageReport {
+        let sinceDay = dayString(for: since)
+
+        let totals: [(project: String, sessionCount: Int, usage: TokenUsage)] =
+            perform("read monthly totals", default: []) { database in
+                try database.query(
+                    """
+                    SELECT project_name, SUM(session_count),
+                           SUM(fresh_input), SUM(cache_creation), SUM(cache_read),
+                           SUM(output), SUM(thinking)
+                      FROM daily_rollups
+                     WHERE day >= ?
+                     GROUP BY project_name
+                    """,
+                    [.text(sinceDay)]
+                ) { row in
+                    (
+                        project: row.string(0),
+                        sessionCount: row.int(1),
+                        usage: TokenUsage(
+                            freshInput: row.int(2), cacheCreation: row.int(3), cacheRead: row.int(4),
+                            output: row.int(5), thinking: row.int(6)
+                        )
+                    )
+                }
+            }
+
+        let modelRows: [(project: String, model: String, usage: TokenUsage)] =
+            perform("read monthly model totals", default: []) { database in
+                try database.query(
+                    """
+                    SELECT project_name, model,
+                           SUM(fresh_input), SUM(cache_creation), SUM(cache_read),
+                           SUM(output), SUM(thinking)
+                      FROM daily_model_rollups
+                     WHERE day >= ?
+                     GROUP BY project_name, model
+                    """,
+                    [.text(sinceDay)]
+                ) { row in
+                    (
+                        project: row.string(0),
+                        model: row.string(1),
+                        usage: TokenUsage(
+                            freshInput: row.int(2), cacheCreation: row.int(3), cacheRead: row.int(4),
+                            output: row.int(5), thinking: row.int(6)
+                        )
+                    )
+                }
+            }
+
+        var byModel: [String: [String: TokenUsage]] = [:]
+        for row in modelRows {
+            byModel[row.project, default: [:]][row.model] = row.usage
+        }
+
+        let rows = totals
+            .map { total in
+                MonthlyProjectUsage(
+                    projectName: total.project,
+                    sessionCount: total.sessionCount,
+                    usage: total.usage,
+                    usageByModel: byModel[total.project] ?? [:]
+                )
+            }
+            .sorted { $0.usage.total > $1.usage.total }
+
+        return MonthlyUsageReport(rows: rows, includesSubagentTokens: true)
+    }
+
     /// Rebuilds `daily_rollups` from `sessions` and `usage_samples`.
     ///
     /// ## What it repairs
@@ -916,6 +1106,61 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                         in: database
                     )
                 }
+
+                // `daily_model_rollups` is rebuilt from `session_model_totals`
+                // directly, not from `usage_samples`: the samples carry no
+                // model, so there is nothing to split a per-model total across
+                // days *by*, and every row here is filed on the session's
+                // start day for that reason (see the migration comment in
+                // `Schema.swift`). This is also why the incremental writer and
+                // this repair can never disagree on the model dimension: both
+                // read the same durable per-session breakdown and bucket it
+                // by the same day.
+                try database.execute("DELETE FROM daily_model_rollups")
+
+                let modelRows = try database.query(
+                    """
+                    SELECT session_id, model,
+                           fresh_input, cache_creation, cache_read, output, thinking,
+                           subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
+                           subagent_output, subagent_thinking
+                      FROM session_model_totals
+                    """
+                ) { row -> (sessionID: String, model: String, usage: TokenUsage) in
+                    (
+                        sessionID: row.string(0),
+                        model: row.string(1),
+                        usage: TokenUsage(
+                            freshInput: row.int(2), cacheCreation: row.int(3), cacheRead: row.int(4),
+                            output: row.int(5), thinking: row.int(6)
+                        ) + TokenUsage(
+                            freshInput: row.int(7), cacheCreation: row.int(8), cacheRead: row.int(9),
+                            output: row.int(10), thinking: row.int(11)
+                        )
+                    )
+                }
+
+                let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+                var modelBuckets: [RollupModelBucket: TokenUsage] = [:]
+                for row in modelRows {
+                    // A model total belonging to a session no longer in
+                    // `sessions` is an orphan this repair has no day or
+                    // project to file it under, and is dropped rather than
+                    // guessed at.
+                    guard let session = sessionsByID[row.sessionID] else { continue }
+                    let bucket = RollupModelBucket(
+                        day: self.dayString(for: session.startedAt),
+                        project: session.project,
+                        model: row.model
+                    )
+                    modelBuckets[bucket, default: .zero] += row.usage
+                }
+                for (bucket, usage) in modelBuckets {
+                    try self.applyModelRollup(
+                        day: bucket.day, project: bucket.project, model: bucket.model,
+                        usage: usage, sign: 1, in: database
+                    )
+                }
             }
         }
     }
@@ -924,6 +1169,13 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     private struct RollupBucket: Hashable {
         let day: String
         let project: String
+    }
+
+    /// One `(day, project, model)` cell of `daily_model_rollups`.
+    private struct RollupModelBucket: Hashable {
+        let day: String
+        let project: String
+        let model: String
     }
 
     private struct RollupContribution {
@@ -1094,7 +1346,8 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     /// for, a relaunch resumes mid-file and counts only what arrives next.
     public func subagentTotals(forSession sessionID: String) -> [SubagentTotal] {
         perform("read subagent totals", default: []) { database in
-            try database.query(
+            let byModel = try self.subagentModelTotals(forSession: sessionID, in: database)
+            return try database.query(
                 """
                 SELECT parent_session_id, subagent_id, agent_type, task_description,
                        model, last_activity_at, records_parsed,
@@ -1105,9 +1358,10 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                 """,
                 [.text(sessionID)]
             ) { row in
-                SubagentTotal(
+                let subagentID = row.string(1)
+                return SubagentTotal(
                     parentSessionID: row.string(0),
-                    subagentID: row.string(1),
+                    subagentID: subagentID,
                     agentType: row.stringOptional(2),
                     taskDescription: row.stringOptional(3),
                     usage: TokenUsage(
@@ -1117,12 +1371,48 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                         output: row.int(10),
                         thinking: row.int(11)
                     ),
+                    // Seeds `SubagentTracker`'s own per-model accumulator.
+                    // Without this, a subagent's model breakdown would reset
+                    // to nothing on every relaunch while its cursor resumed
+                    // from the byte it already reached -- the model-dimension
+                    // version of the trap this file's header comment warns
+                    // about for the scalar total.
+                    usageByModel: byModel[subagentID] ?? [:],
                     recordsParsed: row.int(6),
                     lastActivityAt: row.doubleOptional(5).map { Date(timeIntervalSince1970: $0) },
                     model: row.stringOptional(4)
                 )
             }
         }
+    }
+
+    /// Every subagent's per-model breakdown for a session, keyed by subagent id.
+    private func subagentModelTotals(
+        forSession sessionID: String,
+        in database: SQLiteDatabase
+    ) throws -> [String: [String: TokenUsage]] {
+        let rows = try database.query(
+            """
+            SELECT subagent_id, model, fresh_input, cache_creation, cache_read, output, thinking
+              FROM subagent_model_totals
+             WHERE parent_session_id = ?
+            """,
+            [.text(sessionID)]
+        ) { row -> (subagentID: String, model: String, usage: TokenUsage) in
+            (
+                subagentID: row.string(0),
+                model: row.string(1),
+                usage: TokenUsage(
+                    freshInput: row.int(2), cacheCreation: row.int(3), cacheRead: row.int(4),
+                    output: row.int(5), thinking: row.int(6)
+                )
+            )
+        }
+        var result: [String: [String: TokenUsage]] = [:]
+        for row in rows {
+            result[row.subagentID, default: [:]][row.model] = row.usage
+        }
+        return result
     }
 
     /// Writes a subagent's running total, replacing whatever was there.
@@ -1138,40 +1428,69 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     /// unread integer column was judged disproportionate to what it buys.
     public func upsertSubagentTotal(_ total: SubagentTotal) {
         perform("upsert subagent total") { database in
-            try database.execute(
-                """
-                INSERT INTO subagent_totals (
-                    parent_session_id, subagent_id, agent_type, task_description,
-                    model, last_activity_at, records_parsed,
-                    fresh_input, cache_creation, cache_read, output, thinking
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(parent_session_id, subagent_id) DO UPDATE SET
-                    agent_type = COALESCE(excluded.agent_type, subagent_totals.agent_type),
-                    task_description = COALESCE(excluded.task_description, subagent_totals.task_description),
-                    model = COALESCE(excluded.model, subagent_totals.model),
-                    last_activity_at = excluded.last_activity_at,
-                    records_parsed = excluded.records_parsed,
-                    fresh_input = excluded.fresh_input,
-                    cache_creation = excluded.cache_creation,
-                    cache_read = excluded.cache_read,
-                    output = excluded.output,
-                    thinking = excluded.thinking
-                """,
-                [
-                    .text(total.parentSessionID),
-                    .text(total.subagentID),
-                    SQLiteValue(total.agentType),
-                    SQLiteValue(total.taskDescription),
-                    SQLiteValue(total.model),
-                    SQLiteValue(total.lastActivityAt?.timeIntervalSince1970),
-                    .integer(Int64(total.recordsParsed)),
-                    .integer(Int64(total.usage.freshInput)),
-                    .integer(Int64(total.usage.cacheCreation)),
-                    .integer(Int64(total.usage.cacheRead)),
-                    .integer(Int64(total.usage.output)),
-                    .integer(Int64(total.usage.thinking)),
-                ]
-            )
+            try database.withTransaction {
+                try database.execute(
+                    """
+                    INSERT INTO subagent_totals (
+                        parent_session_id, subagent_id, agent_type, task_description,
+                        model, last_activity_at, records_parsed,
+                        fresh_input, cache_creation, cache_read, output, thinking
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(parent_session_id, subagent_id) DO UPDATE SET
+                        agent_type = COALESCE(excluded.agent_type, subagent_totals.agent_type),
+                        task_description = COALESCE(excluded.task_description, subagent_totals.task_description),
+                        model = COALESCE(excluded.model, subagent_totals.model),
+                        last_activity_at = excluded.last_activity_at,
+                        records_parsed = excluded.records_parsed,
+                        fresh_input = excluded.fresh_input,
+                        cache_creation = excluded.cache_creation,
+                        cache_read = excluded.cache_read,
+                        output = excluded.output,
+                        thinking = excluded.thinking
+                    """,
+                    [
+                        .text(total.parentSessionID),
+                        .text(total.subagentID),
+                        SQLiteValue(total.agentType),
+                        SQLiteValue(total.taskDescription),
+                        SQLiteValue(total.model),
+                        SQLiteValue(total.lastActivityAt?.timeIntervalSince1970),
+                        .integer(Int64(total.recordsParsed)),
+                        .integer(Int64(total.usage.freshInput)),
+                        .integer(Int64(total.usage.cacheCreation)),
+                        .integer(Int64(total.usage.cacheRead)),
+                        .integer(Int64(total.usage.output)),
+                        .integer(Int64(total.usage.thinking)),
+                    ]
+                )
+
+                // `subagent_model_totals` is absolute, like the row just
+                // written, so it is replaced wholesale rather than patched.
+                try database.execute(
+                    "DELETE FROM subagent_model_totals WHERE parent_session_id = ? AND subagent_id = ?",
+                    [.text(total.parentSessionID), .text(total.subagentID)]
+                )
+                for (model, usage) in total.usageByModel {
+                    try database.execute(
+                        """
+                        INSERT INTO subagent_model_totals (
+                            parent_session_id, subagent_id, model,
+                            fresh_input, cache_creation, cache_read, output, thinking
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            .text(total.parentSessionID),
+                            .text(total.subagentID),
+                            .text(model),
+                            .integer(Int64(usage.freshInput)),
+                            .integer(Int64(usage.cacheCreation)),
+                            .integer(Int64(usage.cacheRead)),
+                            .integer(Int64(usage.output)),
+                            .integer(Int64(usage.thinking)),
+                        ]
+                    )
+                }
+            }
         }
     }
 
@@ -1179,10 +1498,16 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     /// leaves nothing a recycled id could inherit.
     public func deleteSubagentTotals(forSession sessionID: String) {
         perform("delete subagent totals") { database in
-            try database.execute(
-                "DELETE FROM subagent_totals WHERE parent_session_id = ?",
-                [.text(sessionID)]
-            )
+            try database.withTransaction {
+                try database.execute(
+                    "DELETE FROM subagent_totals WHERE parent_session_id = ?",
+                    [.text(sessionID)]
+                )
+                try database.execute(
+                    "DELETE FROM subagent_model_totals WHERE parent_session_id = ?",
+                    [.text(sessionID)]
+                )
+            }
         }
     }
 
@@ -1388,6 +1713,98 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                    AND output = 0 AND thinking = 0
                 """,
                 [.text(day), .text(project)]
+            )
+        }
+    }
+
+    /// A session's own per-model breakdown and its subagents' combined
+    /// per-model breakdown, read from `session_model_totals`. Returned apart
+    /// because that is how `AISession.usageByModel` and `.subagentUsageByModel`
+    /// are defined; `upsert(session:)` merges them itself when it needs the
+    /// combined figure.
+    private func modelTotals(
+        forSession sessionID: String,
+        in database: SQLiteDatabase
+    ) throws -> (own: [String: TokenUsage], subagent: [String: TokenUsage]) {
+        let rows = try database.query(
+            """
+            SELECT model, fresh_input, cache_creation, cache_read, output, thinking,
+                   subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
+                   subagent_output, subagent_thinking
+              FROM session_model_totals
+             WHERE session_id = ?
+            """,
+            [.text(sessionID)]
+        ) { row -> (model: String, own: TokenUsage, subagent: TokenUsage) in
+            (
+                model: row.string(0),
+                own: TokenUsage(
+                    freshInput: row.int(1), cacheCreation: row.int(2), cacheRead: row.int(3),
+                    output: row.int(4), thinking: row.int(5)
+                ),
+                subagent: TokenUsage(
+                    freshInput: row.int(6), cacheCreation: row.int(7), cacheRead: row.int(8),
+                    output: row.int(9), thinking: row.int(10)
+                )
+            )
+        }
+        var own: [String: TokenUsage] = [:]
+        var subagent: [String: TokenUsage] = [:]
+        for row in rows {
+            own[row.model] = row.own
+            subagent[row.model] = row.subagent
+        }
+        return (own, subagent)
+    }
+
+    /// Adds (or, with `sign: -1`, subtracts) one session's contribution to a
+    /// `(day, project, model)` cell of `daily_model_rollups`, then drops the
+    /// cell if it has emptied out. See `applyRollup` just above, which this
+    /// mirrors exactly except for the extra key column and the absence of
+    /// `session_count`: "how many sessions" is answered once, at the project
+    /// level, by `daily_rollups` itself, so a session that used two models is
+    /// not counted twice by being counted once per model here.
+    private func applyModelRollup(
+        day: String,
+        project: String,
+        model: String,
+        usage: TokenUsage,
+        sign: Int64,
+        in database: SQLiteDatabase
+    ) throws {
+        try database.execute(
+            """
+            INSERT INTO daily_model_rollups
+                (day, project_name, model, fresh_input, cache_creation, cache_read, output, thinking)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(day, project_name, model) DO UPDATE SET
+                fresh_input    = fresh_input    + excluded.fresh_input,
+                cache_creation = cache_creation + excluded.cache_creation,
+                cache_read     = cache_read     + excluded.cache_read,
+                output         = output         + excluded.output,
+                thinking       = thinking       + excluded.thinking
+            """,
+            [
+                .text(day),
+                .text(project),
+                .text(model),
+                .integer(sign * Int64(usage.freshInput)),
+                .integer(sign * Int64(usage.cacheCreation)),
+                .integer(sign * Int64(usage.cacheRead)),
+                .integer(sign * Int64(usage.output)),
+                .integer(sign * Int64(usage.thinking)),
+            ]
+        )
+
+        if sign < 0 {
+            try database.execute(
+                """
+                DELETE FROM daily_model_rollups
+                 WHERE day = ? AND project_name = ? AND model = ?
+                   AND fresh_input = 0 AND cache_creation = 0 AND cache_read = 0
+                   AND output = 0 AND thinking = 0
+                """,
+                [.text(day), .text(project), .text(model)]
             )
         }
     }
