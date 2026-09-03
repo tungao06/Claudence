@@ -155,19 +155,18 @@ enum UsageRefreshInterval: String, CaseIterable, Identifiable, Sendable {
 /// the stored `Bool` would leave the store pointed at whatever it already had
 /// open.
 ///
-/// ## Every property here writes on assignment, including in `init`
+/// ## Loading is not a write
 ///
 /// `@Observable` turns these stored properties into computed ones, so the
-/// assignments in `init` go through the setter and each `didSet` writes to
-/// `UserDefaults`. For a value read straight back from the same defaults that
-/// is a no-op, which is why it has never mattered. It stops being a no-op when
-/// the value came from somewhere else in the domain search order: launching the
-/// binary with `-com.tungao.claudence.preference.liveOnlyMode YES`, which
-/// `NSArgumentDomain` answers for the life of that process, wrote `true` into
-/// the persistent domain on the way past and left the setting on for every
-/// launch after it. That is how the mode was verified once, and the persistence
-/// was not the intention. Anyone testing a preference from the command line
-/// should expect it to stick.
+/// assignments in `init` go through their setters and every `didSet` fires. For
+/// a value read straight back from the same defaults that is a no-op, which is
+/// why it went unnoticed. It stops being a no-op when the value came from
+/// somewhere else in the domain search order: launching the binary with
+/// `-com.tungao.claudence.preference.liveOnlyMode YES`, which `NSArgumentDomain`
+/// answers for that process alone, wrote `true` into the persistent domain on
+/// the way past and left the setting on for every launch after it. It happened
+/// twice while the mode was being verified. `isLoading` is why it cannot happen
+/// again: a load assigns, and only a later change writes.
 ///
 /// ## Launch at login
 ///
@@ -231,47 +230,66 @@ final class Preferences {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let launch: LaunchAtLoginService
+    /// True until `init` has finished loading, so the assignments that load
+    /// these properties do not write them straight back.
+    ///
+    /// `@Observable` turns every stored property here into a computed one, so
+    /// the assignments in `init` run through their setters and each `didSet`
+    /// fires. Writing back a value read from the same defaults is a no-op and
+    /// never mattered; writing back a value that came from somewhere else in
+    /// the domain search order is not. Launching the binary with
+    /// `-com.tungao.claudence.preference.liveOnlyMode YES`, which
+    /// `NSArgumentDomain` answers for that process only, persisted the setting
+    /// for every launch after it. That happened twice while the mode was being
+    /// verified, which is twice more than a load should ever write anything.
+    @ObservationIgnored private var isLoading = true
+
+    /// Runs `write` unless the value is only being loaded.
+    private func persist(_ write: () -> Void) {
+        guard !isLoading else { return }
+        write()
+    }
 
     // MARK: Stored preferences
 
     /// Whether the menu bar carries a live reading at all. Default on.
     var showMenuBarUsage: Bool {
-        didSet { defaults.set(showMenuBarUsage, forKey: Key.showMenuBarUsage) }
+        didSet { persist { defaults.set(showMenuBarUsage, forKey: Key.showMenuBarUsage) } }
     }
 
     /// Which reading the menu bar carries. Default `.usage`.
     var menuBarStyle: MenuBarStyle {
-        didSet { defaults.set(menuBarStyle.rawValue, forKey: Key.menuBarStyle) }
+        didSet { persist { defaults.set(menuBarStyle.rawValue, forKey: Key.menuBarStyle) } }
     }
 
     /// Whether Claudence posts notifications at all. Default on. The system
     /// permission is a separate question, owned by the notification code, and
     /// the per-event switches below only matter while this one is on.
     var notificationsEnabled: Bool {
-        didSet { defaults.set(notificationsEnabled, forKey: Key.notificationsEnabled) }
+        didSet { persist { defaults.set(notificationsEnabled, forKey: Key.notificationsEnabled) } }
     }
 
     /// Which palette the windows use. Default `.auto`.
     var appearance: AppearanceMode {
-        didSet { defaults.set(appearance.rawValue, forKey: Key.appearance) }
+        didSet { persist { defaults.set(appearance.rawValue, forKey: Key.appearance) } }
     }
 
     /// How often the usage endpoint is polled. Default `.oneMinute`, which is
     /// the interval the application already used before it was adjustable.
     var usageRefreshInterval: UsageRefreshInterval {
-        didSet { defaults.set(usageRefreshInterval.rawValue, forKey: Key.usageRefreshInterval) }
+        didSet { persist { defaults.set(usageRefreshInterval.rawValue, forKey: Key.usageRefreshInterval) } }
     }
 
     /// Whether a session row lists the agents spawned under it. Default on.
     var showSubagents: Bool {
-        didSet { defaults.set(showSubagents, forKey: Key.showSubagents) }
+        didSet { persist { defaults.set(showSubagents, forKey: Key.showSubagents) } }
     }
 
     /// Whether a closed session row hides duration, rate and sparkline until it
     /// is opened. Default off: the full row is the design's normal state, and
     /// this is the setting for someone watching many sessions at once.
     var compactRows: Bool {
-        didSet { defaults.set(compactRows, forKey: Key.compactRows) }
+        didSet { persist { defaults.set(compactRows, forKey: Key.compactRows) } }
     }
 
     /// Whether a working session gets a visible liveness cue. Default on.
@@ -280,19 +298,19 @@ final class Preferences {
     /// cue is a one-shot change when the value moves. System Reduce Motion still
     /// wins over this switch.
     var liveIndicators: Bool {
-        didSet { defaults.set(liveIndicators, forKey: Key.liveIndicators) }
+        didSet { persist { defaults.set(liveIndicators, forKey: Key.liveIndicators) } }
     }
 
     /// Notify when a monitored session is gone and its absence is confirmed.
     /// Default on. Backed by `NotificationEvent.sessionCompleted`.
     var notifyOnSessionCompleted: Bool {
-        didSet { defaults.set(notifyOnSessionCompleted, forKey: Key.notifyOnSessionCompleted) }
+        didSet { persist { defaults.set(notifyOnSessionCompleted, forKey: Key.notifyOnSessionCompleted) } }
     }
 
     /// Notify when a usage window crosses the critical threshold upward.
     /// Default on. Backed by `NotificationEvent.usageThreshold`.
     var notifyOnUsageThreshold: Bool {
-        didSet { defaults.set(notifyOnUsageThreshold, forKey: Key.notifyOnUsageThreshold) }
+        didSet { persist { defaults.set(notifyOnUsageThreshold, forKey: Key.notifyOnUsageThreshold) } }
     }
 
     /// Notify when a session stops working but stays open. Default off, because
@@ -304,11 +322,11 @@ final class Preferences {
     /// several sessions at once is that the one waiting on you is not the one
     /// you are looking at.
     var notifyOnSessionNeedsInput: Bool {
-        didSet { defaults.set(notifyOnSessionNeedsInput, forKey: Key.notifyOnSessionNeedsInput) }
+        didSet { persist { defaults.set(notifyOnSessionNeedsInput, forKey: Key.notifyOnSessionNeedsInput) } }
     }
 
     var notifyOnSessionIdle: Bool {
-        didSet { defaults.set(notifyOnSessionIdle, forKey: Key.notifyOnSessionIdle) }
+        didSet { persist { defaults.set(notifyOnSessionIdle, forKey: Key.notifyOnSessionIdle) } }
     }
 
     /// Whether Claudence persists anything of its own to disk. Default off.
@@ -318,7 +336,7 @@ final class Preferences {
     /// `StoreModeController` has somewhere durable to record the choice once
     /// it has actually reopened the store; nothing else should write it.
     var liveOnlyMode: Bool {
-        didSet { defaults.set(liveOnlyMode, forKey: Key.liveOnlyMode) }
+        didSet { persist { defaults.set(liveOnlyMode, forKey: Key.liveOnlyMode) } }
     }
 
     /// What the menu bar should actually render, once the switch is applied.
@@ -391,6 +409,7 @@ final class Preferences {
         self.liveOnlyMode = defaults.bool(forKey: Key.liveOnlyMode)
         self.launchAtLoginState = launchAtLogin.readState()
         self.launchAtLoginFailure = nil
+        isLoading = false
     }
 
     // MARK: Actions
