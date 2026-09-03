@@ -23,6 +23,11 @@ import ClaudenceCore
 /// spent, and a list that removed rows as they finished would keep changing
 /// height under the reader for no informational gain.
 struct SessionsTableView: View {
+    /// Which row the keyboard cursor is on. Not a selection in the persistent
+    /// sense -- this card has no selected state to remember -- only where the
+    /// arrows have got to, cleared by Escape and by the row leaving the list.
+    @State private var keyboardSelection: String?
+
     let sessions: [AISession]
     /// Denominator for the energy bars. Nil draws no bar: a fill without a
     /// denominator is a ratio nobody agreed to.
@@ -86,9 +91,31 @@ struct SessionsTableView: View {
                     reason: Strings.noLiveSessionsReason
                 )
             } else {
-                LazyVStack(alignment: .leading, spacing: DashboardMetrics.sessionRowGap) {
-                    ForEach(sessions) { session in
-                        row(session)
+                // `ScrollViewReader` rather than a bare stack: the dashboard's
+                // whole column scrolls, and a cursor arrowed onto a row below
+                // the fold is a cursor nobody can see. The scroll follows the
+                // selection, and only the selection -- nothing here scrolls on
+                // its own.
+                ScrollViewReader { proxy in
+                    LazyVStack(alignment: .leading, spacing: DashboardMetrics.sessionRowGap) {
+                        ForEach(sessions) { session in
+                            row(session)
+                                .focusRing(keyboardSelection == session.id)
+                                .id(session.id)
+                        }
+                    }
+                    .keyboardList(
+                        sessions.map(\.id),
+                        selection: $keyboardSelection,
+                        onActivate: { id in
+                            guard let onSelect, let session = sessions.first(where: { $0.id == id })
+                            else { return }
+                            onSelect(session)
+                        }
+                    )
+                    .onChange(of: keyboardSelection) { _, selected in
+                        guard let selected else { return }
+                        withAnimation(nil) { proxy.scrollTo(selected, anchor: .center) }
                     }
                 }
             }

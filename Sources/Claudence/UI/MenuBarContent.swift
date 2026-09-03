@@ -30,6 +30,25 @@ struct MenuBarContent: View {
     /// following the snapshots the engine keeps pushing, so the detail would
     /// quietly show stale tokens for as long as it stayed open.
     @State private var detailSessionID: String?
+    /// Which session row the keyboard cursor is on, or nil when the list is
+    /// not being driven from the keyboard. Separate from `detailSessionID`,
+    /// which is what has actually been opened: arrowing onto a row must not
+    /// open it, or a keyboard user could not pass one to reach the next.
+    @State private var keyboardSelection: String?
+    /// Where focus is inside the popover.
+    ///
+    /// Exactly one case, and it earns its enum rather than being a `Bool`
+    /// because `defaultFocus` takes a value. The point of it is
+    /// `defaultFocus`: Tab reaches a focusable view only when the machine has
+    /// Keyboard navigation switched on in System Settings, which no
+    /// application can do for the user, so a popover whose list never takes
+    /// focus on its own is a popover most keyboard users cannot drive at all.
+    /// There is no text field here to take it away from.
+    @FocusState private var focus: PopoverFocus?
+
+    private enum PopoverFocus: Hashable {
+        case sessions
+    }
 
     /// Whether Claude Code is even on this machine. Read once when the
     /// session list has something to say about it -- see the `.task` below --
@@ -67,6 +86,10 @@ struct MenuBarContent: View {
         // detail is one width everywhere now -- the same `sheetWidth` the
         // dashboard's window gives it -- so a reading that fits in one host
         // fits in the other.
+        // Focus starts on the session list, for the reason given on `focus`.
+        // Harmless when the detail panel is showing instead: nothing there
+        // claims the value, so the default simply does not apply.
+        .defaultFocus($focus, .sessions)
         .frame(width: detailSession == nil ? Theme.Layout.popoverWidth : Theme.Layout.sheetWidth)
         // Because that width changes by 340 pt, and AppKit would leave the left
         // edge where it was and put all of it on the right.
@@ -297,6 +320,11 @@ struct MenuBarContent: View {
     /// surface, not a bare icon. It is the only button in the header now; the
     /// gear that used to sit beside it is chrome the design does not have, and
     /// Settings is reached from the footer strip where the design puts it.
+    /// `\u{2318}R` because this popover has no menu bar menu to hang a command
+    /// off, and a control that only a pointer can reach is a control half the
+    /// keyboard users of this app do not have. The three shortcuts here --
+    /// refresh, dashboard, settings -- are the ones macOS users already expect
+    /// to be where they are.
     private var refreshButton: some View {
         Button {
             Task { await model.refreshUsageNow() }
@@ -311,6 +339,7 @@ struct MenuBarContent: View {
                 )
         }
         .buttonStyle(.plain)
+        .keyboardShortcut("r")
         .accessibilityLabel(Strings.refreshUsage, in: language)
     }
 
@@ -463,8 +492,18 @@ struct MenuBarContent: View {
                             isCompact: preferences.compactRows,
                             onOpen: { detailSessionID = session.id }
                         )
+                        // Drawn by the list rather than by the row: the row is
+                        // a component with several callers and only this one
+                        // has a keyboard cursor to show.
+                        .focusRing(keyboardSelection == session.id)
                     }
                 }
+                .keyboardList(
+                    model.sessions.map(\.id),
+                    selection: $keyboardSelection,
+                    onActivate: { detailSessionID = $0 }
+                )
+                .focused($focus, equals: .sessions)
             }
         }
         .padding(.horizontal, Theme.Popover.margin)
@@ -536,6 +575,7 @@ struct MenuBarContent: View {
                     .foregroundStyle(Theme.accentDeep)
             }
             .buttonStyle(.plain)
+            .keyboardShortcut("d")
             .accessibilityLabel(Strings.openDashboardHint, in: language)
         }
         .padding(.horizontal, Theme.Popover.gutter)
@@ -622,7 +662,7 @@ struct MenuBarContent: View {
     private var footer: some View {
         HStack(spacing: 0) {
             HStack(spacing: Theme.Space.xs) {
-                footerLink(Strings.settings, hint: Strings.settingsHint)
+                footerLink(Strings.settings, hint: Strings.settingsHint, shortcut: ",")
                 Text(Theme.Glyph.separator)
                     .font(Theme.Typography.help)
                     .foregroundStyle(Theme.textQuaternary)
@@ -656,7 +696,11 @@ struct MenuBarContent: View {
         }
     }
 
-    private func footerLink(_ title: Phrase, hint: Phrase) -> some View {
+    private func footerLink(
+        _ title: Phrase,
+        hint: Phrase,
+        shortcut: KeyEquivalent? = nil
+    ) -> some View {
         Button(title.string(in: language)) {
             dismissMenuBarPopover()
             openSettings()
@@ -674,6 +718,10 @@ struct MenuBarContent: View {
         .buttonStyle(.plain)
         .font(Theme.Typography.help)
         .foregroundStyle(Theme.textQuaternary)
+        // Only Settings takes one. Both links open the same window, and
+        // binding the standard key to two controls would leave which one it
+        // reaches up to the order SwiftUI happens to build them in.
+        .modifier(OptionalShortcut(key: shortcut))
         .accessibilityHint(hint(in: language))
     }
 
