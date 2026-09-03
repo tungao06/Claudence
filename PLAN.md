@@ -1004,20 +1004,33 @@ runs it, which belongs with first launch in 9.10a.
 - [x] The largest transcript on disk is 19.9 MB against a 12 MB performance fixture. Re-measure
       the 50 ms re-scan budget against the real file, not the fixture
 
-### 9.13 The monthly table
+### 9.13 The monthly table  `DATA DONE 2026-09-03`
 
 **~1 day**
 
 One table, twelve rows, readable in ten seconds: project, sessions, tokens, Opus share against
 Sonnet share, and the API-equivalent figure. Sorted by tokens.
 
-- [ ] `daily_rollups` has no model column. Splitting by model needs a schema change
-- [ ] State in the table's own footnote whether subagent tokens are inside the figure. After 9.1
-      they are, and a reader cannot tell by looking
+- [x] `daily_rollups` has no model column. Splitting by model needs a schema change. Answered with
+      a second table, `daily_model_rollups`, rather than a wider key: every existing reader of
+      `daily_rollups` wants one row per day and project and would have inherited a `GROUP BY` it
+      never asked for. Two supporting tables carry a session's and a subagent's own per-model
+      split, so the incremental writer can subtract what it wrote last time.
+
+      One honest limitation, recorded because it will be asked: the model rollup is keyed on the
+      session's start day in both the incremental writer and the repair, because `usage_samples`
+      carries no model and cannot correct a session across midnight. The two paths therefore agree
+      with each other by construction, and a session that ran through midnight files its models on
+      the day it started. That is invisible to a monthly range, which is what this table is, and it
+      would not be invisible to a daily one, which is why this note exists before anyone builds
+      that.
+- [x] State in the table's own footnote whether subagent tokens are inside the figure. After 9.1
+      they are, and a reader cannot tell by looking. `MonthlyUsageReport.includesSubagentTokens`
+      carries the fact as data, so the view prints it rather than asserting it.
 - [ ] `Est. cost: unavailable` on a row whose tokens are known reads as zero. Say that the tokens
       are known and the price is not, in the cell
 
-### 9.14 Reframe the money
+### 9.14 Reframe the money  `LABELS DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -1025,9 +1038,12 @@ The dollar figure stays, and stops being presented as an amount owed. On a subsc
 one. It is the only unit that compares 632k of Sonnet against 632k of Opus, which is a real job,
 and the question it actually answers is whether the subscription is earning its price.
 
-- [ ] Label it as an API equivalent rather than a cost
+- [x] Label it as an API equivalent rather than a cost. Every surface: the tile, the projects
+      column, the session detail row, both tooltips, and what VoiceOver says.
 - [ ] Show the plan's price beside it, so the comparison is on screen rather than in the reader's
-      head
+      head. Published prices are deliberately not hard-coded: they go stale silently and nobody
+      here measured them, so the price is a preference the user sets once and the comparison
+      appears only when it is set.
 
 ---
 
