@@ -534,6 +534,11 @@ struct SettingsScene: Scene {
     var body: some Scene {
         Settings {
             SettingsView(preferences: preferences, storeMode: storeMode, model: model)
+                // The settings window is its own scene, so it inherits nothing
+                // from the popover's environment. Injected here for the same
+                // reason 9.8 exists: a language that reaches every surface but
+                // this one would be the setting that lies.
+                .environment(\.appLanguage, preferences.appLanguage)
         }
     }
 }

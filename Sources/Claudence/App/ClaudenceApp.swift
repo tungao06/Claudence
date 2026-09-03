@@ -45,6 +45,9 @@ struct ClaudenceApp: App {
                 // environment. They are leaves several levels down and have no
                 // other reason to know a preference exists.
                 .environment(\.liveIndicators, services.preferences.liveIndicators)
+                // Same route, same reason: one delivery mechanism for a setting
+                // that every surface reads. See `EnvironmentValues.appLanguage`.
+                .environment(\.appLanguage, services.preferences.appLanguage)
                 // Same route as `liveIndicators`. The popover's Today strip
                 // reads the same rollups the dashboard does, so it hides its
                 // figure in this mode and keeps the Dashboard button; one
@@ -113,6 +116,9 @@ struct ClaudenceApp: App {
         Window("Claudence Dashboard", id: DashboardWindow.id) {
             DashboardHost(model: services.model, preferences: services.preferences)
                 .environment(\.liveIndicators, services.preferences.liveIndicators)
+                // Same route, same reason: one delivery mechanism for a setting
+                // that every surface reads. See `EnvironmentValues.appLanguage`.
+                .environment(\.appLanguage, services.preferences.appLanguage)
                 .environment(\.liveOnlyMode, services.preferences.liveOnlyMode)
         }
         // The design lays the dashboard out at 1120 wide: four stat tiles in a
