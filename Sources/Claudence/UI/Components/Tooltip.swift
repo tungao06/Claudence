@@ -117,6 +117,18 @@ extension View {
         tooltip(TooltipText.fact(name), edge: edge, underline: underline)
     }
 
+    /// The same lookup, for a caller whose fact label is already a `Phrase`.
+    /// The lookup key is the phrase's English half: `TooltipText.metaTips` is
+    /// keyed on the design's own English names, and those stay the stable key
+    /// regardless of which language the label itself renders in.
+    func tooltip(
+        fact phrase: Phrase,
+        edge: TooltipEdge = .center,
+        underline: TooltipUnderline = .none
+    ) -> some View {
+        tooltip(fact: phrase.en, edge: edge, underline: underline)
+    }
+
     /// A breakdown-row tooltip, keyed on the row's visible label and carrying
     /// that row's measured share of the measured total.
     ///
@@ -130,6 +142,18 @@ extension View {
         edge: TooltipEdge = .center
     ) -> some View {
         tooltip(Tooltip.breakdownEntry(label: label, value: value, usage: usage), edge: edge)
+    }
+
+    /// The same lookup, for a caller whose row label is already a `Phrase`.
+    /// Keyed on the phrase's English half, for the reason given on the
+    /// `fact phrase:` overload above.
+    func tooltip(
+        breakdown label: Phrase,
+        value: Int,
+        of usage: TokenUsage,
+        edge: TooltipEdge = .center
+    ) -> some View {
+        tooltip(breakdown: label.en, value: value, of: usage, edge: edge)
     }
 }
 
@@ -246,6 +270,7 @@ private struct TooltipModifier: ViewModifier {
     /// The trigger's frame in the layer's coordinate space, which is what the
     /// root needs to place a bubble the trigger no longer draws.
     @State private var triggerFrame: CGRect = .zero
+    @Environment(\.appLanguage) private var language
 
     func body(content: Content) -> some View {
         content
@@ -269,8 +294,9 @@ private struct TooltipModifier: ViewModifier {
             }
             .preference(key: TooltipPreferenceKey.self, value: presentation)
             // The bubble is drawn, not spoken. VoiceOver gets the same words as
-            // a hint so the two audiences read the same explanation.
-            .accessibilityHint(Tooltip.render(entry))
+            // a hint so the two audiences read the same explanation, in
+            // whatever language the screen is in.
+            .accessibilityHint(Tooltip.render(entry, in: language))
     }
 
     private var presentation: TooltipPresentation? {
@@ -302,10 +328,10 @@ struct TooltipBubble: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Text(entry.title)
+            PhraseText(entry.title)
                 .font(Theme.Typography.tooltipTitle)
                 .foregroundStyle(Tooltip.ink)
-            Text(entry.body)
+            PhraseText(entry.body)
                 .font(Theme.Typography.body)
                 .foregroundStyle(Tooltip.ink.opacity(Tooltip.bodyInkOpacity))
                 .fixedSize(horizontal: false, vertical: true)
@@ -382,9 +408,9 @@ enum Tooltip {
     static let bodyInkOpacity: Double = 0.72
 
     /// Title first, body under it, for anything that needs the two as one
-    /// string: an accessibility hint, or a test.
-    static func render(_ entry: TooltipText.Entry) -> String {
-        "\(entry.title)\n\(entry.body)"
+    /// string in a single language: an accessibility hint, or a test.
+    static func render(_ entry: TooltipText.Entry, in language: AppLanguage) -> String {
+        "\(entry.title(in: language))\n\(entry.body(in: language))"
     }
 
     /// The breakdown body with the design's numeric suffix appended:
@@ -406,11 +432,22 @@ enum Tooltip {
     static func breakdownEntry(label: String, value: Int, usage: TokenUsage) -> TooltipText.Entry? {
         guard let entry = TooltipText.breakdown(label) else { return nil }
         guard let share = usage.share(of: value) else { return entry }
-        let suffix = separator
-            + Format.tokens(value)
-            + " of "
-            + Format.tokens(usage.total)
-            + " (\(Format.share(share)))"
-        return TooltipText.Entry(title: entry.title, body: entry.body + suffix)
+        let valueText = Format.tokens(value)
+        let totalText = Format.tokens(usage.total)
+        let shareText = Format.share(share)
+        func suffix(_ language: AppLanguage) -> String {
+            separator + valueText + Strings.of(language) + totalText + " (\(shareText))"
+        }
+        let body = Phrase(
+            en: entry.body.en + suffix(.english),
+            th: entry.body.th + suffix(.thai)
+        )
+        return TooltipText.Entry(title: entry.title, body: body)
     }
+}
+
+/// Words this file glues around a caller's own numbers, kept next to `Tooltip`
+/// because they exist only for `breakdownEntry`'s suffix.
+private enum Strings {
+    static let of = Phrase(en: " of ", th: " จาก ")
 }
