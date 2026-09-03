@@ -22,6 +22,18 @@ enum LanguagePreference: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    /// The stored choice, read without a `Preferences` instance.
+    ///
+    /// For the two places that need the language but hold no `Preferences`:
+    /// `DashboardAdapter`, which is not a view and has no environment, and
+    /// which already reads `subscriptionMonthlyPrice` this way for the same
+    /// reason. The key is the one `Preferences` writes, named once, so the two
+    /// readers cannot drift apart.
+    static func stored(in defaults: UserDefaults = .standard) -> LanguagePreference {
+        LanguagePreference(rawValue: defaults.string(forKey: Preferences.languagePreferenceKey) ?? "")
+            ?? .system
+    }
+
     /// The picker's own label. Endonyms throughout, per `AppLanguage.endonym`,
     /// so a Thai reader finds Thai without first finding the English word for
     /// it.
@@ -296,7 +308,7 @@ final class Preferences {
         static let notifyOnSessionIdle = "com.tungao.claudence.preference.notifyOnSessionIdle"
         static let notifyOnSessionNeedsInput = "com.tungao.claudence.preference.notifyOnSessionNeedsInput"
         static let liveOnlyMode = "com.tungao.claudence.preference.liveOnlyMode"
-        static let languagePreference = "com.tungao.claudence.preference.languagePreference"
+        static let languagePreference = Preferences.languagePreferenceKey
         static let hasCompletedOnboarding = "com.tungao.claudence.preference.hasCompletedOnboarding"
     }
 
@@ -429,6 +441,13 @@ final class Preferences {
     /// `MonitorViewModel`, and naming the key once here beats duplicating the
     /// literal string in two files.
     static let subscriptionMonthlyPriceKey = "com.tungao.claudence.preference.subscriptionMonthlyPrice"
+
+    /// The `UserDefaults` key `languagePreference` is stored under, exposed
+    /// for `LanguagePreference.stored(in:)`. Same reasoning as the key above:
+    /// two readers, one string. `nonisolated` because the reader is not on the
+    /// main actor and a key is a constant, not state.
+    nonisolated static let languagePreferenceKey =
+        "com.tungao.claudence.preference.languagePreference"
 
     /// What this subscription costs, in US dollars per month, exactly as the
     /// user typed it. Nil until they set it once.

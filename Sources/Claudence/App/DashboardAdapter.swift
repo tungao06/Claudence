@@ -31,7 +31,13 @@ extension MonitorViewModel {
         // names the one key this shares with it, so the string is defined
         // once even though it is read from two places.
         subscriptionMonthlyPrice: Double? = UserDefaults.standard
-            .object(forKey: Preferences.subscriptionMonthlyPriceKey) as? Double
+            .object(forKey: Preferences.subscriptionMonthlyPriceKey) as? Double,
+        // The chart's axis labels name months, and a month is a word. Read the
+        // same way and for the same reason as the price above: this adapter is
+        // not a view, so it has no environment to take `\.appLanguage` from,
+        // and it holds no `Preferences`. `.system` resolves fresh, so changing
+        // the machine's language while the app runs reaches the next refresh.
+        language: AppLanguage = LanguagePreference.stored().resolved()
     ) {
         guard let analytics else {
             dashboard = DashboardData(
@@ -105,7 +111,7 @@ extension MonitorViewModel {
             sessions: sessions,
             tokenScaleMaximum: tokenScaleMaximum,
             burnRates: burnSamples(),
-            series: points.map(Self.chartPoint),
+            series: points.map { Self.chartPoint($0, in: language) },
             seriesOutput: Self.seriesOutput(points),
             seriesUnavailableReason: isLiveOnly
                 ? nil
@@ -237,11 +243,15 @@ extension MonitorViewModel {
     }
 
     /// Built once, for the same reason `chartLabelFormatter` is.
+    ///
+    /// The clock convention stays the machine's, not the chosen language's: a
+    /// 24-hour label on a machine set to 12-hour reads as a different time of
+    /// day, not as a style choice. This is the same split `Format.resetStamp`
+    /// makes -- the month name is a word and follows the language, the clock
+    /// is a convention and follows the system.
     private static let hourLabelFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale.autoupdatingCurrent
-        // The user's own clock convention. A 24-hour label on a machine set to
-        // 12-hour reads as a different time of day, not as a style choice.
         formatter.setLocalizedDateFormatFromTemplate("j")
         return formatter
     }()
@@ -252,13 +262,13 @@ extension MonitorViewModel {
 
     /// A day the store could not answer for becomes a gap, never a zero. A day
     /// with no work is a real zero and is drawn on the baseline.
-    private static func chartPoint(_ point: DailyPoint) -> ChartPoint {
+    private static func chartPoint(_ point: DailyPoint, in language: AppLanguage) -> ChartPoint {
         guard let usage = point.usage else {
-            return ChartPoint.missing(id: point.day, label: Self.chartLabel(point.date))
+            return ChartPoint.missing(id: point.day, label: Self.chartLabel(point.date, in: language))
         }
         return ChartPoint(
             id: point.day,
-            label: Self.chartLabel(point.date),
+            label: Self.chartLabel(point.date, in: language),
             value: Double(usage.total)
         )
     }
@@ -275,17 +285,28 @@ extension MonitorViewModel {
         return result
     }
 
-    /// Built once. A `DateFormatter` per point allocated one per day of the
-    /// series and re-ran locale lookup each time, for a label that never varies.
-    private static let chartLabelFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.setLocalizedDateFormatFromTemplate("MMMd")
-        return formatter
+    /// One formatter per language, each built once. A `DateFormatter` per
+    /// point allocated one per day of the series and re-ran locale lookup each
+    /// time, for a label that never varies.
+    ///
+    /// A month is a word, so it follows the chosen language rather than the
+    /// machine's. The calendar is pinned to `AppLanguage.calendar`, which is
+    /// Gregorian in both: `th_TH` otherwise supplies the Buddhist calendar and
+    /// a chart's axis would date this year 2569.
+    private static let chartLabelFormatters: [AppLanguage: DateFormatter] = {
+        var built: [AppLanguage: DateFormatter] = [:]
+        for language in AppLanguage.allCases {
+            let formatter = DateFormatter()
+            formatter.locale = language.locale
+            formatter.calendar = language.calendar
+            formatter.setLocalizedDateFormatFromTemplate("MMMd")
+            built[language] = formatter
+        }
+        return built
     }()
 
-    private static func chartLabel(_ date: Date) -> String {
-        chartLabelFormatter.string(from: date)
+    private static func chartLabel(_ date: Date, in language: AppLanguage) -> String {
+        chartLabelFormatters[language]?.string(from: date) ?? ""
     }
 
     private static func projectRow(_ summary: ProjectSummary) -> ProjectRow {
