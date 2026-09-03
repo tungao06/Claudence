@@ -9,20 +9,28 @@ import Foundation
 public enum ActivityMapper {
 
     /// Canonical verbs. Named, so views and tests never spell them as literals.
+    ///
+    /// Thai wants the continuous aspect these English participles carry, which
+    /// is what `กำลัง` does, so each verb keeps it rather than being a bare
+    /// dictionary form that would read as an instruction.
     public enum Verb {
-        public static let reading = "Reading"
-        public static let editing = "Editing"
-        public static let searching = "Searching"
-        public static let running = "Running"
-        public static let planning = "Planning"
+        public static let reading = Phrase(en: "Reading", th: "กำลังอ่าน")
+        public static let editing = Phrase(en: "Editing", th: "กำลังแก้ไข")
+        public static let searching = Phrase(en: "Searching", th: "กำลังค้นหา")
+        public static let running = Phrase(en: "Running", th: "กำลังรัน")
+        public static let planning = Phrase(en: "Planning", th: "กำลังวางแผน")
     }
 
     /// Canonical subjects for the tools that cannot name a concrete target.
+    ///
+    /// Each Thai subject carries whatever particle the join needs, because the
+    /// join itself is a plain space in both languages and knows nothing about
+    /// either. `Searching the web` is `กำลังค้นหา บนเว็บ`, not a bare noun.
     public enum Subject {
-        public static let codebase = "codebase"
-        public static let command = "a command"
-        public static let web = "the web"
-        public static let subagent = "a subagent"
+        public static let codebase = Phrase(en: "codebase", th: "ในโค้ด")
+        public static let command = Phrase(en: "a command", th: "คำสั่ง")
+        public static let web = Phrase(en: "the web", th: "บนเว็บ")
+        public static let subagent = Phrase(en: "a subagent", th: "subagent")
     }
 
     /// - Parameters:
@@ -33,9 +41,9 @@ public enum ActivityMapper {
 
         switch toolName {
         case "Read":
-            return Activity(verb: Verb.reading, subject: target)
+            return Activity(verb: Verb.reading, subject: target.map(Phrase.untranslated))
         case "Edit", "Write":
-            return Activity(verb: Verb.editing, subject: target)
+            return Activity(verb: Verb.editing, subject: target.map(Phrase.untranslated))
         case "Grep", "Glob":
             return Activity(verb: Verb.searching, subject: Subject.codebase)
         case "Bash":
@@ -51,7 +59,7 @@ public enum ActivityMapper {
         case "TaskCreate", "TaskUpdate", "TodoWrite":
             return Activity(verb: Verb.planning, subject: nil)
         default:
-            return Activity(verb: Verb.running, subject: toolName)
+            return Activity(verb: Verb.running, subject: .untranslated(toolName))
         }
     }
 

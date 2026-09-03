@@ -123,7 +123,7 @@ func engineAppliesActivity() async {
     transcripts.queue(
         TranscriptDelta(
             usage: TokenUsage(output: 10),
-            latestActivity: Activity(verb: "Editing", subject: "Menu.tsx"),
+            latestActivity: Activity(verb: ActivityMapper.Verb.editing, subject: .untranslated("Menu.tsx")),
             latestModel: "claude-sonnet-5"
         ),
         for: "s1"

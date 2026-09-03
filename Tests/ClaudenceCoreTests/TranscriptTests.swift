@@ -426,7 +426,7 @@ struct TranscriptTests {
 
         let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
 
-        #expect(delta.latestActivity == Activity(verb: "Editing", subject: "Menu.tsx"))
+        #expect(delta.latestActivity == Activity(verb: ActivityMapper.Verb.editing, subject: .untranslated("Menu.tsx")))
         #expect(delta.latestActivity?.display == "Editing Menu.tsx")
     }
 
@@ -447,23 +447,23 @@ struct TranscriptTests {
     @Test("Tool names map to human phrasing")
     func activityMapping() {
         #expect(ActivityMapper.activity(toolName: "Read", filePath: "/x/y/package.json")
-            == Activity(verb: "Reading", subject: "package.json"))
+            == Activity(verb: ActivityMapper.Verb.reading, subject: .untranslated("package.json")))
         #expect(ActivityMapper.activity(toolName: "Edit", filePath: "/x/src/Menu.tsx")
-            == Activity(verb: "Editing", subject: "Menu.tsx"))
+            == Activity(verb: ActivityMapper.Verb.editing, subject: .untranslated("Menu.tsx")))
         #expect(ActivityMapper.activity(toolName: "Write", filePath: "/x/src/New.swift")
-            == Activity(verb: "Editing", subject: "New.swift"))
-        #expect(ActivityMapper.activity(toolName: "Grep") == Activity(verb: "Searching", subject: "codebase"))
-        #expect(ActivityMapper.activity(toolName: "Glob") == Activity(verb: "Searching", subject: "codebase"))
-        #expect(ActivityMapper.activity(toolName: "Bash") == Activity(verb: "Running", subject: "a command"))
-        #expect(ActivityMapper.activity(toolName: "WebFetch") == Activity(verb: "Searching", subject: "the web"))
-        #expect(ActivityMapper.activity(toolName: "WebSearch") == Activity(verb: "Searching", subject: "the web"))
-        #expect(ActivityMapper.activity(toolName: "Task") == Activity(verb: "Running", subject: "a subagent"))
-        #expect(ActivityMapper.activity(toolName: "TodoWrite") == Activity(verb: "Planning", subject: nil))
+            == Activity(verb: ActivityMapper.Verb.editing, subject: .untranslated("New.swift")))
+        #expect(ActivityMapper.activity(toolName: "Grep") == Activity(verb: ActivityMapper.Verb.searching, subject: ActivityMapper.Subject.codebase))
+        #expect(ActivityMapper.activity(toolName: "Glob") == Activity(verb: ActivityMapper.Verb.searching, subject: ActivityMapper.Subject.codebase))
+        #expect(ActivityMapper.activity(toolName: "Bash") == Activity(verb: ActivityMapper.Verb.running, subject: ActivityMapper.Subject.command))
+        #expect(ActivityMapper.activity(toolName: "WebFetch") == Activity(verb: ActivityMapper.Verb.searching, subject: ActivityMapper.Subject.web))
+        #expect(ActivityMapper.activity(toolName: "WebSearch") == Activity(verb: ActivityMapper.Verb.searching, subject: ActivityMapper.Subject.web))
+        #expect(ActivityMapper.activity(toolName: "Task") == Activity(verb: ActivityMapper.Verb.running, subject: ActivityMapper.Subject.subagent))
+        #expect(ActivityMapper.activity(toolName: "TodoWrite") == Activity(verb: ActivityMapper.Verb.planning, subject: nil))
         #expect(ActivityMapper.activity(toolName: "TodoWrite").display == "Planning")
-        #expect(ActivityMapper.activity(toolName: "SomeFutureTool") == Activity(verb: "Running", subject: "SomeFutureTool"))
+        #expect(ActivityMapper.activity(toolName: "SomeFutureTool") == Activity(verb: ActivityMapper.Verb.running, subject: .untranslated("SomeFutureTool")))
         // A file path is reduced to its basename.
         #expect(ActivityMapper.activity(toolName: "Read", filePath: "a.txt")
-            == Activity(verb: "Reading", subject: "a.txt"))
+            == Activity(verb: ActivityMapper.Verb.reading, subject: .untranslated("a.txt")))
         #expect(ActivityMapper.activity(toolName: "Read", filePath: nil).subject == nil)
     }
 

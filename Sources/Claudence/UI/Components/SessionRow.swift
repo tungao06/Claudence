@@ -267,8 +267,8 @@ struct SessionRow: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel(
-                    Phrase(en: "Activity, \(activity.display)", th: "กิจกรรม \(activity.display)"),
-                    in: language
+                    Phrase(en: "Activity, %@", th: "กิจกรรม %@")
+                        .format(in: language, activity.display(in: language))
                 )
         } else {
             UnavailableView(
@@ -286,10 +286,12 @@ struct SessionRow: View {
     /// inside `display`. A parser would have to guess where the verb ends, and
     /// it would guess wrong on the activities that have no subject at all.
     private func attributedActivity(_ activity: Activity) -> AttributedString {
-        var line = AttributedString(activity.verb)
+        var line = AttributedString(activity.verb.string(in: language))
         line.font = Theme.Typography.body
         line.foregroundColor = Theme.textSecondary
-        guard let subject = activity.subject, !subject.isEmpty else { return line }
+        guard let subject = activity.subject?.string(in: language), !subject.isEmpty else {
+            return line
+        }
 
         var separator = AttributedString(" ")
         separator.font = Theme.Typography.body

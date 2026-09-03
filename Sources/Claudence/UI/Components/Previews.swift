@@ -96,12 +96,9 @@ private enum PathFixture {
 }
 
 private enum ActivityFixture {
-    static let editing = Activity(verb: "Editing", subject: "SessionStore.swift")
-    static let testing = Activity(verb: "Running tests")
-    static let longSubject = Activity(
-        verb: "Editing",
-        subject: "ReconciliationWorkerConfigurationBuilder+Defaults.swift"
-    )
+    static let editing = Activity(verb: .untranslated("Editing"), subject: .untranslated("SessionStore.swift"))
+    static let testing = Activity(verb: .untranslated("Running tests"))
+    static let longSubject = Activity(verb: .untranslated("Editing"), subject: .untranslated("ReconciliationWorkerConfigurationBuilder+Defaults.swift"))
 }
 
 /// A single assistant record's own usage block, for the context-window meter.
@@ -160,10 +157,10 @@ private enum TrailFixture {
 
     private static func entry(_ index: Int) -> Activity {
         switch index % 4 {
-        case 0: return Activity(verb: "Editing", subject: "Handler\(index).swift")
-        case 1: return Activity(verb: "Running a command")
-        case 2: return Activity(verb: "Searching", subject: "codebase")
-        default: return Activity(verb: "Reading", subject: "Config\(index).json")
+        case 0: return Activity(verb: .untranslated("Editing"), subject: .untranslated("Handler\(index).swift"))
+        case 1: return Activity(verb: .untranslated("Running a command"))
+        case 2: return Activity(verb: .untranslated("Searching"), subject: .untranslated("codebase"))
+        default: return Activity(verb: .untranslated("Reading"), subject: .untranslated("Config\(index).json"))
         }
     }
 }

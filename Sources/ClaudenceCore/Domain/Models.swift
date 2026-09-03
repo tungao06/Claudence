@@ -100,19 +100,37 @@ public func mergeUsageByModel(_ dictionaries: [String: TokenUsage]...) -> [Strin
 
 /// What a session is currently doing, derived from tool name plus file path only.
 /// Never carries a command string. See spec section 3.1.
+///
+/// Both halves are `Phrase` because both are read aloud on screen. The verb is
+/// always one of `ActivityMapper.Verb`, which is a closed set of translated
+/// words. The subject is either one of `ActivityMapper.Subject`, also
+/// translated, or a file's own basename, which is data and is carried as
+/// `Phrase.untranslated` -- a file called `Menu.tsx` is called `Menu.tsx` in
+/// both languages.
+///
+/// Joined with a space in both, which is what makes the Thai subjects read
+/// correctly: `Subject.codebase` is `ในโค้ด`, carrying its own preposition,
+/// rather than a bare noun that would need the join to know about it.
 public struct Activity: Sendable, Codable, Equatable {
-    public var verb: String
-    public var subject: String?
+    public var verb: Phrase
+    public var subject: Phrase?
 
-    public init(verb: String, subject: String? = nil) {
+    public init(verb: Phrase, subject: Phrase? = nil) {
         self.verb = verb
         self.subject = subject
     }
 
-    public var display: String {
-        guard let subject, !subject.isEmpty else { return verb }
-        return "\(verb) \(subject)"
+    public func display(in language: AppLanguage) -> String {
+        let spokenVerb = verb.string(in: language)
+        guard let spokenSubject = subject?.string(in: language), !spokenSubject.isEmpty else {
+            return spokenVerb
+        }
+        return "\(spokenVerb) \(spokenSubject)"
     }
+
+    /// The English rendering, for the places that are not a screen:
+    /// `--diagnose` output, a problem report, a test.
+    public var display: String { display(in: .english) }
 }
 
 // MARK: - Session

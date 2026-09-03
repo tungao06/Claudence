@@ -103,7 +103,7 @@ struct ActivityTimelineView: View {
                 .foregroundStyle(Theme.textQuaternary)
                 .lineLimit(1)
                 .frame(width: Self.timeColumn, alignment: .leading)
-            Text(entry.activity.display)
+            Text(entry.activity.display(in: language))
                 .font(Theme.Typography.eventBody)
                 .foregroundStyle(Theme.textPrimarySoft)
                 .lineLimit(1)
@@ -112,7 +112,13 @@ struct ActivityTimelineView: View {
         }
         .padding(.vertical, Theme.Space.xs)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.agoLabel.format(in: language, elapsed(entry.at), entry.activity.display))
+        .accessibilityLabel(
+            Self.agoLabel.format(
+                in: language,
+                elapsed(entry.at),
+                entry.activity.display(in: language)
+            )
+        )
     }
 
     private static let agoLabel = Phrase(en: "%@ ago, %@", th: "%@ ที่แล้ว, %@")

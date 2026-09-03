@@ -186,7 +186,7 @@ struct SessionDetailView: View {
             status: StatusPill(status: session.status, identity: identity),
             statusWord: Theme.name(for: session.status),
             path: session.displayPath,
-            activity: session.currentActivity?.display
+            activity: session.currentActivity?.display(in: language)
         )
     }
 

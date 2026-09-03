@@ -68,7 +68,7 @@ public enum AppLanguage: String, Sendable, CaseIterable, Codable {
 /// number in it needs the number formatted in the reader's own locale, and a
 /// caller that builds `"\(count) sessions"` has already lost that. Use
 /// `format(_:)` with the pieces, which each language orders for itself.
-public struct Phrase: Sendable, Equatable, Hashable {
+public struct Phrase: Sendable, Equatable, Hashable, Codable {
     public let en: String
     public let th: String
 

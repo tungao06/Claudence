@@ -262,7 +262,8 @@ struct SessionsTableView: View {
             let ran = max(0, session.lastActivityAt.timeIntervalSince(session.startedAt))
             return endedText + Strings.ranFor.format(in: language, Format.duration(ran))
         }
-        return session.currentActivity?.display ?? Strings.noActivityRecorded.string(in: language)
+        return session.currentActivity?.display(in: language)
+            ?? Strings.noActivityRecorded.string(in: language)
     }
 
     // MARK: Column 2: energy

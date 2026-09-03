@@ -193,7 +193,7 @@ private enum DashboardSessions {
         projectName: "claudence-06",
         workingDirectory: DashboardPaths.short,
         status: .running,
-        activity: Activity(verb: "Editing", subject: "DashboardView.swift"),
+        activity: Activity(verb: .untranslated("Editing"), subject: .untranslated("DashboardView.swift")),
         usage: DashboardUsage.small,
         age: 37 * DashboardClock.minute
     )
@@ -203,7 +203,7 @@ private enum DashboardSessions {
         projectName: "hr-leave-management-14",
         workingDirectory: DashboardPaths.short,
         status: .idle,
-        activity: Activity(verb: "Running tests"),
+        activity: Activity(verb: .untranslated("Running tests")),
         usage: DashboardUsage.medium,
         age: 6 * DashboardClock.hour
     )
@@ -213,10 +213,7 @@ private enum DashboardSessions {
         projectName: "reconciliation-worker-integration-suite",
         workingDirectory: DashboardPaths.veryLong,
         status: .running,
-        activity: Activity(
-            verb: "Editing",
-            subject: "ReconciliationWorkerConfigurationBuilder+Defaults.swift"
-        ),
+        activity: Activity(verb: .untranslated("Editing"), subject: .untranslated("ReconciliationWorkerConfigurationBuilder+Defaults.swift")),
         usage: DashboardUsage.medium,
         age: 2 * DashboardClock.hour
     )
@@ -226,7 +223,7 @@ private enum DashboardSessions {
         projectName: "monorepo-migration",
         workingDirectory: DashboardPaths.short,
         status: .running,
-        activity: Activity(verb: "Searching codebase"),
+        activity: Activity(verb: .untranslated("Searching codebase")),
         usage: DashboardUsage.enormous,
         age: 4 * DashboardClock.day
     )

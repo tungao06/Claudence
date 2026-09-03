@@ -74,8 +74,16 @@ struct PrivacyTests {
         "usage.output",
         "usage.thinking",
         "usageByModel",
-        "currentActivity.verb",
-        "currentActivity.subject",
+        // Both halves of each phrase. `Activity` carries `Phrase` rather than
+        // `String` since the interface reads these aloud in two languages, so
+        // the value graph has an `en` and a `th` under each field where it
+        // once had a leaf. The permission is unchanged: a verb from
+        // `ActivityMapper.Verb` and a subject that is either one of its
+        // `Subject` constants or a file's basename.
+        "currentActivity.verb.en",
+        "currentActivity.verb.th",
+        "currentActivity.subject.en",
+        "currentActivity.subject.th",
         "model",
         "lastActivityAt",
         "recordsParsed",
@@ -123,7 +131,7 @@ struct PrivacyTests {
             agentType: markerAgentType,
             taskDescription: markerTask,
             usage: markedUsage,
-            currentActivity: Activity(verb: markerVerb, subject: markerSubject),
+            currentActivity: Activity(verb: .untranslated(markerVerb), subject: .untranslated(markerSubject)),
             model: markerModel,
             lastActivityAt: markedTimestamp,
             recordsParsed: 7
@@ -186,8 +194,10 @@ struct PrivacyTests {
 
         // And the individual fields the UI actually renders.
         let rendered = [
-            delta.latestActivity?.verb,
-            delta.latestActivity?.subject,
+            delta.latestActivity?.verb.en,
+            delta.latestActivity?.verb.th,
+            delta.latestActivity?.subject?.en,
+            delta.latestActivity?.subject?.th,
             delta.latestActivity?.display,
             delta.latestModel,
         ].compactMap { $0 }
@@ -204,8 +214,8 @@ struct PrivacyTests {
         let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
 
         let activity = try! #require(delta.latestActivity)
-        #expect(activity.verb == "Running")
-        #expect(activity.subject == "a command")
+        #expect(activity.verb == ActivityMapper.Verb.running)
+        #expect(activity.subject == ActivityMapper.Subject.command)
         #expect(activity.display == "Running a command")
 
         // Also directly, independent of the reader.

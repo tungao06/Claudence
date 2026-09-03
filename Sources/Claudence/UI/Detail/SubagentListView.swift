@@ -234,7 +234,7 @@ struct SubagentListView: View {
     /// subagent has no activity, so the row says it finished rather than
     /// leaving a blank line where a verb was.
     private func activityText(_ subagent: AISubagent, status: SessionStatus) -> String {
-        if let activity = subagent.currentActivity { return activity.display }
+        if let activity = subagent.currentActivity { return activity.display(in: language) }
         return (status == .running ? Self.working : Self.finished).string(in: language)
     }
 
