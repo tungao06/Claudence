@@ -155,6 +155,20 @@ enum UsageRefreshInterval: String, CaseIterable, Identifiable, Sendable {
 /// the stored `Bool` would leave the store pointed at whatever it already had
 /// open.
 ///
+/// ## Every property here writes on assignment, including in `init`
+///
+/// `@Observable` turns these stored properties into computed ones, so the
+/// assignments in `init` go through the setter and each `didSet` writes to
+/// `UserDefaults`. For a value read straight back from the same defaults that
+/// is a no-op, which is why it has never mattered. It stops being a no-op when
+/// the value came from somewhere else in the domain search order: launching the
+/// binary with `-com.tungao.claudence.preference.liveOnlyMode YES`, which
+/// `NSArgumentDomain` answers for the life of that process, wrote `true` into
+/// the persistent domain on the way past and left the setting on for every
+/// launch after it. That is how the mode was verified once, and the persistence
+/// was not the intention. Anyone testing a preference from the command line
+/// should expect it to stick.
+///
 /// ## Launch at login
 ///
 /// `launchAtLogin` is the one preference that is not stored here. macOS owns it,
