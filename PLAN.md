@@ -397,6 +397,17 @@ files and the usage endpoint and nothing else.
 - [x] Verified by running the built app both ways: zero open handles on the database with the mode
       on, five with it off.
 
+Audited on the day it landed, and the audit found one blocker and three majors in it. `reopen` did
+its cursor carry in three critical sections instead of one, so a writer on another thread could have
+a fresh cursor overwritten with a stale one, which is the rollback that produces the double count the
+carry exists to prevent. The retention collapse kept the highest row id per day rather than the
+latest timestamp, and grouped days by SQLite's `localtime` rather than by the store's own calendar.
+The session detail sheet's `Share of the 5h window` was a fifth surface reading stored history in a
+mode that has none. And a store with `StoreHealth.unavailable` restarted every transcript at byte 0
+on every pass while the engine's accumulator kept the last pass's total, so the figure grew on every
+filesystem event; `ResilientCursorStore` answers cursors from memory in exactly that state. All
+fixed, all tested.
+
 The part worth remembering: two surfaces survived the first pass because their numbers were real.
 They read `daily_rollups`, which in this mode holds only what the current run wrote, so `Today` sat
 over a figure that was not today's. Arithmetically sound and still a fabricated measurement, which
