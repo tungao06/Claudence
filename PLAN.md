@@ -910,19 +910,43 @@ collect feedback with. That is why Stage 1 precedes this.
       their oldest session was.
 - [x] Language choice on the first screen, defaulting to the system language.
 
-### 9.10b Thai and English  `UN-PARKED`
+### 9.10b Thai and English  `DONE 2026-09-03`
 
 **~3 days**
 
-`Phrase` landed 2026-09-03, with `AppLanguage`, the endonyms a language picker needs, and the
-Gregorian calendar forced in both the locale and the calendar. What remains is the conversion of
-every user-facing literal and the lint test that keeps them converted.
+- [x] A `Phrase { en, th }` value type in Core, so an untranslated string is a compile error at
+      every parameter this project controls.
+- [x] The conversion itself: about 300 phrases across 39 files, covering the popover, the menu
+      bar, the dashboard, the detail sheet, settings and the first-run screen. Three areas
+      converted in parallel, which is why `Theme`, `Tooltip`, `UnavailableView` and a few others
+      briefly carried a `Phrase` overload beside a `String` one; those pairs are gone again.
+- [x] The sentences a view was never allowed to write, which is where the last English hid:
+      `Activity`'s verb and subject (the popover's busiest line), `UsageState.unavailable`'s
+      reason, notification titles and bodies, `Format`'s "Tomorrow", "Yesterday" and
+      "unavailable", the chart's month names, and `Sparkline`'s spoken label.
+- [x] Gregorian forced twice, in the locale and in the calendar, wherever a date is formatted --
+      `Format`'s day formatter, `DashboardAdapter`'s axis formatter and `SessionFactsView`'s
+      started time, which was the one that would have printed 2569.
+- [x] A lint test against raw user-facing literals. `InterfaceLiteralTests` scans the executable
+      target's source for a literal handed to `Text`, `Button`, `Toggle`, `Picker`, `Label` or an
+      accessibility modifier. It is a source scan and has to be: `Phrase` cannot stop anyone
+      writing `Text("Active sessions")`, because `Text` has taken a `String` since SwiftUI
+      shipped. A second test asserts the scan reads real files, so a moved directory cannot make
+      it pass by looking at nothing.
+- [x] Render shots in both languages, two appearances by two languages, language in the file
+      name. They found the defect they exist for on the first run: the burn-leader line was
+      written long enough in Thai to truncate inside a column the English sat comfortably in.
 
-The plan as written under 9.5 in the previous revision stands: a `Phrase { en, th }` value type
-in Core so an untranslated string is a compile error; Gregorian year forced twice; a lint test
-against raw user-facing literals; render shots in both languages. The two measured traps — a
-Thai locale supplying the Buddhist calendar, and the system monospaced font carrying no Thai
-glyphs — are recorded under *Parked* below and apply unchanged.
+Two things reaching a screen are deliberately still English, and both are decisions rather than
+omissions. The four token-category names (`Fresh input`, `Cache write`, `Cache read`, `Output`)
+and terms like `Burn rate` and `Context window` are what a Thai developer actually says, so
+translating them would invent words nobody uses; they are `Phrase.untranslated`, which is a
+marker rather than an oversight. And a clock time follows the machine's convention, not the
+chosen language: a 24-hour label on a machine set to 12-hour reads as a different time of day.
+
+The second parked trap, the system monospaced font carrying no Thai glyphs, did not materialise.
+The render shots show Thai in `Theme.Typography.numeric` and `micro` cells rendering through
+fallback correctly.
 
 ### 9.10c A report the friend can send
 
