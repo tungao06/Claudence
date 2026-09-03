@@ -32,7 +32,7 @@ Verified environment: Swift 6.3.3, macOS 26.6.2, SDK 26.5, Claude Code 2.1.257.
 - [x] `Package.swift` with an executable target
 - [x] `Info.plist` with `LSUIElement = 1` so no Dock icon appears
 - [x] `make app` script: `swift build -c release` then assemble the `.app` bundle
-- [ ] Create one self-signed code signing identity and sign every build with it — `Scripts/make-signing-cert.sh` is written but not yet run; it needs the login keychain password, so the user runs it once. Builds are ad-hoc signed until then.
+- [x] Create one self-signed code signing identity and sign every build with it. Done: the `Claudence Dev` certificate exists in the login keychain and `Scripts/make-app.sh` signs with it, verified by `codesign -dvvv` reporting `Authority=Claudence Dev` on the built bundle. It does not appear under `security find-identity -p codesigning`, which lists only identities chaining to a trusted root; that is expected for a self-signed certificate and is not a sign that the signing failed.
 - [x] `MenuBarExtra` showing a static icon plus a working Quit
 
 **Definition of done**
