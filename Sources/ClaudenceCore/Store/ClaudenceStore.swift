@@ -82,14 +82,27 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
 
     // MARK: State
 
-    private let database: SQLiteDatabase?
+    /// The connection in use, replaceable by `reopen(url:)`.
+    ///
+    /// Guarded by `connectionLock` rather than immutable, because the live-only
+    /// preference points the same store at an in-memory database and back while
+    /// the app runs, and every holder of this object keeps its reference across
+    /// that. The lock is held only while the reference is read or replaced, not
+    /// while a statement runs: `SQLiteDatabase` has its own recursive lock and
+    /// is opened `SQLITE_OPEN_FULLMUTEX`, so a query already in flight finishes
+    /// safely against the connection it started on.
+    private var database: SQLiteDatabase?
+    private let connectionLock = NSLock()
     private let healthLock = NSLock()
     private var _health: StoreHealth
     private var _unansweredQueries: UInt64 = 0
     /// What health means for this store when nothing is failing. A store that
     /// fell back to memory at launch is degraded for as long as it lives, so
-    /// recovery returns here rather than to `.healthy`.
-    private let baselineHealth: StoreHealth
+    /// recovery returns here rather than to `.healthy`. Reset by `reopen`,
+    /// which is a new baseline rather than a recovery: a deliberate in-memory
+    /// store is healthy, and the degradation of the connection it replaced is
+    /// not a fact about it.
+    private var baselineHealth: StoreHealth
     private let calendar: Calendar
 
     public var health: StoreHealth {
@@ -113,7 +126,13 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     }
 
     /// The connection, for tests and for diagnostics. `nil` when unavailable.
-    public var connection: SQLiteDatabase? { database }
+    public var connection: SQLiteDatabase? { currentDatabase() }
+
+    private func currentDatabase() -> SQLiteDatabase? {
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        return database
+    }
 
     // MARK: Init
 
@@ -131,45 +150,194 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     ///     a time zone.
     public init(url: URL? = ClaudenceStore.defaultDatabaseURL, calendar: Calendar = .current) {
         self.calendar = calendar
+        let (opened, health) = ClaudenceStore.open(url: url)
+        self.database = opened
+        self._health = health
+        self.baselineHealth = self._health
+    }
 
-        func openInMemory(reason: String) -> (SQLiteDatabase?, StoreHealth) {
+    /// Opens a connection the way `init` does, so `reopen` cannot drift from
+    /// launch. A file that will not open falls back to memory and reports
+    /// `.degraded`; an explicitly requested in-memory database is a deliberate
+    /// choice and reports `.healthy`.
+    private static func open(url: URL?) -> (SQLiteDatabase?, StoreHealth) {
+        func openInMemory(reason: String?) -> (SQLiteDatabase?, StoreHealth) {
             do {
                 let memory = try SQLiteDatabase(url: nil)
                 try Schema.migrate(memory)
-                return (memory, .degraded(reason: reason))
+                return (memory, reason.map { StoreHealth.degraded(reason: $0) } ?? .healthy)
             } catch {
+                guard let reason else {
+                    return (nil, .unavailable(reason: "cannot open in-memory database: \(error)"))
+                }
                 return (nil, .unavailable(reason: "\(reason); in-memory fallback also failed: \(error)"))
             }
         }
 
-        if let url {
-            do {
-                let opened = try SQLiteDatabase(url: url)
-                try Schema.migrate(opened)
-                self.database = opened
-                self._health = .healthy
-            } catch {
-                let (fallback, health) = openInMemory(
-                    reason: "cannot use \(url.path): \(error)"
+        guard let url else { return openInMemory(reason: nil) }
+        do {
+            let opened = try SQLiteDatabase(url: url)
+            try Schema.migrate(opened)
+            return (opened, .healthy)
+        } catch {
+            return openInMemory(reason: "cannot use \(url.path): \(error)")
+        }
+    }
+
+    // MARK: - Changing where the store writes
+
+    /// Points this store at a different database, carrying the read cursors
+    /// across, and returns the health of what it opened.
+    ///
+    /// The live-only preference turns persistence off while the app runs, and
+    /// every holder of this object -- the engine, the subagent tracker, the
+    /// transcript reader, the analytics service -- keeps its reference across
+    /// the change rather than being rebuilt.
+    ///
+    /// The cursors are why this is a reopen and not a swap. A cursor and its
+    /// total are only correct together: a new database answers "no cursor",
+    /// `TranscriptReader` then starts at byte 0, and the engine adds a whole
+    /// transcript to an accumulator that already contains it. Carrying them
+    /// makes the next pass incremental, which is the same invariant the reader
+    /// and the seed already defend from their own ends. Session rows and
+    /// subagent totals are not carried: they live in the engine's and the
+    /// tracker's accumulators and are written to wherever the store now points
+    /// on the next change.
+    ///
+    /// The old connection is released rather than torn out from under a
+    /// statement. A query already running holds its own reference and finishes
+    /// against the connection it started on, so a write in flight when the mode
+    /// changes still lands on the old database. That is one write, and the
+    /// alternative is a torn statement.
+    @discardableResult
+    public func reopen(url: URL?) -> StoreHealth {
+        let carried = allCursors()
+
+        let (opened, health) = ClaudenceStore.open(url: url)
+        connectionLock.lock()
+        database = opened
+        connectionLock.unlock()
+        healthLock.lock()
+        _health = health
+        baselineHealth = health
+        healthLock.unlock()
+
+        for (sessionID, cursor) in carried {
+            saveCursor(cursor, forSession: sessionID)
+        }
+        return health
+    }
+
+    /// Every read cursor the store holds, for the transfer in `reopen`.
+    public func allCursors() -> [(sessionID: String, cursor: ReadCursor)] {
+        perform("read every cursor", default: []) { database in
+            try database.query(
+                "SELECT session_id, path, inode, byte_offset FROM read_cursors",
+                []
+            ) { row in
+                (
+                    sessionID: row.string(0),
+                    cursor: ReadCursor(
+                        path: row.string(1),
+                        inode: UInt64(row.int(2)),
+                        byteOffset: UInt64(row.int(3))
+                    )
                 )
-                self.database = fallback
-                self._health = health
             }
-        } else {
-            // An explicit in-memory store is a deliberate choice, not a failure,
-            // so it reports healthy.
-            do {
-                let memory = try SQLiteDatabase(url: nil)
-                try Schema.migrate(memory)
-                self.database = memory
-                self._health = .healthy
-            } catch {
-                self.database = nil
-                self._health = .unavailable(reason: "cannot open in-memory database: \(error)")
+        }
+    }
+
+    /// What the database holds right now, for a confirmation that names real
+    /// numbers instead of warning vaguely about "your data".
+    public struct StoredDataSummary: Sendable, Equatable {
+        public var sessions: Int
+        public var usageSamples: Int
+        public var rollupDays: Int
+        public var subagentTotals: Int
+        /// The file on disk, or nil for an in-memory database.
+        public var fileURL: URL?
+        public var fileSizeBytes: UInt64?
+
+        public init(
+            sessions: Int = 0,
+            usageSamples: Int = 0,
+            rollupDays: Int = 0,
+            subagentTotals: Int = 0,
+            fileURL: URL? = nil,
+            fileSizeBytes: UInt64? = nil
+        ) {
+            self.sessions = sessions
+            self.usageSamples = usageSamples
+            self.rollupDays = rollupDays
+            self.subagentTotals = subagentTotals
+            self.fileURL = fileURL
+            self.fileSizeBytes = fileSizeBytes
+        }
+
+        /// True when there is nothing to delete, so a confirmation can be
+        /// skipped rather than asking about an empty file.
+        public var isEmpty: Bool {
+            sessions == 0 && usageSamples == 0 && rollupDays == 0 && subagentTotals == 0
+        }
+    }
+
+    public func storedDataSummary() -> StoredDataSummary {
+        func count(_ table: String) -> Int {
+            perform("count \(table)", default: 0) { database in
+                try database.query("SELECT COUNT(*) FROM \(table)", []) { row in row.int(0) }.first ?? 0
             }
         }
 
-        self.baselineHealth = self._health
+        let url = currentDatabase()?.fileURL
+        let size = url.flatMap { FileStatus(path: $0.path)?.size }
+        return StoredDataSummary(
+            sessions: count("sessions"),
+            usageSamples: count("usage_samples"),
+            rollupDays: count("daily_rollups"),
+            subagentTotals: count("subagent_totals"),
+            fileURL: url,
+            fileSizeBytes: size
+        )
+    }
+
+    /// Empties every table and reclaims the space.
+    ///
+    /// The cursors go with the rows deliberately. A session row and the offset
+    /// its total was accumulated to are only correct together, so keeping the
+    /// cursors while deleting the totals would leave a reader resuming at byte
+    /// N against a total of zero: the undercount this codebase has already been
+    /// bitten by, written down as a deletion feature.
+    public func deleteStoredData() {
+        perform("delete stored data") { database in
+            try database.withTransaction {
+                for table in ["usage_samples", "daily_rollups", "subagent_totals", "read_cursors", "sessions"] {
+                    try database.execute("DELETE FROM \(table)", [])
+                }
+            }
+        }
+        // Outside the transaction: SQLite refuses to vacuum inside one.
+        perform("vacuum") { database in
+            try database.execute("VACUUM", [])
+        }
+    }
+
+    /// Removes a database file and its write-ahead siblings.
+    ///
+    /// Static and file-scoped rather than an instance method, because it is
+    /// only correct once nothing has the file open: call it after `reopen` has
+    /// pointed the store somewhere else. Returns what it could not remove.
+    @discardableResult
+    public static func removeStoredFile(at url: URL = ClaudenceStore.defaultDatabaseURL) -> [URL] {
+        var failed: [URL] = []
+        for candidate in [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")] {
+            guard FileManager.default.fileExists(atPath: candidate.path) else { continue }
+            do {
+                try FileManager.default.removeItem(at: candidate)
+            } catch {
+                failed.append(candidate)
+            }
+        }
+        return failed
     }
 
     // MARK: - Sessions
@@ -1110,7 +1278,7 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         default fallback: T,
         _ body: (SQLiteDatabase) throws -> T
     ) -> T {
-        guard let database else {
+        guard let database = currentDatabase() else {
             // The query never ran. Counted the same as a failure, because from
             // the caller's side the outcome is identical: the fallback below is
             // this type's own default, not a measurement.
