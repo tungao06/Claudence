@@ -480,7 +480,6 @@ struct DiscoveryTests {
         let session = try #require(adapter.discover().first)
 
         #expect(session.id == "6ff2ff43-cf68-4328-8c8f-0ceb6c93f768")
-        #expect(session.provider == .claudeCode)
         #expect(session.pid == 42541)
         #expect(session.procStart == "Tue Sep  1 19:27:02 2026")
         #expect(session.projectName == "claudence-06")

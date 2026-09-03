@@ -418,6 +418,46 @@ private enum DashboardHistory {
     static let none: [HistoryRow] = []
 }
 
+private enum DashboardMonthlyUsage {
+    static let mixed: [MonthlyProjectRow] = [
+        MonthlyProjectRow(
+            project: "claudence-06",
+            sessionCount: 18,
+            usage: DashboardUsage.enormous,
+            opusShare: 0.62,
+            sonnetShare: 0.31,
+            otherShare: 0.07,
+            apiEquivalent: 148.20
+        ),
+        // Entirely one family, and no "other" at all: the three share cells
+        // must read 0%, 100%, 0% rather than blank ones.
+        MonthlyProjectRow(
+            project: "hr-leave-management-14",
+            sessionCount: 6,
+            usage: DashboardUsage.medium,
+            opusShare: 0,
+            sonnetShare: 1,
+            otherShare: 0,
+            apiEquivalent: 1.94
+        ),
+        // Every token on this row ran on a model absent from the price table.
+        // The tokens are known; the API-equivalent cell must say the price is
+        // the part that is missing, not print the same word a project with
+        // nothing recorded would.
+        MonthlyProjectRow(
+            project: DashboardPaths.veryLong,
+            sessionCount: 31,
+            usage: DashboardUsage.small,
+            opusShare: 0,
+            sonnetShare: 0,
+            otherShare: 1,
+            apiEquivalent: nil
+        ),
+    ]
+
+    static let none: [MonthlyProjectRow] = []
+}
+
 // MARK: - Composed dashboards
 
 private enum DashboardFixture {
@@ -429,6 +469,7 @@ private enum DashboardFixture {
         series: DashboardSeries.healthy,
         projects: DashboardProjects.healthy,
         history: DashboardHistory.mixed,
+        monthlyUsage: DashboardMonthlyUsage.mixed,
         todayUsage: DashboardUsage.medium,
         todayCost: 4.82,
         unpricedSessionCount: 0
@@ -446,6 +487,7 @@ private enum DashboardFixture {
         series: DashboardSeries.healthy,
         projects: DashboardProjects.healthy,
         history: DashboardHistory.mixed,
+        monthlyUsage: DashboardMonthlyUsage.mixed,
         todayUsage: DashboardUsage.medium,
         todayCost: 3.42,
         unpricedSessionCount: 0,
@@ -522,6 +564,8 @@ private enum DashboardFixture {
         seriesUnavailableReason: "No usage has been recorded yet",
         projects: DashboardProjects.none,
         history: DashboardHistory.none,
+        monthlyUsage: DashboardMonthlyUsage.none,
+        monthlyUsageUnavailableReason: "History is not being recorded",
         todayUsage: nil,
         todayCost: nil,
         unpricedSessionCount: 0
@@ -780,6 +824,34 @@ struct ProjectBreakdownPreview: PreviewProvider {
             }
         }
         .previewDisplayName("ProjectBreakdownView / states")
+    }
+}
+
+// MARK: - MonthlyUsageTableView
+
+struct MonthlyUsageTablePreview: PreviewProvider {
+    static var previews: some View {
+        DashboardSectionFrame(title: "Monthly usage") {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                MonthlyUsageTableView(
+                    rows: DashboardMonthlyUsage.mixed,
+                    includesSubagentTokens: true
+                )
+                // The store answered, but nothing was recorded this month.
+                MonthlyUsageTableView(
+                    rows: DashboardMonthlyUsage.none,
+                    includesSubagentTokens: true
+                )
+                // No store at all: the table says so rather than showing an
+                // empty one that looks the same as a quiet month.
+                MonthlyUsageTableView(
+                    rows: DashboardMonthlyUsage.none,
+                    includesSubagentTokens: true,
+                    emptyReason: "History is not being recorded"
+                )
+            }
+        }
+        .previewDisplayName("MonthlyUsageTableView / states")
     }
 }
 

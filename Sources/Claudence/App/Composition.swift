@@ -87,7 +87,13 @@ enum Composition {
             // answered fine at launch and later stopped, which the snapshot
             // above cannot show on its own.
             healthProvider: { [store] in store.health },
-            analytics: analytics
+            analytics: analytics,
+            // The monthly table (9.13) reads the store directly rather than
+            // through `AnalyticsService`, which has no method for the
+            // per-model rollups 9.13 added. Same closure-injection seam as
+            // `healthProvider` just above, and the same store instance.
+            monthlyTotalsReader: { [store] since in store.monthlyTotals(since: since) },
+            unansweredQueriesReader: { [store] in store.unansweredQueriesOnThisThread }
         )
 
         // Detached rather than awaited inline: the walk reads every

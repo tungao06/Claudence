@@ -41,7 +41,6 @@ private func makeSession(
 ) -> AISession {
     AISession(
         id: id,
-        provider: .claudeCode,
         pid: pid,
         procStart: procStart,
         projectName: project,
@@ -191,7 +190,6 @@ func roundTripSession() {
 
     let loaded = try! #require(store.session(id: "abc-123"))
     #expect(loaded.id == "abc-123")
-    #expect(loaded.provider == .claudeCode)
     #expect(loaded.pid == 90_210)
     #expect(loaded.procStart == "2026-09-02T09:15:00Z")
     #expect(loaded.projectName == "Claudence")

@@ -1,13 +1,5 @@
 import Foundation
 
-// MARK: - Provider
-
-public enum AIProviderType: String, Sendable, Codable, CaseIterable {
-    case claudeCode
-    case codex
-    case geminiCLI
-}
-
 // MARK: - Session status
 
 /// Only states with a proven data source are used by the UI.
@@ -127,7 +119,6 @@ public struct Activity: Sendable, Codable, Equatable {
 
 public struct AISession: Sendable, Identifiable, Equatable {
     public let id: String
-    public let provider: AIProviderType
     public let pid: Int32
     /// Paired with `pid` for liveness. PID alone is reused after reboot.
     public let procStart: String
@@ -183,7 +174,6 @@ public struct AISession: Sendable, Identifiable, Equatable {
 
     public init(
         id: String,
-        provider: AIProviderType = .claudeCode,
         pid: Int32,
         procStart: String,
         projectName: String,
@@ -208,7 +198,6 @@ public struct AISession: Sendable, Identifiable, Equatable {
         lastRequestUsage: TokenUsage? = nil
     ) {
         self.id = id
-        self.provider = provider
         self.pid = pid
         self.procStart = procStart
         self.projectName = projectName

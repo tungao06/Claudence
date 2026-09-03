@@ -74,6 +74,54 @@ struct ProjectRow: Identifiable, Sendable, Equatable {
     }
 }
 
+/// One project's row in the monthly table (spec 9.13).
+///
+/// Remapped from the store's `ClaudenceStore.MonthlyProjectUsage`, the same
+/// rule every row type in this file follows: the view never learns the
+/// store's vocabulary, only this one's.
+struct MonthlyProjectRow: Identifiable, Sendable, Equatable {
+    let project: String
+    let sessionCount: Int
+    let usage: TokenUsage
+    /// This project's Opus tokens as a share of `usage.total`, 0 to 1.
+    let opusShare: Double
+    /// This project's Sonnet tokens as a share of `usage.total`, 0 to 1.
+    let sonnetShare: Double
+    /// Every other model's tokens as a share of `usage.total`, 0 to 1 --
+    /// Haiku, an older snapshot, and the `unknown` bucket a record with no
+    /// model name falls into. Carried explicitly, summed from its own models
+    /// rather than left as whatever `1 - opusShare - sonnetShare` implies, so
+    /// a project that spent a third of its tokens on Haiku reads as that
+    /// share and not as two thirds of something else.
+    let otherShare: Double
+    /// Estimated API-equivalent dollars, summed model by model through
+    /// `CostEstimator`. Nil only when none of the project's models had a
+    /// price, in which case the tokens are still known -- unlike a project
+    /// with nothing recorded at all -- and the view says so rather than
+    /// printing the same word for both.
+    let apiEquivalent: Double?
+
+    var id: String { project }
+
+    init(
+        project: String,
+        sessionCount: Int,
+        usage: TokenUsage,
+        opusShare: Double,
+        sonnetShare: Double,
+        otherShare: Double,
+        apiEquivalent: Double? = nil
+    ) {
+        self.project = project
+        self.sessionCount = sessionCount
+        self.usage = usage
+        self.opusShare = opusShare
+        self.sonnetShare = sonnetShare
+        self.otherShare = otherShare
+        self.apiEquivalent = apiEquivalent
+    }
+}
+
 /// One finished session in the history table.
 struct HistoryRow: Identifiable, Sendable, Equatable {
     /// Session identifier. Two sessions of the same project must not collide.
@@ -185,6 +233,20 @@ struct DashboardData: Sendable, Equatable {
     let projects: [ProjectRow]
     let history: [HistoryRow]
 
+    /// The monthly table's rows (spec 9.13), already the prefix of twelve the
+    /// card draws: `ClaudenceStore.MonthlyUsageReport.rows` documents that
+    /// truncation as the caller's job, and the adapter is the caller.
+    let monthlyUsage: [MonthlyProjectRow]
+    /// Whether `monthlyUsage` already includes subagent tokens, carried as
+    /// data from `ClaudenceStore.MonthlyUsageReport.includesSubagentTokens`
+    /// rather than asserted in the view's own prose.
+    let monthlyUsageIncludesSubagentTokens: Bool
+    /// Why the monthly table has nothing to show, when a reason is actually
+    /// known: no store at all, or a read the store's own unanswered-query
+    /// counter says did not complete. Nil is the ordinary case, including a
+    /// real "nothing recorded this month".
+    let monthlyUsageUnavailableReason: String?
+
     /// Nil when today's totals could not be read. Zero is a real answer and is
     /// not the same thing.
     let todayUsage: TokenUsage?
@@ -258,6 +320,9 @@ struct DashboardData: Sendable, Equatable {
         hourlySeriesUnavailableReason: String? = nil,
         projects: [ProjectRow] = [],
         history: [HistoryRow] = [],
+        monthlyUsage: [MonthlyProjectRow] = [],
+        monthlyUsageIncludesSubagentTokens: Bool = true,
+        monthlyUsageUnavailableReason: String? = nil,
         todayUsage: TokenUsage? = nil,
         todayCost: Double? = nil,
         unpricedSessionCount: Int = 0,
@@ -282,6 +347,9 @@ struct DashboardData: Sendable, Equatable {
         self.hourlySeriesUnavailableReason = hourlySeriesUnavailableReason
         self.projects = projects
         self.history = history
+        self.monthlyUsage = monthlyUsage
+        self.monthlyUsageIncludesSubagentTokens = monthlyUsageIncludesSubagentTokens
+        self.monthlyUsageUnavailableReason = monthlyUsageUnavailableReason
         self.todayUsage = todayUsage
         self.todayCost = todayCost
         self.unpricedSessionCount = unpricedSessionCount
@@ -598,4 +666,19 @@ enum DashboardMetrics {
     static let historyModelColumn: CGFloat = 148
     static let historyDurationColumn: CGFloat = 80
     static let historyTokensColumn: CGFloat = 84
+
+    // Monthly table (9.13): project, sessions, tokens, three model-share
+    // columns and API equivalent. Reuses the projects table's sessions,
+    // tokens and cost widths, since those columns hold the same shape of
+    // figure; only the three share columns are new.
+    static let monthlySessionsColumn: CGFloat = projectSessionsColumn
+    static let monthlyTokensColumn: CGFloat = projectTokensColumn
+    /// Wider than `projectCostColumn`: this column's unavailable state is not
+    /// the word "unavailable" but the full sentence "tokens known, no price"
+    /// (spec 9.13), which needs the room or it truncates into something less
+    /// legible than the word it replaced.
+    static let monthlyCostColumn: CGFloat = 140
+    /// Wide enough for "100%" under a three-letter header (OPUS / SONNET /
+    /// OTHER) without either one truncating the other.
+    static let monthlyShareColumn: CGFloat = 64
 }

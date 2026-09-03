@@ -81,6 +81,26 @@ final class MonitorViewModel {
     /// captured at launch.
     private let healthProvider: (() -> StoreHealth)?
 
+    /// How to read the store's monthly per-project totals, for the monthly
+    /// table (9.13). A closure rather than a reference to the concrete store,
+    /// the same reason `healthProvider` is one: this file does not need to
+    /// import or know which store backs the engine. `AnalyticsService` has no
+    /// method for this -- the store's per-model rollups are new in 9.13, and
+    /// adding a wrapper there is a change to `ClaudenceCore`, not to this
+    /// file -- so `DashboardAdapter` reads the store through this and the
+    /// closure below directly, the same way it would through a method on
+    /// `AnalyticsService` if one existed. Nil (previews, and call sites that
+    /// pass no store) means the table has nothing to read from.
+    let monthlyTotalsReader: ((Date) -> ClaudenceStore.MonthlyUsageReport)?
+
+    /// How to read the store's unanswered-query counter, so `DashboardAdapter`
+    /// can bracket the read above the same way every method inside
+    /// `AnalyticsService` already brackets its own: a count taken before and
+    /// after the read that does not match means the store did not actually
+    /// answer, and the table should say so rather than render whatever
+    /// partial rows came back.
+    let unansweredQueriesReader: (() -> UInt64)?
+
     /// Dashboard aggregates. Built on demand rather than on every snapshot,
     /// because they read the database and the dashboard is usually closed.
     /// Settable from `DashboardAdapter`, which is the only writer.
@@ -114,13 +134,17 @@ final class MonitorViewModel {
         engine: MonitorEngine,
         storeHealth: StoreHealth = .healthy,
         healthProvider: (() -> StoreHealth)? = nil,
-        analytics: AnalyticsService? = nil
+        analytics: AnalyticsService? = nil,
+        monthlyTotalsReader: ((Date) -> ClaudenceStore.MonthlyUsageReport)? = nil,
+        unansweredQueriesReader: (() -> UInt64)? = nil
     ) {
         self.engine = engine
         self.launchStoreHealth = storeHealth
         self.currentStoreHealth = storeHealth
         self.healthProvider = healthProvider
         self.analytics = analytics
+        self.monthlyTotalsReader = monthlyTotalsReader
+        self.unansweredQueriesReader = unansweredQueriesReader
     }
 
     /// Which subscription the usage limits belong to, or nil when Claude Code's

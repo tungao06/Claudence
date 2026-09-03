@@ -12,6 +12,7 @@ import ClaudenceCore
 ///     stat tiles                     four across
 ///     projects
 ///     history
+///     monthly usage
 ///
 /// The two-column rows and their fixed widths are the design's, measured off
 /// `Design/Claudence-UI.dc.html` section 1a: `372px 1fr` then `1fr 340px`, both
@@ -98,13 +99,15 @@ struct DashboardView: View {
                     meterRow
                     sessionsRow
                     StatTilesView(data: data)
-                    // Both cards are history end to end -- a chart of days
-                    // gone by and a table of sessions that already ended --
-                    // so live-only mode omits them rather than opening on an
-                    // `Usage unavailable` card with nothing behind it.
+                    // All three cards are history end to end -- a chart of
+                    // days gone by, a table of sessions that already ended,
+                    // and a month of per-project totals -- so live-only mode
+                    // omits them rather than opening on an `Usage unavailable`
+                    // card with nothing behind it.
                     if !liveOnlyMode {
                         projectsCard
                         historyCard
+                        monthlyUsageCard
                     }
                 }
                 .padding(.horizontal, DashboardMetrics.shellPaddingHorizontal)
@@ -497,6 +500,34 @@ struct DashboardView: View {
             contentGap: Theme.Space.l
         ) {
             SessionHistoryView(rows: data.history, now: now)
+        }
+    }
+
+    /// The last card in the analytics band (spec 9.13), below `historyCard`
+    /// rather than above it or either card in the row above: the product's
+    /// visual priority is fixed at `power meter -> active sessions ->
+    /// analytics`, and every card already in this band is analytics, so a new
+    /// one only has to keep its place at the bottom of that group, not argue
+    /// for one above the meter or the sessions row.
+    ///
+    /// The subtitle names the range for the same reason `projectsCard`'s
+    /// does: this table covers the trailing month, not today and not all
+    /// time, and a dollar or token figure with an unstated range reads as
+    /// disagreeing with whichever other range-labelled figure sits nearest it
+    /// on screen.
+    private var monthlyUsageCard: some View {
+        DashboardCard(
+            title: "Monthly usage",
+            subtitle: "last 30 days · Opus vs Sonnet, by project",
+            headerLayout: .inline,
+            horizontalPadding: DashboardMetrics.chartCardPaddingHorizontal,
+            contentGap: Theme.Space.l
+        ) {
+            MonthlyUsageTableView(
+                rows: data.monthlyUsage,
+                includesSubagentTokens: data.monthlyUsageIncludesSubagentTokens,
+                emptyReason: data.monthlyUsageUnavailableReason
+            )
         }
     }
 }

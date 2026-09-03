@@ -414,7 +414,6 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                     ON CONFLICT(id) DO UPDATE SET
                         project_name = excluded.project_name,
                         working_directory = excluded.working_directory,
-                        provider = excluded.provider,
                         pid = excluded.pid,
                         proc_start = excluded.proc_start,
                         started_at = excluded.started_at,
@@ -437,7 +436,15 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                         .text(session.id),
                         .text(session.projectName),
                         .text(session.workingDirectory),
-                        .text(session.provider.rawValue),
+                        // `provider` is vestigial. `AIProviderType` was deleted
+                        // in the 9.10e pass, because Claude Code is the only
+                        // provider there will ever be and a seam with one
+                        // implementation is a claim the code makes that the
+                        // product does not. The column is `NOT NULL` with no
+                        // default and rewriting the table to drop one string is
+                        // not worth a schema version, so the write pins the one
+                        // value it ever held. Nothing reads it back.
+                        .text("claudeCode"),
                         .integer(Int64(session.pid)),
                         .text(session.procStart),
                         .real(session.startedAt.timeIntervalSince1970),
@@ -1570,7 +1577,7 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     // MARK: - Private
 
     private static let sessionColumns = """
-        SELECT id, project_name, working_directory, provider, pid, proc_start,
+        SELECT id, project_name, working_directory, pid, proc_start,
                started_at, last_activity_at, ended_at, model, claude_code_version,
                fresh_input, cache_creation, cache_read, output, thinking,
                subagent_fresh_input, subagent_cache_creation, subagent_cache_read,
@@ -1591,35 +1598,34 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     private static func makeSession(_ row: SQLiteRow) -> AISession {
         AISession(
             id: row.string(0),
-            provider: AIProviderType(rawValue: row.string(3)) ?? .claudeCode,
-            pid: Int32(truncatingIfNeeded: row.int64(4)),
-            procStart: row.string(5),
+            pid: Int32(truncatingIfNeeded: row.int64(3)),
+            procStart: row.string(4),
             projectName: row.string(1),
             workingDirectory: row.string(2),
-            status: row.isNull(8) ? .idle : .completed,
+            status: row.isNull(7) ? .idle : .completed,
             currentActivity: nil,
-            startedAt: Date(timeIntervalSince1970: row.double(6)),
-            lastActivityAt: Date(timeIntervalSince1970: row.double(7)),
+            startedAt: Date(timeIntervalSince1970: row.double(5)),
+            lastActivityAt: Date(timeIntervalSince1970: row.double(6)),
             usage: TokenUsage(
-                freshInput: row.int(11),
-                cacheCreation: row.int(12),
-                cacheRead: row.int(13),
-                output: row.int(14),
-                thinking: row.int(15)
+                freshInput: row.int(10),
+                cacheCreation: row.int(11),
+                cacheRead: row.int(12),
+                output: row.int(13),
+                thinking: row.int(14)
             ),
             // Read back separately, never pre-added: `combinedUsage` is the
             // derived figure and a session loaded from disk has to agree with
             // the one that was written.
             subagentUsage: TokenUsage(
-                freshInput: row.int(16),
-                cacheCreation: row.int(17),
-                cacheRead: row.int(18),
-                output: row.int(19),
-                thinking: row.int(20)
+                freshInput: row.int(15),
+                cacheCreation: row.int(16),
+                cacheRead: row.int(17),
+                output: row.int(18),
+                thinking: row.int(19)
             ),
-            subagentCount: row.int(21),
-            model: row.stringOptional(9),
-            claudeCodeVersion: row.stringOptional(10)
+            subagentCount: row.int(20),
+            model: row.stringOptional(8),
+            claudeCodeVersion: row.stringOptional(9)
         )
     }
 

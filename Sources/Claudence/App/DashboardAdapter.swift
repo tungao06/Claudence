@@ -41,6 +41,10 @@ extension MonitorViewModel {
                 tokenScaleMaximum: tokenScaleMaximum,
                 burnRates: burnSamples(),
                 seriesUnavailableReason: "History is not being recorded",
+                // No store at all, so the monthly table has nothing to read
+                // either -- the same reasoning one line above, stated for the
+                // table instead of the chart.
+                monthlyUsageUnavailableReason: "History is not being recorded",
                 todayUsage: nil,
                 // The projection, the binding window and the burn leader all
                 // come from the usage endpoint and the in-process burn
@@ -87,6 +91,14 @@ extension MonitorViewModel {
             ? []
             : analytics.hourlySeries(in: AnalyticsService.fiveHourRange(resetsAt: fiveHour?.resetsAt, now: now))
 
+        // The monthly table (9.13) is history end to end, so live-only mode
+        // skips asking for it, the same reasoning `projectsCard` and
+        // `historyCard` already get above `stored` and `points`. Nil rather
+        // than an empty report distinguishes "did not ask" and "asked and the
+        // store did not answer" from "asked and there is nothing recorded",
+        // which only the last of the three renders as a true empty table.
+        let monthly = isLiveOnly ? nil : monthlyUsage(now: now)
+
         dashboard = DashboardData(
             windows: usageState.windows,
             usageUnavailableReason: usageUnavailableReason,
@@ -103,6 +115,11 @@ extension MonitorViewModel {
                 : (hourly.contains(where: \.isAvailable) ? nil : "No usage sampled in this window"),
             projects: summaries.map(Self.projectRow),
             history: isLiveOnly ? [] : Self.history(live: sessions, stored: stored),
+            monthlyUsage: monthly?.rows ?? [],
+            monthlyUsageIncludesSubagentTokens: monthly?.includesSubagentTokens ?? true,
+            monthlyUsageUnavailableReason: isLiveOnly
+                ? nil
+                : (monthly == nil ? "The store could not answer for this range" : nil),
             // Nil when the store could not answer, so the tile renders
             // `Usage unavailable`. This passed a non-nil value on every path
             // until 2026-09-03, which made `todayUsage`'s optionality
@@ -257,6 +274,100 @@ extension MonitorViewModel {
 
     /// How far back the history table is given rows for: its widest filter.
     private static let historyWindow: TimeInterval = 30 * 24 * 60 * 60
+
+    // MARK: Monthly table (9.13)
+
+    /// The monthly table's own range. "A month" is approximated as the
+    /// trailing 30 days, the same lookback `historyWindow` already uses for
+    /// the widest history filter, rather than the calendar month: a calendar
+    /// month boundary would make the table's row count jump on the 1st for a
+    /// reason that has nothing to do with usage.
+    private static let monthlyLookback: TimeInterval = 30 * 24 * 60 * 60
+
+    /// Prices a project's per-model split. `AnalyticsService`'s own estimator
+    /// is private to it, and this reads no session list to ask
+    /// `CostEstimator.estimate(sessions:)` for one, so this constructs its
+    /// own against the same default table (`ModelPricing.current`)
+    /// `Composition.makeServices()` hands `AnalyticsService`, rather than
+    /// duplicating the pricing arithmetic itself: `CostEstimator` still owns
+    /// every dollar figure this file prints.
+    private static let monthlyCostEstimator = CostEstimator()
+
+    /// Which of the table's three buckets a model string belongs in. Matches
+    /// on substring rather than the price table's snapshot-exact key, because
+    /// the table's job is a family comparison ("Opus versus Sonnet"), not a
+    /// priced lookup -- a project that ran three different Sonnet snapshots
+    /// in a month is one Sonnet bar, not three slivers too thin to read.
+    private enum ModelFamily {
+        case opus, sonnet, other
+
+        static func of(_ model: String) -> ModelFamily {
+            let lowered = model.lowercased()
+            if lowered.contains("opus") { return .opus }
+            if lowered.contains("sonnet") { return .sonnet }
+            return .other
+        }
+    }
+
+    /// Reads the store's monthly per-project totals, bracketed by
+    /// `unansweredQueriesReader` exactly the way every method inside
+    /// `AnalyticsService` already brackets its own store reads (see
+    /// `AnalyticsService.dailySeries`, for one): a count taken before and
+    /// after the read that does not match means the store did not actually
+    /// answer, so this returns nil and the table renders `Usage unavailable`
+    /// rather than whatever partial rows came back.
+    ///
+    /// Nil also whenever the composition root wired no reader at all --
+    /// previews and tests that construct `MonitorViewModel` with none.
+    private func monthlyUsage(now: Date) -> (rows: [MonthlyProjectRow], includesSubagentTokens: Bool)? {
+        guard let monthlyTotalsReader, let unansweredQueriesReader else { return nil }
+        let before = unansweredQueriesReader()
+        let report = monthlyTotalsReader(now.addingTimeInterval(-Self.monthlyLookback))
+        guard unansweredQueriesReader() == before else { return nil }
+        // "Twelve rows" (spec 9.13): `MonthlyUsageReport.rows` documents that
+        // this truncation is the caller's job, and this is the caller.
+        return (report.rows.prefix(12).map(Self.monthlyRow), report.includesSubagentTokens)
+    }
+
+    /// One store row remapped to the dashboard's own vocabulary: the three
+    /// model shares summed directly from `usageByModel` rather than derived
+    /// by subtraction, and the API-equivalent dollar figure summed model by
+    /// model so a model missing from the price table does not zero out the
+    /// ones that are in it.
+    private static func monthlyRow(_ project: ClaudenceStore.MonthlyProjectUsage) -> MonthlyProjectRow {
+        let total = Double(project.usage.total)
+        var opusTokens = 0
+        var sonnetTokens = 0
+        var otherTokens = 0
+        var dollars = 0.0
+        var pricedAnyModel = false
+
+        for (model, usage) in project.usageByModel {
+            switch ModelFamily.of(model) {
+            case .opus: opusTokens += usage.total
+            case .sonnet: sonnetTokens += usage.total
+            case .other: otherTokens += usage.total
+            }
+            if let priced = monthlyCostEstimator.estimate(usage: usage, model: model) {
+                dollars += priced
+                pricedAnyModel = true
+            }
+        }
+
+        return MonthlyProjectRow(
+            project: project.projectName,
+            sessionCount: project.sessionCount,
+            usage: project.usage,
+            opusShare: total > 0 ? Double(opusTokens) / total : 0,
+            sonnetShare: total > 0 ? Double(sonnetTokens) / total : 0,
+            otherShare: total > 0 ? Double(otherTokens) / total : 0,
+            // Nil only when nothing at all could be priced, the same rule
+            // `CostEstimate.estimatedDollars` follows: a project with one
+            // unpriced model among three priced ones still gets a figure,
+            // and it is a lower bound rather than a lie about being unknown.
+            apiEquivalent: pricedAnyModel ? dollars : nil
+        )
+    }
 
     /// The age of the price table, in whole days, and only once it is stale.
     ///

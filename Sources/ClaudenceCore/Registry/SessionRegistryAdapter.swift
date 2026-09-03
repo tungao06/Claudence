@@ -95,7 +95,6 @@ public struct SessionRegistryAdapter: SessionDiscovering {
     private func session(from record: RegistryRecord, now: Date) -> AISession {
         AISession(
             id: record.sessionId,
-            provider: .claudeCode,
             pid: record.pid,
             procStart: record.procStart,
             projectName: record.displayName,

@@ -53,7 +53,6 @@ private func makeCountingSession(
 ) -> AISession {
     AISession(
         id: id,
-        provider: .claudeCode,
         pid: 4242,
         procStart: "2026-09-02T10:00:00Z",
         projectName: project,
