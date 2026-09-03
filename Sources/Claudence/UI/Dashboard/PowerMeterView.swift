@@ -274,16 +274,22 @@ struct PowerMeterView: View {
         }
     }
 
+    /// The sentence used to repeat the worst tube's own percentage and reset
+    /// countdown, forty pixels above it in the same card (9.10): `reading(_:)`
+    /// already prints `78%` over that tube, and `caption(_:)` already prints
+    /// its reset countdown under it, so the banner was restating both figures
+    /// a second time under a different sentence. What the tube cannot say is
+    /// which of several tubes the banner is about, or that the picker's own
+    /// severity glyph has no accompanying word anywhere else on the card — the
+    /// glyph carries colour, and `CLAUDE.md` requires colour never to stand
+    /// alone. Both survive; the percent and the countdown do not.
     private func sentence(_ state: (window: UsageWindow, percent: Double, severity: Severity)) -> String {
         guard !data.everyWindowIsHealthy else {
             // The design's own line, and only ever shown when it is true of
             // every window on the card.
             return "plenty of power in every window"
         }
-        var text = "\(state.window.displayName) at \(Format.percent(state.percent))"
-        if let remaining = Format.timeUntil(state.window.resetsAt, now: now) {
-            text += ", resets in \(remaining)"
-        }
+        var text = "\(state.window.displayName) window"
         let unreadable = data.meterWindows.filter { $0.usedPercent == nil }.count
         if unreadable == 1 {
             text += " · 1 window unavailable"

@@ -40,10 +40,14 @@ import ClaudenceCore
 struct SubagentListView: View {
 
     let subagents: [AISubagent]
-    /// The parent's combined total, which is the denominator of every share.
-    /// Passed in rather than recomputed so this view and the energy panel above
-    /// it cannot disagree about what the session spent.
-    let parentTotal: Int
+    /// The parent's combined usage, whose `.total` is the denominator of every
+    /// share on this list. Passed in rather than recomputed so this view and
+    /// the energy panel above it cannot disagree about what the session
+    /// spent, and carried as a `TokenUsage` rather than a bare `Int` so both
+    /// the per-row share below and the aggregate's own share go through
+    /// `TokenUsage.share(of:)` (`ClaudenceCore/Domain/TokenShare.swift`)
+    /// instead of one of them hand-rolling the same zero-total guard (9.10).
+    let parentUsage: TokenUsage
     /// Every subagent's tokens added together, from the session that measured
     /// them. Nil omits the aggregate rather than summing the rows here, which
     /// would disagree with the session the moment a subagent is filtered out.
@@ -53,12 +57,12 @@ struct SubagentListView: View {
 
     init(
         subagents: [AISubagent],
-        parentTotal: Int,
+        parentUsage: TokenUsage,
         subagentTotal: Int? = nil,
         now: Date = Date()
     ) {
         self.subagents = subagents
-        self.parentTotal = parentTotal
+        self.parentUsage = parentUsage
         self.subagentTotal = subagentTotal
         self.now = now
     }
@@ -117,9 +121,9 @@ struct SubagentListView: View {
     /// nothing else does: how much of the session's true total is down here.
     /// Nil when either half is missing, never a substituted zero.
     private var aggregate: String? {
-        guard let subagentTotal, subagentTotal > 0, parentTotal > 0 else { return nil }
-        let share = Double(subagentTotal) / Double(parentTotal)
-        return "\(Format.tokens(subagentTotal)) of this session's \(Format.tokens(parentTotal)), "
+        guard let subagentTotal, subagentTotal > 0,
+              let share = parentUsage.share(of: subagentTotal) else { return nil }
+        return "\(Format.tokens(subagentTotal)) of this session's \(Format.tokens(parentUsage.total)), "
             + "\(Format.percent(share * 100)) of the combined total."
     }
 
@@ -127,7 +131,7 @@ struct SubagentListView: View {
 
     private func row(_ subagent: AISubagent) -> some View {
         let identity = Theme.identity(forSessionID: subagent.id)
-        let share = subagent.share(ofParentTotal: parentTotal)
+        let share = subagent.share(ofParentTotal: parentUsage.total)
         let status: SessionStatus = subagent.isActive(now: now) ? .running : .completed
 
         return HStack(alignment: .center, spacing: Column.gap) {

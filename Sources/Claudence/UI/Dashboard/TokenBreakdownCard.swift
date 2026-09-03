@@ -39,8 +39,20 @@ struct TokenBreakdownCard: View {
                     stackedBar(usage)
                 }
                 rows(usage)
+                // No `Total` row here (9.10). It read the same figure as the
+                // dashboard's `Tokens today` stat tile, `usage.total` off this
+                // same `DashboardData.todayUsage`, printed as a second headline
+                // number a few inches below the first. The tile is the reader
+                // this number was for: someone scanning the four-tile strip for
+                // "how much today, and versus yesterday" wants one number, not
+                // a second one to reconcile against. This card's own reader
+                // wants where the total split, which the four rows and the
+                // stacked bar above already answer; the sum of the four was
+                // never in question, so restating it added no reading, only an
+                // arithmetic check nobody asked this card to perform. The
+                // divider stays: it still separates the split from the privacy
+                // line under it.
                 Divider().overlay(Theme.separator)
-                totalRow(usage)
                 privacyFooter
             } else {
                 UnavailableView(
@@ -153,7 +165,10 @@ struct TokenBreakdownCard: View {
     /// it, and so does its accessibility label.
     private func row(_ category: Theme.TokenCategory, usage: TokenUsage) -> some View {
         let amount = Self.value(for: category, in: usage)
-        let share = usage.total > 0 ? Double(amount) / Double(usage.total) : nil
+        // `TokenUsage.share(of:)`, `ClaudenceCore/Domain/TokenShare.swift`: the
+        // one place this division happens now, rather than a third hand-rolled
+        // copy of the zero-total guard.
+        let share = usage.share(of: amount)
         return HStack(spacing: Theme.Space.s + Theme.Space.xs) {
             RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
                 .fill(Theme.color(for: category))
@@ -189,24 +204,9 @@ struct TokenBreakdownCard: View {
         // about. `elevates` sits under `tooltip` so the bubble's own hover
         // region is measured against a rectangle the lift cannot move.
         .elevates(.row, cornerRadius: Theme.Radius.hoverTarget)
-        .tooltip(breakdown: category.label, value: amount, of: usage.total)
+        .tooltip(breakdown: category.label, value: amount, of: usage)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spokenRow(category, amount: amount, share: share))
-    }
-
-    private func totalRow(_ usage: TokenUsage) -> some View {
-        HStack(spacing: Theme.Space.s) {
-            Text("Total")
-                .font(Theme.Typography.labelEmphasis)
-                .foregroundStyle(Theme.textPrimary)
-            Spacer(minLength: Theme.Space.m)
-            Text(Format.tokens(usage.total))
-                .font(Theme.Typography.panelValue)
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Total, \(Format.tokens(usage.total)) tokens.")
     }
 
     /// The one claim on this card that is not a number, and the one the privacy

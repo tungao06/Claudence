@@ -119,13 +119,17 @@ extension View {
 
     /// A breakdown-row tooltip, keyed on the row's visible label and carrying
     /// that row's measured share of the measured total.
+    ///
+    /// Takes the whole `TokenUsage` rather than its `total` alone so the share
+    /// itself comes from `TokenUsage.share(of:)`, `ClaudenceCore/Domain/TokenShare.swift`,
+    /// instead of a fourth hand-rolled division living in this file.
     func tooltip(
         breakdown label: String,
         value: Int,
-        of total: Int,
+        of usage: TokenUsage,
         edge: TooltipEdge = .center
     ) -> some View {
-        tooltip(Tooltip.breakdownEntry(label: label, value: value, total: total), edge: edge)
+        tooltip(Tooltip.breakdownEntry(label: label, value: value, usage: usage), edge: edge)
     }
 }
 
@@ -386,23 +390,27 @@ enum Tooltip {
     /// The breakdown body with the design's numeric suffix appended:
     /// `body + "  ·  " + value + " of " + total + " (" + pct + "%)"`.
     ///
-    /// Both figures are the caller's measurements. When the total is zero the
-    /// suffix is dropped: a share of nothing is undefined, and "0 of 0 (0%)"
-    /// would read as a measurement rather than as an absence.
+    /// `value` is the caller's own measurement; the share of it comes from
+    /// `usage.share(of:)` (`TokenUsage`, `ClaudenceCore/Domain/TokenShare.swift`),
+    /// which is also what `TokenBreakdownCard` and `SessionDetailView` call for
+    /// the same figure, so the three no longer carry three copies of the same
+    /// zero-total guard and division. When the total is zero the suffix is
+    /// dropped: a share of nothing is undefined, and "0 of 0 (0%)" would read
+    /// as a measurement rather than as an absence.
     ///
     /// The share goes through `Format.share`, which is where the `<1%` rule
     /// lives. Rounding it here printed `2.0 K of 197.7 M (0%)`: a count and a
     /// percentage of the same quantity, in one parenthesis, contradicting each
     /// other. `share` prints `0%` only for a true zero, and this tooltip cannot
     /// reach that case anyway.
-    static func breakdownEntry(label: String, value: Int, total: Int) -> TooltipText.Entry? {
+    static func breakdownEntry(label: String, value: Int, usage: TokenUsage) -> TooltipText.Entry? {
         guard let entry = TooltipText.breakdown(label) else { return nil }
-        guard total > 0 else { return entry }
+        guard let share = usage.share(of: value) else { return entry }
         let suffix = separator
             + Format.tokens(value)
             + " of "
-            + Format.tokens(total)
-            + " (\(Format.share(Double(value) / Double(total))))"
+            + Format.tokens(usage.total)
+            + " (\(Format.share(share)))"
         return TooltipText.Entry(title: entry.title, body: entry.body + suffix)
     }
 }

@@ -220,7 +220,7 @@ struct SessionDetailView: View {
                 if showsSubagents {
                     SubagentListView(
                         subagents: subagents,
-                        parentTotal: total.total,
+                        parentUsage: total,
                         subagentTotal: session.subagentUsage.total
                     )
                 }
@@ -782,9 +782,11 @@ struct TokenBreakdownColumn<Well: View>: View {
         }
     }
 
+    /// `TokenUsage.share(of:)`, `ClaudenceCore/Domain/TokenShare.swift`: the
+    /// one place this division happens, shared with `TokenBreakdownCard` and
+    /// the tooltip's own breakdown suffix rather than a third copy of it.
     private func fraction(of category: Theme.TokenCategory) -> Double? {
-        guard usage.total > 0 else { return nil }
-        return Double(value(for: category)) / Double(usage.total)
+        usage.share(of: value(for: category))
     }
 
     // MARK: - The bar
@@ -863,7 +865,7 @@ struct TokenBreakdownColumn<Well: View>: View {
                 .frame(width: Theme.DetailSheet.breakdownShareColumn, alignment: .trailing)
         }
         .padding(.vertical, Theme.Space.xxs)
-        .tooltip(breakdown: category.label, value: amount, of: usage.total)
+        .tooltip(breakdown: category.label, value: amount, of: usage)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label(category, amount: amount, fraction: share))
     }

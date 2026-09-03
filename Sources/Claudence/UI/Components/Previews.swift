@@ -1071,7 +1071,7 @@ struct SubagentListEmptyPreview: PreviewProvider {
         PreviewFrame(title: "Subagents") {
             // Most sessions spawn nothing; the parent total is irrelevant
             // when the list itself is empty.
-            SubagentListView(subagents: SubagentFixture.empty, parentTotal: 0)
+            SubagentListView(subagents: SubagentFixture.empty, parentUsage: .zero)
         }
         .previewDisplayName("SubagentListView / empty")
     }
@@ -1082,7 +1082,7 @@ struct SubagentListSeveralPreview: PreviewProvider {
         PreviewFrame(title: "Subagents") {
             SubagentListView(
                 subagents: SubagentFixture.several,
-                parentTotal: SubagentFixture.severalParentTotal
+                parentUsage: TokenUsage(output: SubagentFixture.severalParentTotal)
             )
         }
         .previewDisplayName("SubagentListView / several")
@@ -1096,7 +1096,7 @@ struct SubagentListMissingLabelsPreview: PreviewProvider {
             // type and its task description fall back to unavailable wording.
             SubagentListView(
                 subagents: SubagentFixture.withUnlabeled,
-                parentTotal: SubagentFixture.withUnlabeledParentTotal
+                parentUsage: TokenUsage(output: SubagentFixture.withUnlabeledParentTotal)
             )
         }
         .previewDisplayName("SubagentListView / missing labels")

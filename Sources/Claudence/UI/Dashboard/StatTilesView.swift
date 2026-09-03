@@ -91,6 +91,16 @@ struct StatTilesView: View {
 
     // MARK: - Tiles
 
+    /// The one surviving reader of `data.todayUsage.total` on this window
+    /// (9.10). `TokenBreakdownCard`'s own `Total` row printed the identical
+    /// figure a few inches below this tile until it was removed, and this one
+    /// is the reader that keeps it: the four-tile strip is where someone scans
+    /// for "how much today, and versus yesterday" without opening a card, and
+    /// `changeCaption` below carries the day-over-day delta the breakdown card
+    /// never had a place for. The breakdown card's own reader, "where did it
+    /// go", is unaffected — its four category rows and stacked bar still sum
+    /// to the same number this tile shows, just no longer printed a second
+    /// time as its own headline.
     private var tokensTile: some View {
         tile(
             label: "Tokens today",
@@ -173,14 +183,22 @@ struct StatTilesView: View {
     /// the tile printed `2 / 1 today`, which is not a quantity. Ordering the two
     /// reads does not fix it; only counting both halves off one set does.
     ///
-    /// So the fraction is now active over live, where active is
-    /// `status == .running` and live is every session with a process. The
-    /// numerator is a subset of the denominator by construction, the word
-    /// "active" means the same thing here as it does in the menu bar's spoken
-    /// label, and the denominator says which set it is rather than leaving
-    /// "today" to be inferred. The sessions-that-ran-today figure has not gone
-    /// anywhere: the history table's Today range is the same count, from a
-    /// superset of the same rows.
+    /// So the fraction is active over live, where active is `status ==
+    /// .running` and live is every session with a process. The numerator is a
+    /// subset of the denominator by construction, and the word "active" means
+    /// the same thing here as it does in the menu bar's spoken label.
+    ///
+    /// The denominator itself, `/ N live`, does not print on the tile (9.10).
+    /// It is `data.liveSessionCount`, which is `data.sessions.count` — exactly
+    /// the row count of the `Live sessions` card sitting directly above this
+    /// strip, printed a second time as a headline figure a reader had already
+    /// seen by looking at the rows. Dropping it does not drop the range this
+    /// tile is answering over: the label already says "active sessions", the
+    /// caption still says how many projects they span, and a reader who wants
+    /// the live total has it by counting the card above or, for VoiceOver,
+    /// from `spokenActive` below, which keeps the live count because a screen
+    /// reader has no card of rows to fall back on the way a sighted reader
+    /// does.
     private var activeTile: some View {
         tile(
             label: "Active sessions",
@@ -188,7 +206,7 @@ struct StatTilesView: View {
             tooltipKey: "active",
             spoken: spokenActive
         ) {
-            value("\(data.activeSessionCount)", unit: " / \(data.liveSessionCount) live")
+            value("\(data.activeSessionCount)")
             caption(
                 data.liveProjectCount == 1
                     ? "1 project"

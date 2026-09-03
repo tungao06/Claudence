@@ -369,8 +369,48 @@ struct DashboardView: View {
     /// midnight cannot be split across two days from what those rows hold. A
     /// caption that names the limit beats a chart that quietly answers a
     /// different question.
+    ///
+    /// The five-hour selection also has to have something to draw (9.10). The
+    /// hourly series is sampled while Claudence itself is running — the
+    /// chart's own caption says so — so on a fresh launch, or any capture
+    /// taken before a five-hour window has elapsed with the app open, it is
+    /// empty even on a machine with a full history of real usage. The chart
+    /// card was defaulting to that empty series on every first run, because
+    /// the picker's own default selection is the five-hour window: every
+    /// screenshot taken soon after launch showed `No usage history` over a
+    /// card occupying half the top row, regardless of how much the daily
+    /// series, measured from the transcripts rather than sampled, actually
+    /// had to show.
+    ///
+    /// The fallback chosen is to fall through to the daily series rather than
+    /// collapse the card: the daily series is real, already computed for this
+    /// same row, and losing the chart entirely on every fresh launch is a
+    /// worse default than showing seven days of transcript-measured history
+    /// under its own honest title instead of five hours of nothing. Nothing
+    /// downstream needs a second flag for this — `chartTitle`, `chartCaption`
+    /// and the chart's own `unavailableReason` all key off this one property,
+    /// so a fallback here already carries the right title ("last N days"
+    /// instead of "This hour") and the right caption ("measured from
+    /// transcripts" instead of "sampled while running") to the rest of the
+    /// card. The picker segment itself still shows 5h highlighted, because
+    /// that segment is also the meter's own selection and the tube it
+    /// outlines is reading correctly; only the chart beside it substitutes a
+    /// series with something to draw.
+    ///
+    /// "Has something to draw" is `UsageChart.hasAnythingToDraw` restated
+    /// rather than `data.hourlySeriesUnavailableReason == nil`: the reason
+    /// string is only as honest as whatever built the `DashboardData`, and
+    /// `DashboardRenderFixture.populated`, the fixture `--render-ui` draws
+    /// from, is exactly the case that defect hid — it leaves both
+    /// `hourlySeries` and the reason at their empty defaults, so a check
+    /// against the reason read that fixture as fine and kept rendering
+    /// nothing under a populated dashboard on every capture. Checking the
+    /// points directly is the same test `UsageChart` itself applies before
+    /// it decides whether to draw the chart or the empty state, so the two
+    /// can no longer disagree about which series is present.
     private var showsHourlySeries: Bool {
         effectiveSelection(in: pickerWindows) == DashboardData.WindowKey.fiveHour
+            && data.hourlySeries.contains { !$0.isMissing }
     }
 
     private var chartTitle: String {

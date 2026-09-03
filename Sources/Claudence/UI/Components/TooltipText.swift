@@ -148,23 +148,33 @@ enum TooltipText {
         ),
     ]
 
-    // MARK: - META_TIPS (15 entries, keyed by session-fact name)
+    // MARK: - META_TIPS (4 entries, keyed by session-fact name)
     //
-    // Fourteen are the design's verbatim; `Records` is corrected. See
-    // `disputed`.
+    // Eleven entries were pruned here (9.10): `PID`, `Kind`, `CC version`,
+    // `Session id` and `Registry` were the session-diagnostic tiles 9.9
+    // deleted from `SessionFactsView`, and `Parent`, `Agent type`,
+    // `Spawned by`, `Tool calls`, `Share` and `Records` were facts from the
+    // subagent detail sheet 9.9 deleted outright. `.fact(name)` is keyed on a
+    // visible label a view still renders, and nothing renders any of those
+    // eleven any more — `SessionFactsView` and `TranscriptFactsBar` are the
+    // only two callers left, and between them they render exactly `Model`,
+    // `Git branch`, `Started`, `Duration`, `Parsed` and `Service tier`.
+    //
+    // `Share`, title `Share of parent`, is the specific entry 9.10 went
+    // looking for: it and the deleted sheet's own `Share` column header used
+    // to sit side by side, which is what that item's `Share of the parent`
+    // and `Share` pairing described. The sheet is gone, so the pairing no
+    // longer renders anywhere, and the orphaned entry is what would have let
+    // it come back by accident the next time someone wired a `.tooltip(fact:)`
+    // up without checking whether the key was still live.
+    //
+    // `Git branch` is the design's verbatim wording. See `disputed` for the
+    // one correction among the four that remain.
 
     static let metaTips: [String: Entry] = [
-        "PID": Entry(
-            title: "Process id",
-            body: "The OS process behind this session. Checked together with the recorded start time, because a pid alone can be reused after a reboot."
-        ),
         "Model": Entry(
             title: "Model",
             body: "message.model from the most recent assistant record. Determines which price row the cost estimate uses."
-        ),
-        "Kind": Entry(
-            title: "Session kind",
-            body: "interactive is a session a person is using. Background jobs are reported as bg and are deliberately excluded from this list."
         ),
         "Started": Entry(
             title: "Started at",
@@ -177,42 +187,6 @@ enum TooltipText {
         "Git branch": Entry(
             title: "Git branch",
             body: "gitBranch from the transcript, so you can tell two sessions in the same project apart."
-        ),
-        "CC version": Entry(
-            title: "Claude Code version",
-            body: "The version that wrote this session. Concurrent sessions can run different versions, so the schema is detected per record."
-        ),
-        "Session id": Entry(
-            title: "Session id",
-            body: "Identifier shared by the registry file and the transcript. It is what confirms the two belong to the same session."
-        ),
-        "Registry": Entry(
-            title: "Registry status",
-            body: "The raw status value from the registry file, shown unmapped. reaped means the stale file was cleaned up after the process exited."
-        ),
-        "Parent": Entry(
-            title: "Parent session",
-            body: "The interactive session that spawned this subagent. A subagent has no process of its own — its tokens are billed to the parent."
-        ),
-        "Agent type": Entry(
-            title: "Agent type",
-            body: "The subagent type requested in the Agent tool call, for example Explore or general-purpose."
-        ),
-        "Spawned by": Entry(
-            title: "Spawned by",
-            body: "The tool call that created this subagent. On 2.1.257 the spawn tool is Agent; older transcripts call it Task."
-        ),
-        "Tool calls": Entry(
-            title: "Tool calls",
-            body: "How many tool invocations this subagent made. Counted from assistant records, tool names only."
-        ),
-        "Share": Entry(
-            title: "Share of parent",
-            body: "This subagent’s tokens as a share of the parent session total, so you can see which branch of work is spending the power."
-        ),
-        "Records": Entry(
-            title: "Transcript records",
-            body: "Assistant records attributed to this subagent. They are read from the subagent's own transcript beside the parent's, because the parent transcript contains none of them. Each one carries its own usage block."
         ),
     ]
 
