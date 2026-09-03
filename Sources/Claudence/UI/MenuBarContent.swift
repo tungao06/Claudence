@@ -39,6 +39,8 @@ struct MenuBarContent: View {
     /// never flashes an absent state on the first frame.
     @State private var claudeCodePresence: ClaudeCodePresence = .present
 
+    @Environment(\.appLanguage) private var language
+
     /// The open session, or nil when nothing is open or when the session it
     /// pointed at has ended. A session that ends while its detail is open
     /// returns the popover to the list rather than stranding a dead view.
@@ -99,7 +101,7 @@ struct MenuBarContent: View {
             rule.padding(.top, Theme.Popover.dividerTop)
             todayStrip
             if let warning = model.storeWarning {
-                Text(warning)
+                PhraseText(warning)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -180,7 +182,7 @@ struct MenuBarContent: View {
                 size: Theme.Bar.markHeader,
                 showsCore: true
             )
-            Text("CLAUDENCE")
+            PhraseText(Strings.wordmark)
                 .font(Theme.Typography.section)
                 .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textPrimary)
@@ -222,7 +224,10 @@ struct MenuBarContent: View {
                     Capsule(style: .continuous).fill(Theme.surfaceControl)
                 )
                 .fixedSize()
-                .accessibilityLabel("Plan, \(plan.displayName)")
+                .accessibilityLabel(
+                    Phrase(en: "Plan, \(plan.displayName)", th: "แผน \(plan.displayName)"),
+                    in: language
+                )
         }
     }
 
@@ -240,7 +245,7 @@ struct MenuBarContent: View {
     /// matters. See `Theme.Popover.freshnessTick` for why a five-second period
     /// is not the repeating animation this file forbids.
     private var freshnessStamp: some View {
-        Text(MenuBarContent.freshness(of: model.snapshot.updatedAt, at: Date()))
+        PhraseText(MenuBarContent.freshnessPhrase(of: model.snapshot.updatedAt, at: Date()))
             .font(Theme.Typography.micro)
             .foregroundStyle(Theme.textQuaternary)
             .lineLimit(1)
@@ -248,6 +253,10 @@ struct MenuBarContent: View {
 
     /// `now`, `30s ago`, `34m ago`, `2h ago`. Rounded to the tick that drives
     /// it, so every recomputation changes the string and none is wasted.
+    ///
+    /// Kept beside `freshnessPhrase(of:at:)` rather than replaced by it: this
+    /// is called from `Previews.swift`, which has not converted to `Phrase`
+    /// yet, and a preview-only file changing shape is not this pass's job.
     static func freshness(of stamp: Date, at now: Date) -> String {
         let age = now.timeIntervalSince(stamp)
         guard age >= Theme.Popover.freshnessTick else { return "now" }
@@ -258,6 +267,30 @@ struct MenuBarContent: View {
         if age < 3_600 { return "\(Int(age / 60))m ago" }
         if age < 86_400 { return "\(Int(age / 3_600))h ago" }
         return "\(Int(age / 86_400))d ago"
+    }
+
+    /// `freshness(of:at:)` as a `Phrase`, for the popover header, which reads
+    /// the interface language and so needs the Thai half as well.
+    static func freshnessPhrase(of stamp: Date, at now: Date) -> Phrase {
+        let age = now.timeIntervalSince(stamp)
+        guard age >= Theme.Popover.freshnessTick else {
+            return Phrase(en: "now", th: "เมื่อสักครู่")
+        }
+        if age < 60 {
+            let step = Theme.Popover.freshnessTick
+            let seconds = Int((age / step).rounded(.down) * step)
+            return Phrase(en: "\(seconds)s ago", th: "\(seconds) วิที่แล้ว")
+        }
+        if age < 3_600 {
+            let minutes = Int(age / 60)
+            return Phrase(en: "\(minutes)m ago", th: "\(minutes) นาทีที่แล้ว")
+        }
+        if age < 86_400 {
+            let hours = Int(age / 3_600)
+            return Phrase(en: "\(hours)h ago", th: "\(hours) ชม.ที่แล้ว")
+        }
+        let days = Int(age / 86_400)
+        return Phrase(en: "\(days)d ago", th: "\(days) วันที่แล้ว")
     }
 
     /// The design's `\u{27F3}` chip: a 24 pt rounded square on the control
@@ -278,7 +311,7 @@ struct MenuBarContent: View {
                 )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Refresh usage")
+        .accessibilityLabel(Strings.refreshUsage, in: language)
     }
 
     // MARK: - Power
@@ -287,12 +320,12 @@ struct MenuBarContent: View {
     private var powerSection: some View {
         if let reason = model.usageUnavailableReason {
             // Never a fabricated bar at some default fill. See spec section 9.4.
-            UnavailableView("Usage unavailable", reason: reason)
+            UnavailableView(UnavailableView.usageUnavailable, reason: .untranslated(reason))
                 .padding(.horizontal, Theme.Popover.margin)
                 .padding(.bottom, Theme.Popover.margin)
         } else {
             PowerHero(
-                title: "Claude Power \u{00B7} 5h window",
+                title: Strings.claudePowerFiveHour,
                 windowName: model.primaryWindow?.name ?? "five_hour",
                 percentUsed: model.primaryWindow?.usedPercent,
                 resetsAt: model.primaryWindow?.resetsAt
@@ -315,7 +348,7 @@ struct MenuBarContent: View {
                         // `7 Day`. The design writes `7 day`, in the HTML and
                         // in the transcription both, and `displayName` is a
                         // core type this file does not own.
-                        title: "7 day",
+                        title: Strings.sevenDay,
                         windowName: weekly.name,
                         percentUsed: weekly.usedPercent,
                         resetsAt: weekly.resetsAt
@@ -323,13 +356,18 @@ struct MenuBarContent: View {
                 }
                 ForEach(model.scopedWindows) { window in
                     PowerBar(
-                        title: window.displayName,
+                        // The window's own name, e.g. `Opus weekly`: a model
+                        // name plus a unit, never translated on its own merit
+                        // (see `CLAUDE.md` on model names), so it is marked
+                        // identical in both languages rather than left to the
+                        // `String` overload's un-marked fallback.
+                        title: .untranslated(window.displayName),
                         // The design captions a model-scoped window so its
                         // single-digit percentage is not read as a share of the
                         // 7-day cap above it. Same size and weight for every
                         // scoped window, because the caption describes the kind
                         // of window and not the model.
-                        caption: "weekly scoped",
+                        caption: Strings.weeklyScoped,
                         windowName: window.name,
                         percentUsed: window.usedPercent,
                         resetsAt: window.resetsAt,
@@ -358,12 +396,15 @@ struct MenuBarContent: View {
     /// status pill still says which of the two it is.
     private var sessionsHeader: some View {
         HStack {
-            Text("LIVE SESSIONS")
+            PhraseText(Strings.liveSessions)
                 .font(Theme.Typography.section)
                 .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textSecondary)
             Spacer()
-            Text("\(model.sessions.count)")
+            // A bare count, identical in both languages, so there is nothing
+            // for `Phrase` to carry.
+            let sessionCount = "\(model.sessions.count)"
+            Text(sessionCount)
                 .font(Theme.Typography.countPill)
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, Theme.Popover.countPillPaddingHorizontal)
@@ -374,16 +415,20 @@ struct MenuBarContent: View {
         .padding(.top, Theme.Popover.sessionsHeaderTop)
         .padding(.bottom, Theme.Popover.sessionsHeaderBottom)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenSessionsHeader)
+        .accessibilityLabel(spokenSessionsHeader, in: language)
     }
 
     /// Both counts, spoken, because the header shows one and the rows under it
     /// carry the other. `1 of 2` is the reading; `2 live sessions` alone left a
     /// screen reader unable to tell a busy machine from a waiting one.
-    private var spokenSessionsHeader: String {
+    private var spokenSessionsHeader: Phrase {
         let live = model.sessions.count
-        let sessions = live == 1 ? "1 live session" : "\(live) live sessions"
-        return "\(sessions), \(model.activeCount) active"
+        let en = live == 1 ? "1 live session" : "\(live) live sessions"
+        let th = "\(live) live session"
+        return Phrase(
+            en: "\(en), \(model.activeCount) active",
+            th: "\(th), active \(model.activeCount)"
+        )
     }
 
     @ViewBuilder
@@ -392,7 +437,7 @@ struct MenuBarContent: View {
             if model.sessions.isEmpty {
                 if claudeCodePresence.isUsable {
                     // Zero sessions is an ordinary state, not an error.
-                    UnavailableView("No live sessions", compact: true)
+                    UnavailableView(Strings.noLiveSessions, compact: true)
                 } else {
                     // An absent or never-run Claude Code is a different
                     // ordinary state, and reads as a broken meter without its
@@ -400,8 +445,8 @@ struct MenuBarContent: View {
                     // from "there is nothing here to ever read." See
                     // `ClaudeCodePresence`.
                     UnavailableView(
-                        claudeCodePresence.title?.string(in: preferences.appLanguage) ?? "No live sessions",
-                        reason: claudeCodePresence.detail?.string(in: preferences.appLanguage),
+                        claudeCodePresence.title ?? Strings.noLiveSessions,
+                        reason: claudeCodePresence.detail,
                         compact: true
                     )
                 }
@@ -452,21 +497,21 @@ struct MenuBarContent: View {
             // the dashboard is opened.
             HStack(alignment: .firstTextBaseline, spacing: Theme.Popover.todayGap) {
                 if liveOnlyMode {
-                    Text("Live only")
+                    PhraseText(Strings.liveOnly)
                         .font(Theme.Typography.body)
                         .foregroundStyle(Theme.textTertiary)
-                    Text("nothing stored")
+                    PhraseText(Strings.nothingStored)
                         .font(Theme.Typography.help)
                         .foregroundStyle(Theme.textQuaternary)
                 } else {
-                    Text("Today")
+                    PhraseText(Strings.today)
                         .font(Theme.Typography.body)
                         .foregroundStyle(Theme.textTertiary)
                     if let usage = model.todayUsage {
                         Text(Format.tokens(usage.total))
                             .font(Theme.Typography.stripValue)
                             .foregroundStyle(Theme.textPrimary)
-                        Text(costLine)
+                        PhraseText(costLine)
                             .font(Theme.Typography.help)
                             .foregroundStyle(Theme.textQuaternary)
                             .lineLimit(1)
@@ -475,22 +520,23 @@ struct MenuBarContent: View {
                         // The aggregate behind this figure did not answer. A
                         // zero here would be a measurement, and the cost beside
                         // it would be a second one derived from the first.
-                        UnavailableView("Token usage unavailable", compact: true)
+                        UnavailableView(TokenBar.tokenUsageUnavailable, compact: true)
                     }
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(spokenToday)
+            .accessibilityLabel(spokenToday, in: language)
             Spacer(minLength: Theme.Space.s)
             Button {
                 openDashboard()
             } label: {
-                Text("Dashboard \(Theme.Glyph.arrowRight)")
+                let dashboardLabel = "\(Strings.dashboard.string(in: language)) \(Theme.Glyph.arrowRight)"
+                Text(dashboardLabel)
                     .font(Theme.Typography.labelEmphasis)
                     .foregroundStyle(Theme.accentDeep)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open the Claudence dashboard")
+            .accessibilityLabel(Strings.openDashboardHint, in: language)
         }
         .padding(.horizontal, Theme.Popover.gutter)
         .padding(.vertical, Theme.Popover.todayStrip)
@@ -498,41 +544,63 @@ struct MenuBarContent: View {
     }
 
     /// The whole today strip, spoken.
-    private var spokenToday: String {
-        if liveOnlyMode { return "Live only mode, nothing is stored" }
+    private var spokenToday: Phrase {
+        if liveOnlyMode { return Strings.liveOnlySpoken }
         guard let usage = model.todayUsage else {
-            return "Today, token usage unavailable"
+            return Phrase(en: "Today, token usage unavailable", th: "วันนี้, ไม่มีข้อมูลการใช้งาน token")
         }
-        return "Today, \(Format.tokens(usage.total)) tokens. \(spokenCost)"
+        let tokens = Format.tokens(usage.total)
+        return Phrase(
+            en: "Today, \(tokens) tokens. \(spokenCost.en)",
+            th: "วันนี้, \(tokens) token \(spokenCost.th)"
+        )
     }
 
     /// The trailing half of the today strip: `tokens \u{00B7} $3.42 est.`, or
     /// the honest gap in place of the figure.
-    private var costLine: String {
+    private var costLine: Phrase {
         guard let cost = model.dashboard.todayCost else {
-            return "tokens \u{00B7} cost unavailable"
+            return Phrase(en: "tokens \u{00B7} cost unavailable", th: "token \u{00B7} ไม่มีข้อมูลมูลค่า")
         }
         let unpriced = model.dashboard.unpricedSessionCount
+        let costText = Format.cost(cost)
         guard unpriced > 0 else {
-            return "tokens \u{00B7} \(Format.cost(cost)) est."
+            return Phrase(
+                en: "tokens \u{00B7} \(costText) est.",
+                th: "token \u{00B7} ประมาณ \(costText)"
+            )
         }
         // A partial estimate is a lower bound, and saying only "est." would let
         // it read as the whole day's cost.
-        let sessions = unpriced == 1 ? "1 session" : "\(unpriced) sessions"
-        return "tokens \u{00B7} \(Format.cost(cost))+ est., \(sessions) unpriced"
+        let sessionsEn = unpriced == 1 ? "1 session" : "\(unpriced) sessions"
+        return Phrase(
+            en: "tokens \u{00B7} \(costText)+ est., \(sessionsEn) unpriced",
+            th: "token \u{00B7} ประมาณ \(costText)+, \(unpriced) session ยังไม่มีราคา"
+        )
     }
 
-    private var spokenCost: String {
+    private var spokenCost: Phrase {
         guard let cost = model.dashboard.todayCost else {
-            return "Estimated cost unavailable: no price is known for one of today's models."
+            return Phrase(
+                en: "Estimated cost unavailable: no price is known for one of today's models.",
+                th: "ไม่มีข้อมูลมูลค่าประมาณการ: ไม่ทราบราคาของบางโมเดลที่ใช้วันนี้"
+            )
         }
         let unpriced = model.dashboard.unpricedSessionCount
+        let costText = Format.cost(cost)
         guard unpriced > 0 else {
-            return "Estimated cost today, \(Format.cost(cost)). This is an estimate, not a bill."
+            return Phrase(
+                en: "Estimated cost today, \(costText). This is an estimate, not a bill.",
+                th: "มูลค่าประมาณการวันนี้ \(costText) นี่เป็นค่าประมาณการ ไม่ใช่บิลจริง"
+            )
         }
-        let sessions = unpriced == 1 ? "1 session" : "\(unpriced) sessions"
-        return "Estimated cost today, at least \(Format.cost(cost)); "
-            + "\(sessions) could not be priced. This is an estimate, not a bill."
+        let sessionsEn = unpriced == 1 ? "1 session" : "\(unpriced) sessions"
+        return Phrase(
+            en: "Estimated cost today, at least \(costText); "
+                + "\(sessionsEn) could not be priced. This is an estimate, not a bill.",
+            th: "มูลค่าประมาณการวันนี้ อย่างน้อย \(costText); "
+                + "\(unpriced) session ไม่สามารถคำนวณราคาได้ นี่เป็นค่าประมาณการ ไม่ใช่บิลจริง"
+        )
     }
 
     // MARK: - Footer
@@ -554,24 +622,24 @@ struct MenuBarContent: View {
     private var footer: some View {
         HStack(spacing: 0) {
             HStack(spacing: Theme.Space.xs) {
-                footerLink("Settings", hint: "Opens Claudence settings")
+                footerLink(Strings.settings, hint: Strings.settingsHint)
                 Text(Theme.Glyph.separator)
                     .font(Theme.Typography.help)
                     .foregroundStyle(Theme.textQuaternary)
                     .accessibilityHidden(true)
-                footerLink("Privacy", hint: "Opens the privacy disclosure in Claudence settings")
+                footerLink(Strings.privacy, hint: Strings.privacyHint)
             }
 
             Spacer(minLength: Theme.Space.m)
 
-            Button("Quit Claudence") {
+            Button(Strings.quitClaudence.string(in: language)) {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.plain)
             .font(Theme.Typography.help)
             .foregroundStyle(Theme.textQuaternary)
             .keyboardShortcut("q")
-            .accessibilityLabel("Quit Claudence")
+            .accessibilityLabel(Strings.quitClaudence, in: language)
         }
         .padding(.horizontal, Theme.Popover.gutter)
         .padding(.top, Theme.Popover.footerTop)
@@ -588,12 +656,16 @@ struct MenuBarContent: View {
         }
     }
 
-    private func footerLink(_ title: String, hint: String) -> some View {
-        Button(title) {
+    private func footerLink(_ title: Phrase, hint: Phrase) -> some View {
+        Button(title.string(in: language)) {
             dismissMenuBarPopover()
             openSettings()
             // An accessory app does not come forward on its own, so the
             // settings window would open behind the frontmost app.
+            //
+            // The window title passed here is a plain `String`, not a
+            // `Phrase`: `presentWindow` lives in `ClaudenceApp.swift`, outside
+            // this file's set, and stays English until that file converts.
             presentWindow(
                 sceneIdentifier: "com_apple_SwiftUI_Settings_window",
                 title: "Claudence Settings"
@@ -602,7 +674,7 @@ struct MenuBarContent: View {
         .buttonStyle(.plain)
         .font(Theme.Typography.help)
         .foregroundStyle(Theme.textQuaternary)
-        .accessibilityHint(hint)
+        .accessibilityHint(hint(in: language))
     }
 
     private func openDashboard() {
@@ -614,4 +686,42 @@ struct MenuBarContent: View {
             title: "Claudence Dashboard"
         )
     }
+}
+
+/// Words this file owns. A session's own name, path, or model, and every
+/// number, are built inline at the point they are used; this table holds only
+/// the fixed wording around them.
+private enum Strings {
+    /// The product's own name. Never translated -- a brand name is the one
+    /// kind of literal `Phrase.untranslated(_:)` exists for.
+    static let wordmark = Phrase.untranslated("CLAUDENCE")
+    static let refreshUsage = Phrase(en: "Refresh usage", th: "รีเฟรชข้อมูลการใช้งาน")
+    static let claudePowerFiveHour = Phrase(
+        en: "Claude Power \u{00B7} 5h window",
+        th: "Claude Power \u{00B7} หน้าต่าง 5 ชม."
+    )
+    static let sevenDay = Phrase(en: "7 day", th: "7 วัน")
+    static let weeklyScoped = Phrase(en: "weekly scoped", th: "รายสัปดาห์เฉพาะโมเดล")
+    static let liveSessions = Phrase(en: "LIVE SESSIONS", th: "SESSION ที่กำลังทำงาน")
+    static let noLiveSessions = Phrase(en: "No live sessions", th: "ไม่มี session ที่กำลังทำงาน")
+    static let liveOnly = Phrase(en: "Live only", th: "โหมดสดเท่านั้น")
+    static let nothingStored = Phrase(en: "nothing stored", th: "ไม่มีการบันทึกข้อมูล")
+    static let today = Phrase(en: "Today", th: "วันนี้")
+    static let dashboard = Phrase(en: "Dashboard", th: "Dashboard")
+    static let openDashboardHint = Phrase(
+        en: "Open the Claudence dashboard",
+        th: "เปิด dashboard ของ Claudence"
+    )
+    static let liveOnlySpoken = Phrase(
+        en: "Live only mode, nothing is stored",
+        th: "โหมดสดเท่านั้น ไม่มีการบันทึกข้อมูล"
+    )
+    static let settings = Phrase(en: "Settings", th: "การตั้งค่า")
+    static let settingsHint = Phrase(en: "Opens Claudence settings", th: "เปิดการตั้งค่าของ Claudence")
+    static let privacy = Phrase(en: "Privacy", th: "ความเป็นส่วนตัว")
+    static let privacyHint = Phrase(
+        en: "Opens the privacy disclosure in Claudence settings",
+        th: "เปิดข้อมูลความเป็นส่วนตัวในการตั้งค่าของ Claudence"
+    )
+    static let quitClaudence = Phrase(en: "Quit Claudence", th: "ออกจาก Claudence")
 }

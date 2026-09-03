@@ -533,6 +533,19 @@ enum Theme {
         }
     }
 
+    /// `name(for:)` in both languages. The two live side by side rather than
+    /// replacing one another: every caller of the `String` form migrates on
+    /// its own schedule, and a caller that has not yet converted must keep
+    /// compiling. See PLAN.md 9.10b.
+    static func namePhrase(for severity: Severity) -> Phrase {
+        switch severity {
+        case .healthy: return Phrase(en: "healthy", th: "ปกติ")
+        case .attention: return Phrase(en: "attention", th: "เฝ้าระวัง")
+        case .warning: return Phrase(en: "warning", th: "เตือน")
+        case .critical: return Phrase(en: "critical", th: "วิกฤต")
+        }
+    }
+
     // MARK: - Session status resolution
 
     static func color(for status: SessionStatus) -> Color {
@@ -609,6 +622,21 @@ enum Theme {
         }
     }
 
+    /// `name(for:)` in both languages, added beside the `String` form rather
+    /// than replacing it for the reason given on `namePhrase(for: Severity)`.
+    static func namePhrase(for status: SessionStatus) -> Phrase {
+        guard status.isDerivable else {
+            return Phrase(en: "Unsupported state", th: "สถานะที่ยังไม่รองรับ")
+        }
+        switch status {
+        case .running: return Phrase(en: "Working", th: "กำลังทำงาน")
+        case .idle: return Phrase(en: "Idle", th: "ว่าง")
+        case .completed: return Phrase(en: "Completed", th: "เสร็จแล้ว")
+        case .waiting: return Phrase(en: "Needs you", th: "ต้องการคุณ")
+        default: return Phrase(en: "Unsupported state", th: "สถานะที่ยังไม่รองรับ")
+        }
+    }
+
     // MARK: - Token categories
     //
     // The four parts of the token formula, coloured identically in every
@@ -632,6 +660,18 @@ enum Theme {
             case .output: return "Output"
             }
         }
+
+        /// `label` as a `Phrase`, added beside the `String` form rather than
+        /// replacing it: `TokenBreakdownCard` and `SessionDetailView` have not
+        /// converted yet and still read `label` directly, and `label`'s value
+        /// also doubles as the lookup key into `TooltipText.breakTips`, so the
+        /// English half here has to stay byte-identical to `label`.
+        ///
+        /// All four are `Phrase.untranslated`, matching `TooltipText`'s own
+        /// judgement on these same four names: a Thai developer says "Fresh
+        /// input", "Cache write", "Cache read" and "Output" exactly as
+        /// written, so translating them would invent Thai words nobody uses.
+        var labelPhrase: Phrase { .untranslated(label) }
     }
 
     static func color(for category: TokenCategory) -> Color {

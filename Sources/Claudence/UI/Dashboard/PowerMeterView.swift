@@ -44,6 +44,7 @@ struct PowerMeterView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
 
     init(data: DashboardData, now: Date, highlightedWindowName: String? = nil) {
         self.data = data
@@ -53,19 +54,20 @@ struct PowerMeterView: View {
 
     var body: some View {
         DashboardCard(
-            title: "Power meter",
-            subtitle: "usage limits",
+            title: Strings.title,
+            subtitle: Strings.subtitle,
             headerLayout: .inline,
             tooltipKey: "power"
         ) {
             if let reason = data.usageUnavailableReason {
                 // Never a meter at some default fill. See spec section 9.4.
-                UnavailableView("Usage unavailable", reason: reason)
+                // `reason` reaches here as a plain `String` from outside this
+                // file's scope (`ClaudenceCore`'s `UsageState.unavailable`),
+                // which carries no Thai translation to attach; `.untranslated`
+                // marks that honestly rather than inventing one.
+                UnavailableView(UnavailableView.usageUnavailable, reason: .untranslated(reason))
             } else if data.windows.isEmpty {
-                UnavailableView(
-                    "Usage unavailable",
-                    reason: "No usage window has been reported yet"
-                )
+                UnavailableView(UnavailableView.usageUnavailable, reason: Strings.noWindowReported)
             } else {
                 tubes
                 banner
@@ -90,15 +92,25 @@ struct PowerMeterView: View {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: Theme.Bar.statusGlyph, weight: .semibold))
                     .foregroundStyle(Theme.textTertiary)
-                Text("\(leader.displayName) is driving the burn, \(Format.share(leader.share)) of it")
-                    .font(Theme.Typography.help)
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                Text(
+                    Strings.burnLeaderLine.format(
+                        in: language,
+                        leader.displayName,
+                        Format.share(leader.share)
+                    )
+                )
+                .font(Theme.Typography.help)
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
-                "\(leader.displayName) is responsible for \(Format.share(leader.share)) of the current burn."
+                Strings.burnLeaderSpoken.format(
+                    in: language,
+                    leader.displayName,
+                    Format.share(leader.share)
+                )
             )
         }
     }
@@ -224,7 +236,7 @@ struct PowerMeterView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            Text(resetCaption(window))
+            Text(resetCaption(window, in: language))
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textQuaternary)
                 // Two, because the caption now carries the countdown and the
@@ -262,7 +274,12 @@ struct PowerMeterView: View {
     private func projectionLine(for window: UsageWindow) -> some View {
         switch data.projection(for: window) {
         case .exhausts(let at):
-            Text("Empties \(Format.resetStamp(at, now: now) ?? "soon")")
+            Text(
+                Strings.empties.format(
+                    in: language,
+                    Format.resetStamp(at, now: now) ?? Strings.soon.string(in: language)
+                )
+            )
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textQuaternary)
                 .lineLimit(1)
@@ -270,12 +287,12 @@ struct PowerMeterView: View {
         case .holdsUntilReset:
             EmptyView()
         case .rateUnavailable(.notEnoughSamples):
-            Text("Rate unavailable")
+            PhraseText(Strings.rateUnavailable)
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textQuinary)
                 .lineLimit(1)
         case .rateUnavailable(.notMoving):
-            Text("Not spending")
+            PhraseText(Strings.notSpending)
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textQuinary)
                 .lineLimit(1)
@@ -295,7 +312,7 @@ struct PowerMeterView: View {
         return HStack(spacing: Theme.Space.xxs) {
             Image(systemName: "arrow.down.right.circle.fill")
                 .font(.system(size: Theme.Bar.statusGlyph, weight: .semibold))
-            Text("binds first")
+            PhraseText(Strings.bindsFirst)
         }
         .font(Theme.Typography.micro)
         .foregroundStyle(severity.map(Theme.color(for:)) ?? Theme.textTertiary)
@@ -308,12 +325,12 @@ struct PowerMeterView: View {
     ///
     /// A reset time that has passed, or was never reported, says so instead. The
     /// design always has a countdown; a real payload does not always carry one.
-    private func resetCaption(_ window: UsageWindow) -> String {
+    private func resetCaption(_ window: UsageWindow, in language: AppLanguage) -> String {
         guard let remaining = Format.timeUntil(window.resetsAt, now: now) else {
             // A reset that has passed still has a clock time worth printing:
             // the window may simply not have been re-read yet, and "reset
             // unknown" beside a timestamp the source did report would be false.
-            return Format.resetStamp(window.resetsAt, now: now) ?? "reset unknown"
+            return Format.resetStamp(window.resetsAt, now: now) ?? Strings.resetUnknown.string(in: language)
         }
         guard let stamp = Format.resetStamp(window.resetsAt, now: now) else {
             return remaining
@@ -341,7 +358,7 @@ struct PowerMeterView: View {
                 Text(Theme.name(for: state.severity).capitalized)
                     .font(Theme.Typography.label)
                     .foregroundStyle(Theme.color(for: state.severity))
-                Text(sentence(state))
+                Text(sentence(state, in: language))
                     .font(Theme.Typography.body)
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -356,13 +373,14 @@ struct PowerMeterView: View {
             )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
-                "\(Theme.name(for: state.severity).capitalized). \(sentence(state))."
+                Strings.severitySentence.format(
+                    in: language,
+                    Theme.name(for: state.severity).capitalized,
+                    sentence(state, in: language)
+                )
             )
         } else {
-            UnavailableView(
-                "Usage unavailable",
-                reason: "No window reported a percentage"
-            )
+            UnavailableView(UnavailableView.usageUnavailable, reason: Strings.noWindowReportedPercentage)
         }
     }
 
@@ -375,18 +393,21 @@ struct PowerMeterView: View {
     /// severity glyph has no accompanying word anywhere else on the card — the
     /// glyph carries colour, and `CLAUDE.md` requires colour never to stand
     /// alone. Both survive; the percent and the countdown do not.
-    private func sentence(_ state: (window: UsageWindow, percent: Double, severity: Severity)) -> String {
+    private func sentence(
+        _ state: (window: UsageWindow, percent: Double, severity: Severity),
+        in language: AppLanguage
+    ) -> String {
         guard !data.everyWindowIsHealthy else {
             // The design's own line, and only ever shown when it is true of
             // every window on the card.
-            return "plenty of power in every window"
+            return Strings.plentyOfPower.string(in: language)
         }
-        var text = "\(state.window.displayName) window"
+        var text = Strings.windowNamed.format(in: language, state.window.displayName)
         let unreadable = data.meterWindows.filter { $0.usedPercent == nil }.count
         if unreadable == 1 {
-            text += " · 1 window unavailable"
+            text += Strings.oneWindowUnavailable.string(in: language)
         } else if unreadable > 1 {
-            text += " · \(unreadable) windows unavailable"
+            text += Strings.windowsUnavailable.format(in: language, "\(unreadable)")
         }
         return text
     }
@@ -409,16 +430,20 @@ struct PowerMeterView: View {
         severity: Severity?
     ) -> String {
         guard let percent, let severity else {
-            return "\(window.displayName) window, usage unavailable."
+            return Strings.spokenTubeUnavailable.format(in: language, window.displayName)
         }
-        var text = "\(window.displayName) window, \(Format.percent(percent)) used, "
-        text += "\(Theme.name(for: severity))."
+        var text = Strings.spokenTubeUsed.format(
+            in: language,
+            window.displayName,
+            Format.percent(percent),
+            Theme.name(for: severity)
+        )
         if let remaining = Format.timeUntil(window.resetsAt, now: now) {
-            text += " Resets in \(remaining)."
+            text += Strings.spokenResetsIn.format(in: language, remaining)
         }
-        text += " \(spokenProjection(for: window))"
+        text += " \(spokenProjection(for: window, in: language))"
         if data.isBindingWindow(window) {
-            text += " This window binds first."
+            text += Strings.spokenBindsFirst.string(in: language)
         }
         return text
     }
@@ -427,18 +452,95 @@ struct PowerMeterView: View {
     /// the visual and the spoken form can each say what fits their medium
     /// without one constraining the other's wording, the same split
     /// `sentence(_:)` already keeps from the tube's own reading.
-    private func spokenProjection(for window: UsageWindow) -> String {
+    private func spokenProjection(for window: UsageWindow, in language: AppLanguage) -> String {
         switch data.projection(for: window) {
         case .exhausts(let at):
-            return "Projected to empty \(Format.resetStamp(at, now: now) ?? "before the reset")."
+            return Strings.spokenProjectedEmpty.format(
+                in: language,
+                Format.resetStamp(at, now: now) ?? Strings.beforeTheReset.string(in: language)
+            )
         case .holdsUntilReset:
-            return "Holds until reset at the current rate."
+            return Strings.spokenHoldsUntilReset.string(in: language)
         case .rateUnavailable(.notEnoughSamples):
-            return "Rate unavailable."
+            return Strings.spokenRateUnavailable.string(in: language)
         case .rateUnavailable(.notMoving):
-            return "Not spending."
+            return Strings.spokenNotSpending.string(in: language)
         case .rateUnavailable(.windowIncomplete):
             return ""
         }
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let title = Phrase(en: "Power meter", th: "มาตรวัดพลังงาน")
+    static let subtitle = Phrase(en: "usage limits", th: "ขีดจำกัดการใช้งาน")
+    static let noWindowReported = Phrase(
+        en: "No usage window has been reported yet",
+        th: "ยังไม่มีหน้าต่างการใช้งานที่รายงานเข้ามา"
+    )
+    static let noWindowReportedPercentage = Phrase(
+        en: "No window reported a percentage",
+        th: "ไม่มีหน้าต่างใดรายงานเปอร์เซ็นต์การใช้งาน"
+    )
+
+    static let burnLeaderLine = Phrase(
+        en: "%@ is driving the burn, %@ of it",
+        th: "%@ เป็นตัวขับเคลื่อนการใช้ token หลัก คิดเป็น %@ ของทั้งหมด"
+    )
+    static let burnLeaderSpoken = Phrase(
+        en: "%@ is responsible for %@ of the current burn.",
+        th: "%@ รับผิดชอบ %@ ของอัตราการใช้ token ปัจจุบัน"
+    )
+
+    static let empties = Phrase(en: "Empties %@", th: "หมดเมื่อ %@")
+    static let soon = Phrase(en: "soon", th: "เร็วๆ นี้")
+    static let rateUnavailable = Phrase(en: "Rate unavailable", th: "ไม่มีข้อมูลอัตราการใช้")
+    static let notSpending = Phrase(en: "Not spending", th: "ไม่มีการใช้")
+    static let bindsFirst = Phrase(en: "binds first", th: "หมดก่อนหน้าต่างอื่น")
+    static let resetUnknown = Phrase(en: "reset unknown", th: "ไม่ทราบเวลารีเซ็ต")
+
+    static let plentyOfPower = Phrase(
+        en: "plenty of power in every window",
+        th: "ทุกหน้าต่างยังมีโควต้าเหลือมาก"
+    )
+    static let windowNamed = Phrase(en: "%@ window", th: "หน้าต่าง %@")
+    static let oneWindowUnavailable = Phrase(
+        en: " · 1 window unavailable",
+        th: " · หน้าต่างเดียวไม่มีข้อมูล"
+    )
+    static let windowsUnavailable = Phrase(
+        en: " · %@ windows unavailable",
+        th: " · %@ หน้าต่างไม่มีข้อมูล"
+    )
+    static let severitySentence = Phrase(en: "%@. %@.", th: "%@ %@")
+
+    static let spokenTubeUnavailable = Phrase(
+        en: "%@ window, usage unavailable.",
+        th: "หน้าต่าง %@ ไม่มีข้อมูลการใช้งาน"
+    )
+    static let spokenTubeUsed = Phrase(
+        en: "%@ window, %@ used, %@.",
+        th: "หน้าต่าง %@ ใช้ไป %@ อยู่ในระดับ %@"
+    )
+    static let spokenResetsIn = Phrase(en: " Resets in %@.", th: " รีเซ็ตในอีก %@")
+    static let spokenBindsFirst = Phrase(
+        en: " This window binds first.",
+        th: " หน้าต่างนี้จะหมดก่อนหน้าต่างอื่น"
+    )
+    static let spokenProjectedEmpty = Phrase(
+        en: "Projected to empty %@.",
+        th: "คาดว่าจะหมดที่ %@"
+    )
+    static let beforeTheReset = Phrase(en: "before the reset", th: "ก่อนถึงเวลารีเซ็ต")
+    static let spokenHoldsUntilReset = Phrase(
+        en: "Holds until reset at the current rate.",
+        th: "ที่อัตราปัจจุบัน จะยังไม่หมดจนกว่าจะรีเซ็ต"
+    )
+    static let spokenRateUnavailable = Phrase(
+        en: "Rate unavailable.",
+        th: "ไม่มีข้อมูลอัตราการใช้"
+    )
+    static let spokenNotSpending = Phrase(en: "Not spending.", th: "ไม่มีการใช้")
 }

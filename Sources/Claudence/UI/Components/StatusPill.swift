@@ -27,16 +27,18 @@ struct StatusPill: View {
     /// the better shape; a pill takes `Theme.mark(for:)` instead.
     let glyph: String
     /// The state as a word. Never optional: the word is the point.
-    let text: String
+    let text: Phrase
     /// Glyph and text colour.
     let ink: Color
     /// Pill background.
     let tint: Color
     let font: Font
 
+    @Environment(\.appLanguage) private var language
+
     init(
         glyph: String,
-        text: String,
+        text: Phrase,
         ink: Color,
         tint: Color,
         font: Font = Theme.Typography.label
@@ -51,12 +53,13 @@ struct StatusPill: View {
     /// The hero's severity badge.
     ///
     /// The word is capitalised because the design sets it as a label rather
-    /// than as prose; `Theme.name(for:)` stays lowercase because every other
-    /// caller of it is building a spoken sentence.
+    /// than as prose; `Theme.namePhrase(for:)` stays lowercase because every
+    /// other caller of it is building a spoken sentence.
     init(severity: Severity) {
+        let name = Theme.namePhrase(for: severity)
         self.init(
             glyph: Theme.mark(for: severity),
-            text: Theme.name(for: severity).capitalized,
+            text: Phrase(en: name.en.capitalized, th: name.th),
             // The design paints this pill's ink `0x7E9E86`, which is not the
             // `0x4E8A6B` of its dashboard banner. `Theme.healthyInk` is that
             // first value; the other three severities have no pill in the
@@ -79,7 +82,7 @@ struct StatusPill: View {
     init(status: SessionStatus, identity: Theme.SessionIdentity) {
         self.init(
             glyph: Theme.mark(for: status),
-            text: Theme.name(for: status),
+            text: Theme.namePhrase(for: status),
             ink: identity.ink,
             tint: identity.tint
         )
@@ -91,7 +94,7 @@ struct StatusPill: View {
         // sized image beside it.
         HStack(spacing: Theme.Space.xs) {
             Text(glyph)
-            Text(text)
+            PhraseText(text)
                 .lineLimit(1)
         }
         .font(font)
@@ -100,6 +103,6 @@ struct StatusPill: View {
         .padding(.vertical, Theme.Popover.pillPaddingVertical)
         .background(tint, in: Capsule(style: .continuous))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+        .accessibilityLabel(text, in: language)
     }
 }

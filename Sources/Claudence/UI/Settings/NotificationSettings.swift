@@ -44,10 +44,10 @@ struct NotificationSettings: View {
     @Bindable var preferences: Preferences
 
     var body: some View {
-        SettingsSection(title: "Notifications") {
+        SettingsSection(title: Self.sectionTitle) {
             VStack(alignment: .leading, spacing: Theme.Space.l) {
                 SettingsToggle(
-                    title: "Notify me about sessions and limits",
+                    title: Self.masterTitle,
                     explanation: Self.masterExplanation,
                     isOn: $preferences.notificationsEnabled
                 )
@@ -59,25 +59,25 @@ struct NotificationSettings: View {
                         isOn: $preferences.notifyOnUsageThreshold
                     )
                     SettingsToggle(
-                        title: "Session completed",
+                        title: Self.completedTitle,
                         explanation: Self.completedExplanation,
                         isOn: $preferences.notifyOnSessionCompleted
                     )
                     SettingsUnavailableToggle(
-                        title: "Session failed",
+                        title: Self.failedTitle,
                         reason: Self.failedUnavailable
                     )
                     SettingsUnavailableToggle(
-                        title: "Permission required",
+                        title: Self.permissionTitle,
                         reason: Self.permissionUnavailable
                     )
                     SettingsToggle(
-                        title: "Session needs an answer",
+                        title: Self.needsInputTitle,
                         explanation: Self.needsInputExplanation,
                         isOn: $preferences.notifyOnSessionNeedsInput
                     )
                     SettingsToggle(
-                        title: "Session goes idle",
+                        title: Self.idleTitle,
                         explanation: Self.idleExplanation,
                         isOn: $preferences.notifyOnSessionIdle
                     )
@@ -90,48 +90,105 @@ struct NotificationSettings: View {
 
     // MARK: Copy
 
-    private static let masterExplanation = """
-    A notification when a session finishes and when a usage window is nearly \
-    spent. macOS asks for permission separately, the first time one is sent.
-    """
+    private static let sectionTitle = Phrase(en: "Notifications", th: "การแจ้งเตือน")
+
+    private static let masterTitle = Phrase(
+        en: "Notify me about sessions and limits",
+        th: "แจ้งเตือนเกี่ยวกับ session และโควต้าการใช้งาน"
+    )
+
+    private static let masterExplanation = Phrase(
+        en: """
+        A notification when a session finishes and when a usage window is nearly \
+        spent. macOS asks for permission separately, the first time one is sent.
+        """,
+        th: """
+        แจ้งเตือนเมื่อ session จบ และเมื่อโควต้าการใช้งานใกล้หมด macOS จะขอสิทธิ์แยกต่างหาก \
+        ในครั้งแรกที่มีการส่งแจ้งเตือน
+        """
+    )
 
     /// Built from the constant the deriver fires on, so the label and the
     /// behaviour cannot drift apart.
-    private static let usageThresholdTitle =
-        "Usage reaches \(Int(Constants.UsageThreshold.critical))%"
+    private static let usageThresholdTitle = Phrase(
+        en: "Usage reaches \(Int(Constants.UsageThreshold.critical))%",
+        th: "การใช้งานถึง \(Int(Constants.UsageThreshold.critical))%"
+    )
 
-    private static let usageThresholdExplanation = """
-    Once per window, when it crosses upward. A window that dips and crosses \
-    again does not notify twice.
-    """
+    private static let usageThresholdExplanation = Phrase(
+        en: """
+        Once per window, when it crosses upward. A window that dips and crosses \
+        again does not notify twice.
+        """,
+        th: """
+        แจ้งครั้งเดียวต่อหน้าต่าง เมื่อค่าข้ามขึ้นไป หากค่าลดแล้วข้ามขึ้นอีกครั้งจะไม่แจ้งซ้ำ
+        """
+    )
 
-    private static let completedExplanation = """
-    When a session is gone from the registry and its process is confirmed gone \
-    with it. A discovery hiccup on its own never counts.
-    """
+    private static let completedTitle = Phrase(en: "Session completed", th: "Session เสร็จสิ้น")
 
-    private static let needsInputExplanation = """
-    When a session asks you something and stops until you answer. On by \
-    default: it is the one state where nothing happens at all until you look. \
-    Claudence never reads the question itself, so the notification names the \
-    project and nothing more.
-    """
+    private static let completedExplanation = Phrase(
+        en: """
+        When a session is gone from the registry and its process is confirmed gone \
+        with it. A discovery hiccup on its own never counts.
+        """,
+        th: """
+        เมื่อ session หายไปจาก registry และยืนยันได้ว่า process หายไปด้วย ความผิดพลาดเล็กน้อย \
+        ในการตรวจจับเพียงอย่างเดียวจะไม่นับ
+        """
+    )
 
-    private static let idleExplanation = """
-    When a session stops working but stays open. Off by default: pausing while \
-    you read the diff is the ordinary case, not news.
-    """
+    private static let failedTitle = Phrase(en: "Session failed", th: "Session ล้มเหลว")
+
+    private static let permissionTitle = Phrase(en: "Permission required", th: "ต้องการสิทธิ์เพิ่มเติม")
+
+    private static let needsInputTitle = Phrase(en: "Session needs an answer", th: "Session รอคำตอบ")
+
+    private static let needsInputExplanation = Phrase(
+        en: """
+        When a session asks you something and stops until you answer. On by \
+        default: it is the one state where nothing happens at all until you look. \
+        Claudence never reads the question itself, so the notification names the \
+        project and nothing more.
+        """,
+        th: """
+        เมื่อ session ถามคำถามและหยุดรอจนกว่าคุณจะตอบ เปิดไว้เป็นค่าเริ่มต้น เพราะเป็นสถานะเดียว \
+        ที่จะไม่มีอะไรเกิดขึ้นเลยจนกว่าคุณจะเข้าไปดู Claudence ไม่เคยอ่านคำถามจริง การแจ้งเตือนจึงบอก \
+        แค่ชื่อโปรเจกต์เท่านั้น
+        """
+    )
+
+    private static let idleTitle = Phrase(en: "Session goes idle", th: "Session ว่าง")
+
+    private static let idleExplanation = Phrase(
+        en: """
+        When a session stops working but stays open. Off by default: pausing while \
+        you read the diff is the ordinary case, not news.
+        """,
+        th: """
+        เมื่อ session หยุดทำงานแต่ยังเปิดอยู่ ปิดไว้เป็นค่าเริ่มต้น เพราะการหยุดพักระหว่างที่คุณอ่าน diff \
+        เป็นเรื่องปกติ ไม่ใช่เหตุการณ์ที่ต้องแจ้ง
+        """
+    )
 
     /// Deliberately not the design's generic sentence. The design's wording for
     /// the disabled row, "this state is not derivable yet", is true but says
     /// nothing about why, and this reason is specific and worth stating.
-    private static let failedUnavailable = """
-    Unavailable. A session that crashed and one that finished cleanly leave the \
-    same way, with no exit code recorded anywhere, so Claudence cannot tell them \
-    apart without guessing.
-    """
+    private static let failedUnavailable = Phrase(
+        en: """
+        Unavailable. A session that crashed and one that finished cleanly leave the \
+        same way, with no exit code recorded anywhere, so Claudence cannot tell them \
+        apart without guessing.
+        """,
+        th: """
+        ไม่พร้อมใช้งาน session ที่ crash และ session ที่จบตามปกติออกจากระบบแบบเดียวกัน \
+        โดยไม่มี exit code บันทึกไว้ที่ไหนเลย Claudence จึงแยกความแตกต่างไม่ได้โดยไม่เดา
+        """
+    )
 
     /// The design's own explanation, with its em dash rewritten as a full stop.
-    private static let permissionUnavailable =
-        "Unavailable. This state is not derivable yet."
+    private static let permissionUnavailable = Phrase(
+        en: "Unavailable. This state is not derivable yet.",
+        th: "ไม่พร้อมใช้งาน สถานะนี้ยังไม่สามารถตรวจจับได้"
+    )
 }

@@ -30,17 +30,17 @@ enum SessionActionTone: Sendable {
 /// caller never has to invent wording for a condition it did not diagnose.
 enum SessionActionOutcome: Equatable, Sendable {
     /// The action ran and did what it said.
-    case done(String)
+    case done(Phrase)
     /// The process is already gone. Expected, not an error: a session can exit
     /// between the moment the popover drew it and the moment the user clicked.
-    case alreadyStopped(String)
+    case alreadyStopped(Phrase)
     /// This Mac cannot perform the action at all, e.g. no Terminal to resolve.
-    case unavailable(String)
+    case unavailable(Phrase)
     /// It was attempted and the system said no.
-    case failed(String)
+    case failed(Phrase)
 
     /// The one line the interface shows. Never a generic "something went wrong".
-    var message: String {
+    var message: Phrase {
         switch self {
         case .done(let text), .alreadyStopped(let text),
              .unavailable(let text), .failed(let text):
@@ -179,16 +179,34 @@ struct SessionActions {
     /// AppleScript and without a shell.
     func openTerminal(for session: AISession) async -> SessionActionOutcome {
         guard directoryExists(session.workingDirectory) else {
-            return .failed("That folder no longer exists at \(session.displayPath).")
+            return .failed(Self.folderGone(session))
         }
         guard let terminal = terminalApplicationURL() else {
-            return .unavailable("No Terminal application on this Mac.")
+            return .unavailable(Phrase(
+                en: "No Terminal application on this Mac.",
+                th: "เครื่องนี้ไม่มีแอป Terminal"
+            ))
         }
         let directory = URL(fileURLWithPath: session.workingDirectory, isDirectory: true)
         if let reason = await openDirectory(directory, terminal) {
-            return .failed("Terminal would not open: \(reason)")
+            return .failed(Phrase(
+                en: "Terminal would not open: \(reason)",
+                th: "Terminal เปิดไม่สำเร็จ: \(reason)"
+            ))
         }
-        return .done("Opened Terminal at \(session.displayPath).")
+        return .done(Phrase(
+            en: "Opened Terminal at \(session.displayPath).",
+            th: "เปิด Terminal ที่ \(session.displayPath) แล้ว"
+        ))
+    }
+
+    /// Shared between `openTerminal` and `openProject`: both fail this way
+    /// when the working directory is gone.
+    private static func folderGone(_ session: AISession) -> Phrase {
+        Phrase(
+            en: "That folder no longer exists at \(session.displayPath).",
+            th: "ไม่พบโฟลเดอร์นี้แล้วที่ \(session.displayPath)"
+        )
     }
 
     // MARK: - Open project
@@ -197,13 +215,19 @@ struct SessionActions {
     /// failure, checked before the call rather than discovered by it.
     func openProject(for session: AISession) -> SessionActionOutcome {
         guard directoryExists(session.workingDirectory) else {
-            return .failed("That folder no longer exists at \(session.displayPath).")
+            return .failed(Self.folderGone(session))
         }
         let directory = URL(fileURLWithPath: session.workingDirectory, isDirectory: true)
         guard revealInFinder(directory) else {
-            return .failed("Finder would not open \(session.displayPath).")
+            return .failed(Phrase(
+                en: "Finder would not open \(session.displayPath).",
+                th: "Finder เปิด \(session.displayPath) ไม่สำเร็จ"
+            ))
         }
-        return .done("Opened \(session.displayPath) in Finder.")
+        return .done(Phrase(
+            en: "Opened \(session.displayPath) in Finder.",
+            th: "เปิด \(session.displayPath) ใน Finder แล้ว"
+        ))
     }
 
     // MARK: - Copy path
@@ -216,9 +240,15 @@ struct SessionActions {
     /// stays short while what they paste stays usable.
     func copyPath(for session: AISession) -> SessionActionOutcome {
         guard copyToPasteboard(session.workingDirectory) else {
-            return .failed("The clipboard would not take the path.")
+            return .failed(Phrase(
+                en: "The clipboard would not take the path.",
+                th: "คลิปบอร์ดไม่รับ path นี้"
+            ))
         }
-        return .done("Copied \(session.displayPath).")
+        return .done(Phrase(
+            en: "Copied \(session.displayPath).",
+            th: "คัดลอก \(session.displayPath) แล้ว"
+        ))
     }
 
     // MARK: - Stop session
@@ -239,21 +269,40 @@ struct SessionActions {
     func stopSession(_ session: AISession) -> SessionActionOutcome {
         let pid = session.pid
         guard pid >= Self.lowestSignallablePID else {
-            return .failed("Refusing to signal process \(pid).")
+            return .failed(Phrase(
+                en: "Refusing to signal process \(pid).",
+                th: "ปฏิเสธที่จะส่งสัญญาณไปยัง process \(pid)"
+            ))
         }
         guard isAlive(pid, session.procStart) else {
-            return .alreadyStopped("\(session.projectName) had already stopped.")
+            return .alreadyStopped(Self.alreadyStopped(session))
         }
         let code = terminate(pid)
         switch code {
         case 0:
-            return .done("Asked \(session.projectName) to stop, process \(pid).")
+            return .done(Phrase(
+                en: "Asked \(session.projectName) to stop, process \(pid).",
+                th: "ขอให้ \(session.projectName) หยุดทำงานแล้ว, process \(pid)"
+            ))
         case ESRCH:
-            return .alreadyStopped("\(session.projectName) had already stopped.")
+            return .alreadyStopped(Self.alreadyStopped(session))
         case EPERM:
-            return .failed("Not permitted to stop process \(pid).")
+            return .failed(Phrase(
+                en: "Not permitted to stop process \(pid).",
+                th: "ไม่ได้รับอนุญาตให้หยุด process \(pid)"
+            ))
         default:
-            return .failed("Could not stop process \(pid), error \(code).")
+            return .failed(Phrase(
+                en: "Could not stop process \(pid), error \(code).",
+                th: "ไม่สามารถหยุด process \(pid) ได้ ข้อผิดพลาด \(code)"
+            ))
         }
+    }
+
+    private static func alreadyStopped(_ session: AISession) -> Phrase {
+        Phrase(
+            en: "\(session.projectName) had already stopped.",
+            th: "\(session.projectName) หยุดทำงานไปแล้ว"
+        )
     }
 }

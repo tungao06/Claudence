@@ -353,7 +353,7 @@ final class MonitorViewModel {
         return peak > 0 ? peak : nil
     }
 
-    var storeWarning: String? {
+    var storeWarning: Phrase? {
         // A live health that differs from what launch reported is always a
         // fresh runtime failure, never a second launch-time fallback: the
         // store can only drift away from `launchStoreHealth` by a query
@@ -363,12 +363,23 @@ final class MonitorViewModel {
         // "fell back to memory at launch" case below.
         if currentStoreHealth != launchStoreHealth {
             let reason = currentStoreHealth.reason ?? "unknown error"
-            return "History not saving: not responding (\(reason))"
+            return Phrase(
+                en: "History not saving: not responding (\(reason))",
+                th: "ไม่สามารถบันทึกประวัติ: ไม่ตอบสนอง (\(reason))"
+            )
         }
         switch launchStoreHealth {
         case .healthy: return nil
-        case .degraded(let reason): return "History not saved: \(reason)"
-        case .unavailable(let reason): return "History unavailable: \(reason)"
+        case .degraded(let reason):
+            return Phrase(
+                en: "History not saved: \(reason)",
+                th: "ไม่ได้บันทึกประวัติ: \(reason)"
+            )
+        case .unavailable(let reason):
+            return Phrase(
+                en: "History unavailable: \(reason)",
+                th: "ไม่มีข้อมูลประวัติ: \(reason)"
+            )
         }
     }
 

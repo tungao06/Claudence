@@ -32,6 +32,7 @@ struct StatusIndicator: View {
     /// and got the default, so the same switch stilled one surface and not the
     /// other. One delivery path cannot disagree with itself.
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
     @State private var isPulsing = false
 
     init(
@@ -60,7 +61,7 @@ struct StatusIndicator: View {
                 .opacity(isPulsing ? Theme.Motion.pulseMinOpacity : 1)
                 .animation(Theme.animation(Theme.Motion.pulse, reduceMotion: reduceMotion), value: isPulsing)
             if showsText {
-                Text(Theme.name(for: status))
+                PhraseText(Theme.namePhrase(for: status))
                     .font(Theme.Typography.label)
                     .foregroundStyle(status.isDerivable ? Theme.textSecondary : Theme.textTertiary)
                     .lineLimit(1)
@@ -83,13 +84,16 @@ struct StatusIndicator: View {
             if reduceMotion { isPulsing = false }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenLabel)
+        .accessibilityLabel(spokenLabel, in: language)
     }
 
-    private var spokenLabel: String {
+    private var spokenLabel: Phrase {
         guard status.isDerivable else {
-            return "Session state unsupported. No data source reports this state."
+            return Phrase(
+                en: "Session state unsupported. No data source reports this state.",
+                th: "ไม่รองรับสถานะ session นี้ ไม่มีแหล่งข้อมูลใดรายงานสถานะนี้"
+            )
         }
-        return Theme.name(for: status)
+        return Theme.namePhrase(for: status)
     }
 }

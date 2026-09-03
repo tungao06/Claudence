@@ -25,11 +25,11 @@ enum LanguagePreference: String, CaseIterable, Identifiable, Sendable {
     /// The picker's own label. Endonyms throughout, per `AppLanguage.endonym`,
     /// so a Thai reader finds Thai without first finding the English word for
     /// it.
-    var title: String {
+    var title: Phrase {
         switch self {
-        case .system: return "System"
-        case .english: return AppLanguage.english.endonym
-        case .thai: return AppLanguage.thai.endonym
+        case .system: return Phrase(en: "System", th: "ตามระบบ")
+        case .english: return .untranslated(AppLanguage.english.endonym)
+        case .thai: return .untranslated(AppLanguage.thai.endonym)
         }
     }
 
@@ -72,30 +72,45 @@ enum MenuBarStyle: String, CaseIterable, Identifiable, Sendable {
 
     /// Picker label. Design section 7 names three of these; `sessions` is the
     /// count-only reading the design does not draw but the app has always had.
-    var title: String {
+    var title: Phrase {
         switch self {
-        case .minimal: return "Icon"
-        case .usage: return "Icon + %"
-        case .sessions: return "Count"
-        case .combined: return "Count \u{00B7} %"
+        case .minimal: return .untranslated("Icon")
+        case .usage: return .untranslated("Icon + %")
+        case .sessions: return Phrase(en: "Count", th: "จำนวน")
+        case .combined: return .untranslated("Count \u{00B7} %")
         }
     }
 
     /// One line saying what will appear. No sample number: the real reading is
     /// whatever the data says, and this file does not invent one.
-    var explanation: String {
+    var explanation: Phrase {
         switch self {
         case .minimal:
-            return "The status dot on its own, and nothing else."
+            return Phrase(
+                en: "The status dot on its own, and nothing else.",
+                th: "จุดแสดงสถานะเพียงอย่างเดียว ไม่มีอย่างอื่น"
+            )
         case .usage:
-            return "The status dot and the percentage of your usage window consumed."
+            return Phrase(
+                en: "The status dot and the percentage of your usage window consumed.",
+                th: "จุดแสดงสถานะและเปอร์เซ็นต์การใช้งานในหน้าต่างปัจจุบัน"
+            )
         case .sessions:
-            return "The status dot and the number of sessions running now."
+            return Phrase(
+                en: "The status dot and the number of sessions running now.",
+                th: "จุดแสดงสถานะและจำนวน session ที่กำลังทำงานอยู่ตอนนี้"
+            )
         case .combined:
-            return """
-            The status dot, the session count and the percentage together. \
-            The widest readings shrink a little so the label never exceeds 60 pt.
-            """
+            return Phrase(
+                en: """
+                The status dot, the session count and the percentage together. \
+                The widest readings shrink a little so the label never exceeds 60 pt.
+                """,
+                th: """
+                จุดแสดงสถานะ จำนวน session และเปอร์เซ็นต์รวมกัน ค่าที่กว้างที่สุดจะย่อลงเล็กน้อย \
+                เพื่อไม่ให้ label เกิน 60 pt
+                """
+            )
         }
     }
 }
@@ -115,19 +130,31 @@ enum AppearanceMode: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
-    var title: String {
+    var title: Phrase {
         switch self {
-        case .auto: return "Auto"
-        case .light: return "Light"
-        case .dark: return "Dark"
+        case .auto: return Phrase(en: "Auto", th: "อัตโนมัติ")
+        case .light: return Phrase(en: "Light", th: "สว่าง")
+        case .dark: return Phrase(en: "Dark", th: "มืด")
         }
     }
 
-    var explanation: String {
+    var explanation: Phrase {
         switch self {
-        case .auto: return "Follow the system setting, including when it switches at sunset."
-        case .light: return "Always the light palette, whatever the system is set to."
-        case .dark: return "Always the dark palette, whatever the system is set to."
+        case .auto:
+            return Phrase(
+                en: "Follow the system setting, including when it switches at sunset.",
+                th: "เปลี่ยนตามค่าของระบบ รวมถึงตอนที่ระบบสลับตอนพระอาทิตย์ตก"
+            )
+        case .light:
+            return Phrase(
+                en: "Always the light palette, whatever the system is set to.",
+                th: "ใช้โทนสว่างเสมอ ไม่ว่าระบบจะตั้งค่าไว้อย่างไร"
+            )
+        case .dark:
+            return Phrase(
+                en: "Always the dark palette, whatever the system is set to.",
+                th: "ใช้โทนมืดเสมอ ไม่ว่าระบบจะตั้งค่าไว้อย่างไร"
+            )
         }
     }
 }
@@ -155,12 +182,13 @@ enum UsageRefreshInterval: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Design section 7 spells these `30s`, `60s`, `5m`.
-    var title: String {
+    /// Design section 7 spells these `30s`, `60s`, `5m`. Unit abbreviations,
+    /// identical in both languages.
+    var title: Phrase {
         switch self {
-        case .thirtySeconds: return "30s"
-        case .oneMinute: return "60s"
-        case .fiveMinutes: return "5m"
+        case .thirtySeconds: return .untranslated("30s")
+        case .oneMinute: return .untranslated("60s")
+        case .fiveMinutes: return .untranslated("5m")
         }
     }
 }
@@ -454,7 +482,7 @@ final class Preferences {
 
     /// Why the last attempt did not do what the user asked, in plain words.
     /// nil when the last attempt agreed with the system.
-    private(set) var launchAtLoginFailure: String?
+    private(set) var launchAtLoginFailure: Phrase?
 
     /// Reads the real service status. Setting it asks macOS, then reads back.
     var launchAtLogin: Bool {

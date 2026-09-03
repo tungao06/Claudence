@@ -40,11 +40,11 @@ extension MonitorViewModel {
                 sessions: sessions,
                 tokenScaleMaximum: tokenScaleMaximum,
                 burnRates: burnSamples(),
-                seriesUnavailableReason: "History is not being recorded",
+                seriesUnavailableReason: Self.historyNotRecordedReason,
                 // No store at all, so the monthly table has nothing to read
                 // either -- the same reasoning one line above, stated for the
                 // table instead of the chart.
-                monthlyUsageUnavailableReason: "History is not being recorded",
+                monthlyUsageUnavailableReason: Self.historyNotRecordedReason,
                 todayUsage: nil,
                 // The projection, the binding window and the burn leader all
                 // come from the usage endpoint and the in-process burn
@@ -107,19 +107,21 @@ extension MonitorViewModel {
             burnRates: burnSamples(),
             series: points.map(Self.chartPoint),
             seriesOutput: Self.seriesOutput(points),
-            seriesUnavailableReason: isLiveOnly ? nil : (points.isEmpty ? "No history recorded yet" : nil),
+            seriesUnavailableReason: isLiveOnly
+                ? nil
+                : (points.isEmpty ? Self.noHistoryRecordedReason : nil),
             hourlySeries: hourly.map(Self.hourlyPoint),
             hourlySeriesOutput: Self.hourlyOutput(hourly),
             hourlySeriesUnavailableReason: isLiveOnly
                 ? nil
-                : (hourly.contains(where: \.isAvailable) ? nil : "No usage sampled in this window"),
+                : (hourly.contains(where: \.isAvailable) ? nil : Self.noUsageSampledReason),
             projects: summaries.map(Self.projectRow),
             history: isLiveOnly ? [] : Self.history(live: sessions, stored: stored),
             monthlyUsage: monthly?.rows ?? [],
             monthlyUsageIncludesSubagentTokens: monthly?.includesSubagentTokens ?? true,
             monthlyUsageUnavailableReason: isLiveOnly
                 ? nil
-                : (monthly == nil ? "The store could not answer for this range" : nil),
+                : (monthly == nil ? Self.storeDidNotAnswerReason : nil),
             // Nil when the store could not answer, so the tile renders
             // `Usage unavailable`. This passed a non-nil value on every path
             // until 2026-09-03, which made `todayUsage`'s optionality
@@ -150,6 +152,31 @@ extension MonitorViewModel {
             subscriptionMonthlyPrice: subscriptionMonthlyPrice
         )
     }
+
+    /// Live-only mode keeps no store, so the daily chart and the monthly table
+    /// have nothing to read; both name the same reason.
+    private static let historyNotRecordedReason = Phrase(
+        en: "History is not being recorded",
+        th: "ไม่ได้บันทึกประวัติการใช้งาน"
+    )
+
+    /// A store exists, but the daily series came back empty.
+    private static let noHistoryRecordedReason = Phrase(
+        en: "No history recorded yet",
+        th: "ยังไม่มีประวัติการใช้งานที่บันทึกไว้"
+    )
+
+    /// The five-hour window's own hourly series has no sample in it.
+    private static let noUsageSampledReason = Phrase(
+        en: "No usage sampled in this window",
+        th: "ยังไม่มีข้อมูลการใช้งานที่สุ่มตัวอย่างในหน้าต่างนี้"
+    )
+
+    /// `unansweredQueriesReader` said the monthly read did not complete.
+    private static let storeDidNotAnswerReason = Phrase(
+        en: "The store could not answer for this range",
+        th: "ฐานข้อมูลไม่สามารถตอบคำถามสำหรับช่วงเวลานี้ได้"
+    )
 
     /// One projection per currently reported usage window (9.11), read
     /// through `projection(for:now:)` rather than computed here: the arithmetic

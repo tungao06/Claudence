@@ -24,13 +24,15 @@ struct ActivityTimelineView: View {
     /// What to say when there is nothing. A session with an empty trail and a
     /// subagent that keeps no trail at all are different absences, and the line
     /// should say which one it is.
-    let emptyMessage: String
+    let emptyMessage: Phrase
+
+    @Environment(\.appLanguage) private var language
 
     init(
         trail: [TimedActivity],
         limit: Int = 8,
         now: Date = Date(),
-        emptyMessage: String = "No activity recorded yet"
+        emptyMessage: Phrase = Self.defaultEmptyMessage
     ) {
         self.trail = trail
         self.limit = limit
@@ -38,16 +40,22 @@ struct ActivityTimelineView: View {
         self.emptyMessage = emptyMessage
     }
 
-    static let footnote =
-        "Derived from tool name and file path only. Message text and command strings are never read."
+    static let defaultEmptyMessage = Phrase(en: "No activity recorded yet", th: "ยังไม่มีกิจกรรมที่บันทึกไว้")
+
+    static let footnote = Phrase(
+        en: "Derived from tool name and file path only. Message text and command strings are never read.",
+        th: "มาจากชื่อ tool และ path ของไฟล์เท่านั้น ไม่มีการอ่านข้อความ message หรือคำสั่งเลย"
+    )
 
     private var rows: [TimedActivity] {
         Array(trail.reversed().prefix(limit))
     }
 
+    private static let sectionTitle = Phrase(en: "RECENT ACTIVITY", th: "กิจกรรมล่าสุด")
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            SectionEyebrow("RECENT ACTIVITY")
+            SectionEyebrow(Self.sectionTitle)
                 .tooltip(tip: "activity", edge: .leading)
 
             if rows.isEmpty {
@@ -66,7 +74,7 @@ struct ActivityTimelineView: View {
                 }
             }
 
-            Text(Self.footnote)
+            PhraseText(Self.footnote)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -104,8 +112,10 @@ struct ActivityTimelineView: View {
         }
         .padding(.vertical, Theme.Space.xs)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(elapsed(entry.at)) ago, \(entry.activity.display)")
+        .accessibilityLabel(Self.agoLabel.format(in: language, elapsed(entry.at), entry.activity.display))
     }
+
+    private static let agoLabel = Phrase(en: "%@ ago, %@", th: "%@ ที่แล้ว, %@")
 
     /// Age of an entry. A record stamped in the future is a clock skew, not a
     /// negative age, so `Format.duration` floors it at zero.

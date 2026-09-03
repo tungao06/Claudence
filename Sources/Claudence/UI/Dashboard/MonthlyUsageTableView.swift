@@ -23,14 +23,16 @@ struct MonthlyUsageTableView: View {
     /// asserted here in prose that could drift from what the store actually
     /// did.
     let includesSubagentTokens: Bool
-    let emptyMessage: String
-    let emptyReason: String?
+    let emptyMessage: Phrase
+    let emptyReason: Phrase?
+
+    @Environment(\.appLanguage) private var language
 
     init(
         rows: [MonthlyProjectRow],
         includesSubagentTokens: Bool,
-        emptyMessage: String = "No usage recorded this month",
-        emptyReason: String? = nil
+        emptyMessage: Phrase = Strings.noUsageThisMonth,
+        emptyReason: Phrase? = nil
     ) {
         self.rows = rows
         self.includesSubagentTokens = includesSubagentTokens
@@ -48,7 +50,7 @@ struct MonthlyUsageTableView: View {
                 ForEach(rows) { row in
                     monthlyRow(row)
                 }
-                Text(subagentFootnote)
+                PhraseText(subagentFootnote)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.top, Theme.Space.xxs)
@@ -60,36 +62,36 @@ struct MonthlyUsageTableView: View {
     /// written by hand for one side of it: a build where the store ever stops
     /// combining subagent tokens into these figures gets a footnote that says
     /// so instead of one that keeps claiming the earlier behaviour.
-    private var subagentFootnote: String {
+    private var subagentFootnote: Phrase {
         includesSubagentTokens
-            ? "Includes subagent tokens."
-            : "Subagent tokens are not included in these figures."
+            ? Strings.includesSubagentTokens
+            : Strings.excludesSubagentTokens
     }
 
     // MARK: - Header
 
     private var header: some View {
         HStack(alignment: .bottom, spacing: DashboardMetrics.columnSpacing) {
-            columnTitle("Project")
+            columnTitle(Strings.columnProject)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            columnTitle("Sessions")
+            columnTitle(Strings.columnSessions)
                 .frame(width: DashboardMetrics.monthlySessionsColumn, alignment: .trailing)
-            columnTitle("Tokens")
+            columnTitle(Strings.columnTokens)
                 .frame(width: DashboardMetrics.monthlyTokensColumn, alignment: .trailing)
-            columnTitle("Opus")
+            columnTitle(Strings.columnOpus)
                 .frame(width: DashboardMetrics.monthlyShareColumn, alignment: .trailing)
-            columnTitle("Sonnet")
+            columnTitle(Strings.columnSonnet)
                 .frame(width: DashboardMetrics.monthlyShareColumn, alignment: .trailing)
-            columnTitle("Other")
+            columnTitle(Strings.columnOther)
                 .frame(width: DashboardMetrics.monthlyShareColumn, alignment: .trailing)
-            columnTitle("API equiv.")
+            columnTitle(Strings.columnApiEquiv)
                 .frame(width: DashboardMetrics.monthlyCostColumn, alignment: .trailing)
         }
         .accessibilityHidden(true)
     }
 
-    private func columnTitle(_ text: String) -> some View {
-        Text(text.uppercased())
+    private func columnTitle(_ phrase: Phrase) -> some View {
+        Text(phrase.string(in: language).uppercased())
             .font(Theme.Typography.section)
             .tracking(Theme.sectionTracking)
             .foregroundStyle(Theme.textTertiary)
@@ -161,24 +163,77 @@ struct MonthlyUsageTableView: View {
             return Format.cost(cost)
         }
         guard row.usage.total > 0 else { return Format.cost(nil) }
-        return "tokens known, no price"
+        return Strings.tokensKnownNoPrice.string(in: language)
     }
 
     private func spokenLabel(_ row: MonthlyProjectRow) -> String {
         var parts = [
             "\(row.project).",
-            row.sessionCount == 1 ? "1 session." : "\(row.sessionCount) sessions.",
-            "\(Format.tokens(row.usage.total)) tokens.",
-            "\(Format.share(row.opusShare)) Opus, \(Format.share(row.sonnetShare)) Sonnet, "
-                + "\(Format.share(row.otherShare)) other models.",
+            row.sessionCount == 1
+                ? Strings.spokenOneSession.string(in: language)
+                : Strings.spokenSessionCount.format(in: language, "\(row.sessionCount)"),
+            Strings.spokenTokens.format(in: language, Format.tokens(row.usage.total)),
+            Strings.spokenModelShares.format(
+                in: language,
+                Format.share(row.opusShare),
+                Format.share(row.sonnetShare),
+                Format.share(row.otherShare)
+            ),
         ]
         if let cost = row.apiEquivalent {
-            parts.append("API equivalent \(Format.cost(cost)).")
+            parts.append(Strings.spokenApiEquivalent.format(in: language, Format.cost(cost)))
         } else if row.usage.total > 0 {
-            parts.append("Tokens known, no price available for the API equivalent.")
+            parts.append(Strings.spokenTokensKnownNoPrice.string(in: language))
         } else {
-            parts.append("API equivalent unavailable.")
+            parts.append(Strings.spokenApiEquivalentUnavailable.string(in: language))
         }
         return parts.joined(separator: " ")
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let noUsageThisMonth = Phrase(
+        en: "No usage recorded this month",
+        th: "ยังไม่มีการใช้งานบันทึกไว้ในเดือนนี้"
+    )
+    static let includesSubagentTokens = Phrase(
+        en: "Includes subagent tokens.",
+        th: "รวม token ของ subagent ด้วย"
+    )
+    static let excludesSubagentTokens = Phrase(
+        en: "Subagent tokens are not included in these figures.",
+        th: "ตัวเลขเหล่านี้ไม่รวม token ของ subagent"
+    )
+
+    static let columnProject = Phrase(en: "Project", th: "โปรเจกต์")
+    static let columnSessions = Phrase(en: "Sessions", th: "Session")
+    static let columnTokens = Phrase(en: "Tokens", th: "Token")
+    static let columnOpus = Phrase.untranslated("Opus")
+    static let columnSonnet = Phrase.untranslated("Sonnet")
+    static let columnOther = Phrase(en: "Other", th: "อื่นๆ")
+    static let columnApiEquiv = Phrase(en: "API equiv.", th: "เทียบเท่า API")
+
+    static let tokensKnownNoPrice = Phrase(
+        en: "tokens known, no price",
+        th: "รู้จำนวน token แต่ไม่มีราคา"
+    )
+
+    static let spokenOneSession = Phrase(en: "1 session.", th: "1 session")
+    static let spokenSessionCount = Phrase(en: "%@ sessions.", th: "%@ session")
+    static let spokenTokens = Phrase(en: "%@ tokens.", th: "%@ token")
+    static let spokenModelShares = Phrase(
+        en: "%@ Opus, %@ Sonnet, %@ other models.",
+        th: "Opus %@, Sonnet %@, โมเดลอื่น %@"
+    )
+    static let spokenApiEquivalent = Phrase(en: "API equivalent %@.", th: "เทียบเท่า API %@")
+    static let spokenTokensKnownNoPrice = Phrase(
+        en: "Tokens known, no price available for the API equivalent.",
+        th: "รู้จำนวน token แต่ไม่มีราคาสำหรับคำนวณมูลค่าเทียบเท่า API"
+    )
+    static let spokenApiEquivalentUnavailable = Phrase(
+        en: "API equivalent unavailable.",
+        th: "ไม่มีข้อมูลมูลค่าเทียบเท่า API"
+    )
 }

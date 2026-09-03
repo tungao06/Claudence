@@ -1,4 +1,5 @@
 import AppKit
+import ClaudenceCore
 import SwiftUI
 
 /// Presents the first-launch screen in a real, ordinary `NSWindow` -- opened
@@ -39,6 +40,8 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         self.preferences = preferences
     }
 
+    private static let title = Phrase(en: "Welcome to Claudence", th: "ยินดีต้อนรับสู่ Claudence")
+
     /// Builds and shows the window, unless onboarding is already behind us or
     /// a window from an earlier call is still open.
     func presentIfNeeded<Content: View>(@ViewBuilder rootView: () -> Content) {
@@ -46,7 +49,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
 
         let hosting = NSHostingController(rootView: rootView())
         let window = NSWindow(contentViewController: hosting)
-        window.title = "Welcome to Claudence"
+        window.title = Self.title.string(in: preferences.appLanguage)
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.isReleasedWhenClosed = false
         window.delegate = self

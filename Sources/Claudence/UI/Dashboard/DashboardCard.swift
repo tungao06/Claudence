@@ -1,4 +1,5 @@
 import SwiftUI
+import ClaudenceCore
 
 /// The dashboard's one card shell.
 ///
@@ -28,9 +29,9 @@ struct DashboardCard<Content: View>: View {
         case inline
     }
 
-    let title: String?
+    let title: Phrase?
     /// The quiet second line: what the panel measured, or where it came from.
-    let subtitle: String?
+    let subtitle: Phrase?
     let headerLayout: HeaderLayout
     /// Tooltip key for the title, from `TooltipText`. Nil leaves the title
     /// inert rather than pointing at a tooltip that does not exist.
@@ -40,8 +41,8 @@ struct DashboardCard<Content: View>: View {
     @ViewBuilder let content: Content
 
     init(
-        title: String? = nil,
-        subtitle: String? = nil,
+        title: Phrase? = nil,
+        subtitle: Phrase? = nil,
         headerLayout: HeaderLayout = .stacked,
         tooltipKey: String? = nil,
         horizontalPadding: CGFloat = DashboardMetrics.cardPadding,
@@ -88,7 +89,7 @@ struct DashboardCard<Content: View>: View {
     }
 
     @ViewBuilder
-    private func header(_ title: String) -> some View {
+    private func header(_ title: Phrase) -> some View {
         switch headerLayout {
         case .stacked:
             VStack(alignment: .leading, spacing: DashboardMetrics.cardHeaderGap) {
@@ -107,8 +108,8 @@ struct DashboardCard<Content: View>: View {
         }
     }
 
-    private func titleText(_ title: String) -> some View {
-        Text(title)
+    private func titleText(_ title: Phrase) -> some View {
+        PhraseText(title)
             .font(Theme.Typography.cardTitle)
             .foregroundStyle(Theme.textPrimary)
             .accessibilityAddTraits(.isHeader)
@@ -118,7 +119,7 @@ struct DashboardCard<Content: View>: View {
     @ViewBuilder
     private var subtitleText: some View {
         if let subtitle {
-            Text(subtitle)
+            PhraseText(subtitle)
                 .font(Theme.Typography.help)
                 .foregroundStyle(Theme.textQuaternary)
                 .fixedSize(horizontal: false, vertical: true)

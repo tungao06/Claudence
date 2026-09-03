@@ -561,11 +561,17 @@ private enum DashboardFixture {
         tokenScaleMaximum: nil,
         burnRates: [:],
         series: DashboardSeries.empty,
-        seriesUnavailableReason: "No usage has been recorded yet",
+        seriesUnavailableReason: Phrase(
+            en: "No usage has been recorded yet",
+            th: "ยังไม่มีการใช้งานบันทึกไว้"
+        ),
         projects: DashboardProjects.none,
         history: DashboardHistory.none,
         monthlyUsage: DashboardMonthlyUsage.none,
-        monthlyUsageUnavailableReason: "History is not being recorded",
+        monthlyUsageUnavailableReason: Phrase(
+            en: "History is not being recorded",
+            th: "ไม่ได้บันทึกประวัติการใช้งาน"
+        ),
         todayUsage: nil,
         todayCost: nil,
         unpricedSessionCount: 0
@@ -790,11 +796,17 @@ struct UsageChartEdgeCasesPreview: PreviewProvider {
                 // Nothing measured at all: no axes, an honest message.
                 UsageChart(
                     points: DashboardSeries.allMissing,
-                    unavailableReason: "The store could not answer for any day in this range"
+                    unavailableReason: Phrase(
+                        en: "The store could not answer for any day in this range",
+                        th: "ฐานข้อมูลไม่สามารถตอบคำถามสำหรับวันใดในช่วงนี้ได้"
+                    )
                 )
                 UsageChart(
                     points: DashboardSeries.empty,
-                    unavailableReason: "No usage has been recorded yet"
+                    unavailableReason: Phrase(
+                        en: "No usage has been recorded yet",
+                        th: "ยังไม่มีการใช้งานบันทึกไว้"
+                    )
                 )
             }
         }
@@ -818,7 +830,10 @@ struct ProjectBreakdownPreview: PreviewProvider {
                 )
                 ProjectBreakdownView(
                     rows: DashboardProjects.none,
-                    emptyReason: "No transcript has been read yet",
+                    emptyReason: Phrase(
+                        en: "No transcript has been read yet",
+                        th: "ยังไม่มีการอ่าน transcript"
+                    ),
                     now: DashboardClock.now
                 )
             }
@@ -847,7 +862,10 @@ struct MonthlyUsageTablePreview: PreviewProvider {
                 MonthlyUsageTableView(
                     rows: DashboardMonthlyUsage.none,
                     includesSubagentTokens: true,
-                    emptyReason: "History is not being recorded"
+                    emptyReason: Phrase(
+                        en: "History is not being recorded",
+                        th: "ไม่ได้บันทึกประวัติการใช้งาน"
+                    )
                 )
             }
         }

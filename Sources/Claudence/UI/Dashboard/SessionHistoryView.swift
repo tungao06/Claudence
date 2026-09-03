@@ -12,20 +12,32 @@ enum HistoryRange: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
-    var title: String {
+    var title: Phrase {
         switch self {
-        case .today: return "Today"
-        case .sevenDays: return "7 Days"
-        case .thirtyDays: return "30 Days"
+        case .today: return HistoryStrings.rangeToday
+        case .sevenDays: return HistoryStrings.rangeSevenDays
+        case .thirtyDays: return HistoryStrings.rangeThirtyDays
         }
     }
 
     /// Spoken form, so the filter never reads as an abbreviation.
-    var spokenTitle: String {
+    var spokenTitle: Phrase {
         switch self {
-        case .today: return "today"
-        case .sevenDays: return "the last 7 days"
-        case .thirtyDays: return "the last 30 days"
+        case .today: return HistoryStrings.spokenRangeToday
+        case .sevenDays: return HistoryStrings.spokenRangeSevenDays
+        case .thirtyDays: return HistoryStrings.spokenRangeThirtyDays
+        }
+    }
+
+    /// `title`, lowercased, for the sentence that names an empty range: "No
+    /// sessions in today" rather than "No sessions in Today". Its own phrase
+    /// rather than `title.string(in:).lowercased()`, because Thai script has
+    /// no case to lower in the first place.
+    var lowercaseTitle: Phrase {
+        switch self {
+        case .today: return HistoryStrings.rangeTodayLower
+        case .sevenDays: return HistoryStrings.rangeSevenDaysLower
+        case .thirtyDays: return HistoryStrings.rangeThirtyDaysLower
         }
     }
 
@@ -57,6 +69,7 @@ struct SessionHistoryView: View {
     let now: Date
 
     @State private var range: HistoryRange
+    @Environment(\.appLanguage) private var language
 
     init(rows: [HistoryRow], now: Date = Date(), initialRange: HistoryRange = .sevenDays) {
         self.rows = rows
@@ -97,15 +110,15 @@ struct SessionHistoryView: View {
 
     private func controls(_ visible: [HistoryRow]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.l) {
-            Picker("History range", selection: $range) {
+            Picker(HistoryStrings.historyRange.string(in: language), selection: $range) {
                 ForEach(HistoryRange.allCases) { option in
-                    Text(option.title).tag(option)
+                    PhraseText(option.title).tag(option)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .accessibilityLabel("History range")
+            .accessibilityLabel(HistoryStrings.historyRange, in: language)
 
             Spacer(minLength: Theme.Space.m)
 
@@ -119,16 +132,31 @@ struct SessionHistoryView: View {
 
     private func summaryText(_ visible: [HistoryRow]) -> String {
         let count = visible.count
-        let sessions = count == 1 ? "1 session" : "\(count) sessions"
+        let sessions = count == 1
+            ? HistoryStrings.oneSession.string(in: language)
+            : HistoryStrings.sessionCount.format(in: language, "\(count)")
         guard count > 0 else { return sessions }
-        return "\(sessions) · \(Format.tokens(total(of: visible))) tokens"
+        return HistoryStrings.summaryWithTokens.format(
+            in: language,
+            sessions,
+            Format.tokens(total(of: visible))
+        )
     }
 
     private func spokenSummary(_ visible: [HistoryRow]) -> String {
         let count = visible.count
-        guard count > 0 else { return "No sessions in \(range.spokenTitle)." }
-        let sessions = count == 1 ? "1 session" : "\(count) sessions"
-        return "\(sessions) in \(range.spokenTitle), \(Format.tokens(total(of: visible))) tokens."
+        guard count > 0 else {
+            return HistoryStrings.spokenNoSessions.format(in: language, range.spokenTitle.string(in: language))
+        }
+        let sessions = count == 1
+            ? HistoryStrings.oneSession.string(in: language)
+            : HistoryStrings.sessionCount.format(in: language, "\(count)")
+        return HistoryStrings.spokenSummary.format(
+            in: language,
+            sessions,
+            range.spokenTitle.string(in: language),
+            Format.tokens(total(of: visible))
+        )
     }
 
     // MARK: - Content
@@ -138,13 +166,13 @@ struct SessionHistoryView: View {
         if rows.isEmpty {
             // Nothing has ever been recorded. Not an error state.
             UnavailableView(
-                "No session history recorded",
-                reason: "Sessions appear here once they finish"
+                HistoryStrings.noHistoryRecorded,
+                reason: HistoryStrings.sessionsAppearHere
             )
         } else if visible.isEmpty {
             // The store answered; this range is genuinely empty. A different
             // statement from having no history at all, and it must stay one.
-            UnavailableView("No sessions in \(range.title.lowercased())", compact: true)
+            UnavailableView(noSessionsMessage(for: range), compact: true)
         } else {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
                 header
@@ -160,22 +188,22 @@ struct SessionHistoryView: View {
 
     private var header: some View {
         HStack(alignment: .bottom, spacing: DashboardMetrics.columnSpacing) {
-            columnTitle("Started")
+            columnTitle(HistoryStrings.columnStarted)
                 .frame(width: DashboardMetrics.historyStartedColumn, alignment: .leading)
-            columnTitle("Project")
+            columnTitle(HistoryStrings.columnProject)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            columnTitle("Model")
+            columnTitle(HistoryStrings.columnModel)
                 .frame(width: DashboardMetrics.historyModelColumn, alignment: .leading)
-            columnTitle("Duration")
+            columnTitle(HistoryStrings.columnDuration)
                 .frame(width: DashboardMetrics.historyDurationColumn, alignment: .trailing)
-            columnTitle("Tokens")
+            columnTitle(HistoryStrings.columnTokens)
                 .frame(width: DashboardMetrics.historyTokensColumn, alignment: .trailing)
         }
         .accessibilityHidden(true)
     }
 
-    private func columnTitle(_ text: String) -> some View {
-        Text(text.uppercased())
+    private func columnTitle(_ phrase: Phrase) -> some View {
+        Text(phrase.string(in: language).uppercased())
             .font(Theme.Typography.section)
             .tracking(Theme.sectionTracking)
             .foregroundStyle(Theme.textTertiary)
@@ -184,7 +212,7 @@ struct SessionHistoryView: View {
 
     private func historyRow(_ row: HistoryRow) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: DashboardMetrics.columnSpacing) {
-            Text(Self.started(row.startedAt))
+            Text(Self.started(row.startedAt, in: language))
                 .font(Theme.Typography.numeric)
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
@@ -197,7 +225,7 @@ struct SessionHistoryView: View {
                 .truncationMode(.head)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(row.model ?? "unavailable")
+            Text(row.model ?? HistoryStrings.unavailable.string(in: language))
                 .font(Theme.Typography.caption)
                 .foregroundStyle(row.model == nil ? Theme.textTertiary : Theme.textSecondary)
                 .lineLimit(1)
@@ -225,26 +253,97 @@ struct SessionHistoryView: View {
         // row-sized hover ground to.
         .elevates(.row, cornerRadius: Theme.Radius.hoverTarget)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.spokenLabel(row))
+        .accessibilityLabel(Self.spokenLabel(row, in: language))
     }
 
     // MARK: - Text
 
-    /// Value-type formatting: no shared `DateFormatter`, nothing to isolate.
-    private static func started(_ date: Date) -> String {
-        date.formatted(
-            .dateTime.month(.abbreviated).day().hour(.defaultDigits(amPM: .abbreviated)).minute()
+    /// A concrete phrase built in both languages, for a caller (`UnavailableView`)
+    /// that resolves its own language from the environment rather than being
+    /// handed an already-resolved string.
+    private func noSessionsMessage(for range: HistoryRange) -> Phrase {
+        Phrase(
+            en: HistoryStrings.noSessionsInRange.format(
+                in: .english,
+                range.lowercaseTitle.string(in: .english)
+            ),
+            th: HistoryStrings.noSessionsInRange.format(
+                in: .thai,
+                range.lowercaseTitle.string(in: .thai)
+            )
         )
     }
 
-    private static func spokenLabel(_ row: HistoryRow) -> String {
+    /// Value-type formatting: no shared `DateFormatter`, nothing to isolate.
+    /// Routed through `AppLanguage.locale`, per `CLAUDE.md`'s Thai-calendar
+    /// trap: `th_TH` alone would print the Buddhist year, and this locale
+    /// pins the Gregorian calendar the app displays everywhere else.
+    private static func started(_ date: Date, in language: AppLanguage) -> String {
+        date.formatted(
+            .dateTime.month(.abbreviated).day().hour(.defaultDigits(amPM: .abbreviated)).minute()
+                .locale(language.locale)
+        )
+    }
+
+    private static func spokenLabel(_ row: HistoryRow, in language: AppLanguage) -> String {
         var parts = [
             "\(row.project).",
-            "Started \(started(row.startedAt)).",
-            "Ran for \(Format.duration(row.duration)).",
-            "\(Format.tokens(row.usage.total)) tokens.",
+            HistoryStrings.spokenStarted.format(in: language, started(row.startedAt, in: language)),
+            HistoryStrings.spokenRanFor.format(in: language, Format.duration(row.duration)),
+            HistoryStrings.spokenTokens.format(in: language, Format.tokens(row.usage.total)),
         ]
-        parts.append(row.model.map { "Model \($0)." } ?? "Model unavailable.")
+        parts.append(
+            row.model.map { HistoryStrings.spokenModel.format(in: language, $0) }
+                ?? HistoryStrings.spokenModelUnavailable.string(in: language)
+        )
         return parts.joined(separator: " ")
     }
+}
+
+// MARK: - Strings
+
+private enum HistoryStrings {
+    static let rangeToday = Phrase(en: "Today", th: "วันนี้")
+    static let rangeSevenDays = Phrase(en: "7 Days", th: "7 วัน")
+    static let rangeThirtyDays = Phrase(en: "30 Days", th: "30 วัน")
+    static let rangeTodayLower = Phrase(en: "today", th: "วันนี้")
+    static let rangeSevenDaysLower = Phrase(en: "7 days", th: "7 วัน")
+    static let rangeThirtyDaysLower = Phrase(en: "30 days", th: "30 วัน")
+
+    static let spokenRangeToday = Phrase(en: "today", th: "วันนี้")
+    static let spokenRangeSevenDays = Phrase(en: "the last 7 days", th: "7 วันล่าสุด")
+    static let spokenRangeThirtyDays = Phrase(en: "the last 30 days", th: "30 วันล่าสุด")
+
+    static let historyRange = Phrase(en: "History range", th: "ช่วงเวลาประวัติ")
+    static let oneSession = Phrase(en: "1 session", th: "1 session")
+    static let sessionCount = Phrase(en: "%@ sessions", th: "%@ session")
+    static let summaryWithTokens = Phrase(en: "%@ · %@ tokens", th: "%@ · %@ token")
+    static let spokenNoSessions = Phrase(en: "No sessions in %@.", th: "ไม่มี session ใน%@")
+    static let spokenSummary = Phrase(
+        en: "%@ in %@, %@ tokens.",
+        th: "%@ ใน%@ จำนวน %@ token"
+    )
+
+    static let noHistoryRecorded = Phrase(
+        en: "No session history recorded",
+        th: "ยังไม่มีประวัติ session บันทึกไว้"
+    )
+    static let sessionsAppearHere = Phrase(
+        en: "Sessions appear here once they finish",
+        th: "Session จะปรากฏที่นี่เมื่อจบการทำงานแล้ว"
+    )
+    static let noSessionsInRange = Phrase(en: "No sessions in %@", th: "ไม่มี session ใน%@")
+
+    static let columnStarted = Phrase(en: "Started", th: "เริ่มเมื่อ")
+    static let columnProject = Phrase(en: "Project", th: "โปรเจกต์")
+    static let columnModel = Phrase(en: "Model", th: "โมเดล")
+    static let columnDuration = Phrase(en: "Duration", th: "ระยะเวลา")
+    static let columnTokens = Phrase(en: "Tokens", th: "Token")
+    static let unavailable = Phrase(en: "unavailable", th: "ไม่มีข้อมูล")
+
+    static let spokenStarted = Phrase(en: "Started %@.", th: "เริ่มเมื่อ %@")
+    static let spokenRanFor = Phrase(en: "Ran for %@.", th: "ทำงานนาน %@")
+    static let spokenTokens = Phrase(en: "%@ tokens.", th: "%@ token")
+    static let spokenModel = Phrase(en: "Model %@.", th: "โมเดล %@")
+    static let spokenModelUnavailable = Phrase(en: "Model unavailable.", th: "ไม่มีข้อมูลโมเดล")
 }

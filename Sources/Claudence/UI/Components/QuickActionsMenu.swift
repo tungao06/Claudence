@@ -37,6 +37,7 @@ struct QuickActionsMenu: View {
     @State private var outcomeToken = 0
     @State private var isConfirmingStop = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
@@ -52,19 +53,19 @@ struct QuickActionsMenu: View {
             value: outcomeToken
         )
         .confirmationDialog(
-            "Stop \(session.projectName)?",
+            confirmationTitle.string(in: language),
             isPresented: $isConfirmingStop,
             titleVisibility: .visible
         ) {
-            Button("Stop Session", role: .destructive) {
+            Button(Strings.stopSession.string(in: language), role: .destructive) {
                 record(actions.stopSession(session))
             }
-            Button("Cancel", role: .cancel) {}
+            Button(Strings.cancel.string(in: language), role: .cancel) {}
                 // Cancel is the default action, so a stray Return key does not
                 // end a session.
                 .keyboardShortcut(.defaultAction)
         } message: {
-            Text(confirmationDetail)
+            PhraseText(confirmationDetail)
         }
         // Clears the confirmation line. A timed clear is not an animation and
         // costs nothing while no outcome is showing.
@@ -75,7 +76,21 @@ struct QuickActionsMenu: View {
             outcome = nil
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Quick actions for \(session.projectName)")
+        .accessibilityLabel(quickActionsLabel, in: language)
+    }
+
+    private var confirmationTitle: Phrase {
+        Phrase(
+            en: "Stop \(session.projectName)?",
+            th: "หยุด \(session.projectName)?"
+        )
+    }
+
+    private var quickActionsLabel: Phrase {
+        Phrase(
+            en: "Quick actions for \(session.projectName)",
+            th: "การดำเนินการด่วนสำหรับ \(session.projectName)"
+        )
     }
 
     // MARK: - Buttons
@@ -93,29 +108,35 @@ struct QuickActionsMenu: View {
     private var buttons: some View {
         HStack(spacing: Theme.Space.m) {
             actionChip(
-                title: "Open Terminal",
+                title: Strings.openTerminal,
                 glyph: "terminal",
                 treatment: .accent,
-                label: "Open Terminal at \(session.displayPath)",
-                hint: "Opens a Terminal window in this session's working directory"
+                label: Phrase(
+                    en: "Open Terminal at \(session.displayPath)",
+                    th: "เปิด Terminal ที่ \(session.displayPath)"
+                ),
+                hint: Strings.openTerminalHint
             ) {
                 Task { record(await actions.openTerminal(for: session)) }
             }
             actionChip(
-                title: "Open Project",
+                title: Strings.openProject,
                 glyph: "folder",
                 treatment: .neutral,
-                label: "Show \(session.displayPath) in Finder",
-                hint: "Opens this session's working directory in Finder"
+                label: Phrase(
+                    en: "Show \(session.displayPath) in Finder",
+                    th: "แสดง \(session.displayPath) ใน Finder"
+                ),
+                hint: Strings.openProjectHint
             ) {
                 record(actions.openProject(for: session))
             }
             actionChip(
-                title: "Copy Path",
+                title: Strings.copyPath,
                 glyph: "doc.on.doc",
                 treatment: .neutral,
-                label: "Copy the working directory path",
-                hint: "Copies the full path to the clipboard"
+                label: Strings.copyPathLabel,
+                hint: Strings.copyPathHint
             ) {
                 record(actions.copyPath(for: session))
             }
@@ -123,11 +144,14 @@ struct QuickActionsMenu: View {
             Spacer(minLength: Theme.Space.s)
 
             actionChip(
-                title: "Stop Session\u{2026}",
+                title: Strings.stopSessionEllipsis,
                 glyph: "stop.circle",
                 treatment: .destructive,
-                label: "Stop session. Terminates the Claude Code process \(session.pid) for \(session.projectName).",
-                hint: "Asks for confirmation first"
+                label: Phrase(
+                    en: "Stop session. Terminates the Claude Code process \(session.pid) for \(session.projectName).",
+                    th: "หยุด session ยุติ process \(session.pid) ของ Claude Code สำหรับ \(session.projectName)"
+                ),
+                hint: Strings.stopSessionHint
             ) {
                 isConfirmingStop = true
             }
@@ -170,18 +194,18 @@ struct QuickActionsMenu: View {
     }
 
     private func actionChip(
-        title: String,
+        title: Phrase,
         glyph: String,
         treatment: Treatment,
-        label: String,
-        hint: String,
+        label: Phrase,
+        hint: Phrase,
         action: @escaping () -> Void
     ) -> some View {
         Button(role: treatment == .destructive ? .destructive : nil, action: action) {
             HStack(spacing: Theme.Space.xs) {
                 Image(systemName: glyph)
                     .font(.system(size: Theme.Bar.severityGlyph))
-                Text(title)
+                PhraseText(title)
                     .font(Theme.Typography.labelEmphasis)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -200,19 +224,25 @@ struct QuickActionsMenu: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .accessibilityHint(hint)
+        .accessibilityLabel(label, in: language)
+        .accessibilityHint(hint(in: language))
     }
 
     // MARK: - Confirmation wording
 
     /// Names the pid as well as the project, and says plainly what the signal
     /// is. No number here is derived or estimated, so nothing needs a label.
-    private var confirmationDetail: String {
-        """
-        Claudence will ask process \(session.pid) in \(session.displayPath) to \
-        shut down. Anything that session has not finished will stop.
-        """
+    private var confirmationDetail: Phrase {
+        Phrase(
+            en: """
+            Claudence will ask process \(session.pid) in \(session.displayPath) to \
+            shut down. Anything that session has not finished will stop.
+            """,
+            th: """
+            Claudence จะขอให้ process \(session.pid) ใน \(session.displayPath) ปิดตัวลง \
+            สิ่งที่ session นั้นทำค้างอยู่จะหยุดทันที
+            """
+        )
     }
 
     // MARK: - Outcome line
@@ -222,7 +252,7 @@ struct QuickActionsMenu: View {
             Image(systemName: outcome.glyph)
                 .font(.system(size: Theme.Bar.severityGlyph))
                 .foregroundStyle(color(for: outcome.tone))
-            Text(outcome.message)
+            PhraseText(outcome.message)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(2)
@@ -230,7 +260,7 @@ struct QuickActionsMenu: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(outcome.message)
+        .accessibilityLabel(outcome.message, in: language)
     }
 
     /// The only mapping from tone to colour, and it goes through `Theme`.
@@ -250,4 +280,38 @@ struct QuickActionsMenu: View {
         outcome = result
         outcomeToken += 1
     }
+}
+
+/// Words this file owns: the chip labels and hints, and the confirmation
+/// dialog's fixed strings. Everything with a session's own name or path in it
+/// is built inline instead, so the interpolation stays in one place per
+/// sentence rather than being split between a template here and an argument
+/// at the call site.
+private enum Strings {
+    static let openTerminal = Phrase(en: "Open Terminal", th: "เปิด Terminal")
+    static let openTerminalHint = Phrase(
+        en: "Opens a Terminal window in this session's working directory",
+        th: "เปิดหน้าต่าง Terminal ที่ working directory ของ session นี้"
+    )
+    static let openProject = Phrase(en: "Open Project", th: "เปิดโปรเจกต์")
+    static let openProjectHint = Phrase(
+        en: "Opens this session's working directory in Finder",
+        th: "เปิด working directory ของ session นี้ใน Finder"
+    )
+    static let copyPath = Phrase(en: "Copy Path", th: "คัดลอก Path")
+    static let copyPathLabel = Phrase(
+        en: "Copy the working directory path",
+        th: "คัดลอก path ของ working directory"
+    )
+    static let copyPathHint = Phrase(
+        en: "Copies the full path to the clipboard",
+        th: "คัดลอก path เต็มไปยังคลิปบอร์ด"
+    )
+    static let stopSessionEllipsis = Phrase(en: "Stop Session\u{2026}", th: "หยุด Session\u{2026}")
+    static let stopSessionHint = Phrase(
+        en: "Asks for confirmation first",
+        th: "ถามยืนยันก่อน"
+    )
+    static let stopSession = Phrase(en: "Stop Session", th: "หยุด Session")
+    static let cancel = Phrase(en: "Cancel", th: "ยกเลิก")
 }

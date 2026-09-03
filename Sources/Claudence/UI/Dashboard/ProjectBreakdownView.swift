@@ -9,16 +9,18 @@ import ClaudenceCore
 /// a bar with an unstated denominator is a ratio nobody agreed to.
 struct ProjectBreakdownView: View {
     let rows: [ProjectRow]
-    let emptyMessage: String
-    let emptyReason: String?
+    let emptyMessage: Phrase
+    let emptyReason: Phrase?
     /// Reference time for "last active". Injected so the view stays a function
     /// of its inputs.
     let now: Date
 
+    @Environment(\.appLanguage) private var language
+
     init(
         rows: [ProjectRow],
-        emptyMessage: String = "No project activity recorded",
-        emptyReason: String? = nil,
+        emptyMessage: Phrase = Strings.noActivityRecorded,
+        emptyReason: Phrase? = nil,
         now: Date = Date()
     ) {
         self.rows = rows
@@ -45,14 +47,14 @@ struct ProjectBreakdownView: View {
                     projectRow(row)
                 }
                 if busiestTotal != nil {
-                    Text("Bars are relative to the busiest project.")
+                    PhraseText(Strings.barsRelative)
                         .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.textTertiary)
                         .padding(.top, Theme.Space.xxs)
                 } else {
                     // Every project measured zero. That is a real answer, so
                     // say it rather than drawing empty tracks.
-                    Text("No tokens recorded for any project yet.")
+                    PhraseText(Strings.noTokensRecorded)
                         .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.textTertiary)
                         .padding(.top, Theme.Space.xxs)
@@ -65,24 +67,24 @@ struct ProjectBreakdownView: View {
 
     private var header: some View {
         HStack(alignment: .bottom, spacing: DashboardMetrics.columnSpacing) {
-            columnTitle("Project")
+            columnTitle(Strings.columnProject)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            columnTitle("Sessions")
+            columnTitle(Strings.columnSessions)
                 .frame(width: DashboardMetrics.projectSessionsColumn, alignment: .trailing)
-            columnTitle("Tokens")
+            columnTitle(Strings.columnTokens)
                 .frame(width: DashboardMetrics.projectTokensColumn, alignment: .trailing)
-            columnTitle("API equiv.")
+            columnTitle(Strings.columnApiEquiv)
                 .frame(width: DashboardMetrics.projectCostColumn, alignment: .trailing)
-            columnTitle("Avg time")
+            columnTitle(Strings.columnAvgTime)
                 .frame(width: DashboardMetrics.projectDurationColumn, alignment: .trailing)
-            columnTitle("Last active")
+            columnTitle(Strings.columnLastActive)
                 .frame(width: DashboardMetrics.projectLastActiveColumn, alignment: .trailing)
         }
         .accessibilityHidden(true)
     }
 
-    private func columnTitle(_ text: String) -> some View {
-        Text(text.uppercased())
+    private func columnTitle(_ phrase: Phrase) -> some View {
+        Text(phrase.string(in: language).uppercased())
             .font(Theme.Typography.section)
             .tracking(Theme.sectionTracking)
             .foregroundStyle(Theme.textTertiary)
@@ -178,38 +180,93 @@ struct ProjectBreakdownView: View {
     // MARK: - Text
 
     private func averageText(_ row: ProjectRow) -> String {
-        guard let average = row.averageDuration else { return "unavailable" }
+        guard let average = row.averageDuration else { return Strings.unavailable.string(in: language) }
         return Format.duration(average)
     }
 
     private func lastActiveText(_ row: ProjectRow) -> String {
-        guard let last = row.lastActivity else { return "unavailable" }
+        guard let last = row.lastActivity else { return Strings.unavailable.string(in: language) }
         let elapsed = now.timeIntervalSince(last)
-        guard elapsed >= 0 else { return "just now" }
-        return "\(Format.duration(elapsed)) ago"
+        guard elapsed >= 0 else { return Strings.justNow.string(in: language) }
+        return Strings.durationAgo.format(in: language, Format.duration(elapsed))
     }
 
     private func spokenLabel(_ row: ProjectRow) -> String {
         var parts = [
             "\(row.project).",
-            row.sessionCount == 1 ? "1 session." : "\(row.sessionCount) sessions.",
-            "\(Format.tokens(row.usage.total)) tokens.",
+            row.sessionCount == 1
+                ? Strings.spokenOneSession.string(in: language)
+                : Strings.spokenSessionCount.format(in: language, "\(row.sessionCount)"),
+            Strings.spokenTokens.format(in: language, Format.tokens(row.usage.total)),
         ]
         if let cost = row.estimatedCost {
-            parts.append("API equivalent \(Format.cost(cost)).")
+            parts.append(Strings.spokenApiEquivalent.format(in: language, Format.cost(cost)))
         } else {
-            parts.append("API equivalent unavailable.")
+            parts.append(Strings.spokenApiEquivalentUnavailable.string(in: language))
         }
         if let average = row.averageDuration {
-            parts.append("Average session \(Format.duration(average)).")
+            parts.append(Strings.spokenAverageSession.format(in: language, Format.duration(average)))
         } else {
-            parts.append("Average session length unavailable.")
+            parts.append(Strings.spokenAverageSessionUnavailable.string(in: language))
         }
         parts.append(
             row.lastActivity == nil
-                ? "Last active unavailable."
-                : "Last active \(lastActiveText(row))."
+                ? Strings.spokenLastActiveUnavailable.string(in: language)
+                : Strings.spokenLastActive.format(in: language, lastActiveText(row))
         )
         return parts.joined(separator: " ")
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let noActivityRecorded = Phrase(
+        en: "No project activity recorded",
+        th: "ยังไม่มีกิจกรรมของโปรเจกต์บันทึกไว้"
+    )
+    static let barsRelative = Phrase(
+        en: "Bars are relative to the busiest project.",
+        th: "แท่งกราฟเทียบกับโปรเจกต์ที่ใช้งานมากที่สุด"
+    )
+    static let noTokensRecorded = Phrase(
+        en: "No tokens recorded for any project yet.",
+        th: "ยังไม่มี token บันทึกไว้สำหรับโปรเจกต์ใดเลย"
+    )
+
+    static let columnProject = Phrase(en: "Project", th: "โปรเจกต์")
+    static let columnSessions = Phrase(en: "Sessions", th: "Session")
+    static let columnTokens = Phrase(en: "Tokens", th: "Token")
+    static let columnApiEquiv = Phrase(en: "API equiv.", th: "เทียบเท่า API")
+    static let columnAvgTime = Phrase(en: "Avg time", th: "เวลาเฉลี่ย")
+    static let columnLastActive = Phrase(en: "Last active", th: "ใช้งานล่าสุด")
+
+    static let unavailable = Phrase(en: "unavailable", th: "ไม่มีข้อมูล")
+    static let justNow = Phrase(en: "just now", th: "เมื่อสักครู่")
+    static let durationAgo = Phrase(en: "%@ ago", th: "%@ ที่แล้ว")
+
+    static let spokenOneSession = Phrase(en: "1 session.", th: "1 session")
+    static let spokenSessionCount = Phrase(en: "%@ sessions.", th: "%@ session")
+    static let spokenTokens = Phrase(en: "%@ tokens.", th: "%@ token")
+    static let spokenApiEquivalent = Phrase(
+        en: "API equivalent %@.",
+        th: "เทียบเท่า API %@"
+    )
+    static let spokenApiEquivalentUnavailable = Phrase(
+        en: "API equivalent unavailable.",
+        th: "ไม่มีข้อมูลเทียบเท่า API"
+    )
+    static let spokenAverageSession = Phrase(
+        en: "Average session %@.",
+        th: "session เฉลี่ย %@"
+    )
+    static let spokenAverageSessionUnavailable = Phrase(
+        en: "Average session length unavailable.",
+        th: "ไม่มีข้อมูลระยะเวลา session เฉลี่ย"
+    )
+    static let spokenLastActive = Phrase(en: "Last active %@.", th: "ใช้งานล่าสุด %@")
+    static let spokenLastActiveUnavailable = Phrase(
+        en: "Last active unavailable.",
+        th: "ไม่มีข้อมูลการใช้งานล่าสุด"
+    )
 }

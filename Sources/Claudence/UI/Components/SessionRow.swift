@@ -68,6 +68,7 @@ struct SessionRow: View {
     /// `StatusIndicator` while reading the environment for its own bar, so one
     /// switch had two delivery paths into one view and nothing kept them equal.
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
 
     init(
         session: AISession,
@@ -182,21 +183,32 @@ struct SessionRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(headerLabel)
-        .accessibilityHint(headerHint)
+        .accessibilityLabel(headerLabel, in: language)
+        .accessibilityHint(headerHint(in: language))
         .accessibilityAddTraits(.isButton)
     }
 
-    private var headerHint: String {
-        guard onOpen == nil else { return "Opens the full detail for this session" }
-        return isExpanded ? "Collapse session details" : "Expand session details"
+    private var headerHint: Phrase {
+        guard onOpen == nil else {
+            return Phrase(
+                en: "Opens the full detail for this session",
+                th: "เปิดหน้ารายละเอียดเต็มของ session นี้"
+            )
+        }
+        return isExpanded
+            ? Phrase(en: "Collapse session details", th: "ย่อรายละเอียด session")
+            : Phrase(en: "Expand session details", th: "ขยายรายละเอียด session")
     }
 
-    private var headerLabel: String {
+    private var headerLabel: Phrase {
         let state = session.status.isDerivable
-            ? Theme.name(for: session.status)
-            : "state unsupported"
-        return "\(session.projectName), \(state), \(Format.tokens(session.combinedUsage.total)) tokens"
+            ? Theme.namePhrase(for: session.status)
+            : Phrase(en: "state unsupported", th: "ไม่รองรับสถานะนี้")
+        let tokens = Format.tokens(session.combinedUsage.total)
+        return Phrase(
+            en: "\(session.projectName), \(state.en), \(tokens) tokens",
+            th: "\(session.projectName), \(state.th), \(tokens) token"
+        )
     }
 
     // MARK: - Path
@@ -229,14 +241,20 @@ struct SessionRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(pathLabel)
+        .accessibilityLabel(pathLabel, in: language)
     }
 
-    private var pathLabel: String {
+    private var pathLabel: Phrase {
         guard let branch = gitBranch, !branch.isEmpty else {
-            return "Working directory \(session.displayPath)"
+            return Phrase(
+                en: "Working directory \(session.displayPath)",
+                th: "Working directory \(session.displayPath)"
+            )
         }
-        return "Working directory \(session.displayPath), on branch \(branch)"
+        return Phrase(
+            en: "Working directory \(session.displayPath), on branch \(branch)",
+            th: "Working directory \(session.displayPath) บน branch \(branch)"
+        )
     }
 
     // MARK: - Activity
@@ -248,9 +266,15 @@ struct SessionRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel("Activity, \(activity.display)")
+                .accessibilityLabel(
+                    Phrase(en: "Activity, \(activity.display)", th: "กิจกรรม \(activity.display)"),
+                    in: language
+                )
         } else {
-            UnavailableView("Activity unavailable", compact: true)
+            UnavailableView(
+                Phrase(en: "Activity unavailable", th: "ไม่มีข้อมูลกิจกรรม"),
+                compact: true
+            )
         }
     }
 
@@ -289,7 +313,8 @@ struct SessionRow: View {
                 usage: session.combinedUsage,
                 scaleMaximum: tokenScaleMaximum,
                 isExpandable: true,
-                expansion: $isExpanded
+                expansion: $isExpanded,
+                unavailableMessage: TokenBar.tokenUsageUnavailable
             )
         } else {
             inlineEnergy
@@ -313,7 +338,7 @@ struct SessionRow: View {
                 .lineLimit(1)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(energyLabel)
+        .accessibilityLabel(energyLabel, in: language)
     }
 
     private var energyFraction: Double? {
@@ -352,12 +377,19 @@ struct SessionRow: View {
         )
     }
 
-    private var energyLabel: String {
-        var text = "Token energy, \(Format.tokens(session.combinedUsage.total)) total"
-        if let fraction = energyFraction {
-            text += ", \(Format.percent(fraction * 100)) of scale"
+    private var energyLabel: Phrase {
+        let total = Format.tokens(session.combinedUsage.total)
+        guard let fraction = energyFraction else {
+            return Phrase(
+                en: "Token energy, \(total) total",
+                th: "พลังงาน token รวม \(total)"
+            )
         }
-        return text
+        let share = Format.percent(fraction * 100)
+        return Phrase(
+            en: "Token energy, \(total) total, \(share) of scale",
+            th: "พลังงาน token รวม \(total), \(share) ของสเกล"
+        )
     }
 
     // MARK: - Trailing line
@@ -372,7 +404,7 @@ struct SessionRow: View {
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textQuaternary)
                 .lineLimit(1)
-            Text(burnRateText)
+            PhraseText(burnRateText)
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textQuaternary)
                 .lineLimit(1)
@@ -392,17 +424,30 @@ struct SessionRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "Running for \(Format.duration(session.duration)). \(burnRateSpokenText)"
+            Phrase(
+                en: "Running for \(Format.duration(session.duration)). \(burnRateSpokenText.en)",
+                th: "ทำงานมาแล้ว \(Format.duration(session.duration)) \(burnRateSpokenText.th)"
+            ),
+            in: language
         )
     }
 
-    private var burnRateText: String {
-        guard let rate = burnRatePerMinute else { return "Rate unavailable" }
-        return "\(Format.tokens(Int(rate.rounded())))/min"
+    private var burnRateText: Phrase {
+        guard let rate = burnRatePerMinute else {
+            return Phrase(en: "Rate unavailable", th: "ไม่มีข้อมูลอัตรา")
+        }
+        let text = "\(Format.tokens(Int(rate.rounded())))/min"
+        return .untranslated(text)
     }
 
-    private var burnRateSpokenText: String {
-        guard let rate = burnRatePerMinute else { return "Burn rate unavailable." }
-        return "Burn rate \(Format.tokens(Int(rate.rounded()))) tokens per minute."
+    private var burnRateSpokenText: Phrase {
+        guard let rate = burnRatePerMinute else {
+            return Phrase(en: "Burn rate unavailable.", th: "ไม่มีข้อมูล burn rate")
+        }
+        let tokens = Format.tokens(Int(rate.rounded()))
+        return Phrase(
+            en: "Burn rate \(tokens) tokens per minute.",
+            th: "Burn rate \(tokens) token ต่อนาที"
+        )
     }
 }

@@ -75,6 +75,7 @@ struct DashboardView: View {
     /// not a degraded state. `DashboardAdapter.refreshDashboard` already skips
     /// asking the store for the figures these surfaces would have shown.
     @Environment(\.liveOnlyMode) private var liveOnlyMode
+    @Environment(\.appLanguage) private var language
 
     init(
         data: DashboardData,
@@ -172,26 +173,20 @@ struct DashboardView: View {
 
     private var identityBlock: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-            Text("Claudence")
+            PhraseText(.untranslated("Claudence"))
                 .font(Theme.Typography.windowTitle)
                 .foregroundStyle(Theme.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            Text("AI Coding Agent Monitor · local only")
+            PhraseText(Strings.tagline)
                 .font(Theme.Typography.help)
                 .foregroundStyle(Theme.textQuaternary)
-            Text(Self.presenceLine)
+            PhraseText(Strings.presenceLine)
                 .font(Theme.Typography.help)
                 .foregroundStyle(Theme.textQuinary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
     }
-
-    /// The design's second subtitle line, verbatim. It is the one piece of copy
-    /// on the window that explains the product rather than a measurement.
-    private static let presenceLine =
-        "Claude + Presence — Claude is always in the workflow; "
-        + "this makes that presence visible."
 
     // MARK: Window picker
 
@@ -221,7 +216,7 @@ struct DashboardView: View {
                     .fill(Theme.surfaceControl)
             )
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("Highlighted usage window")
+            .accessibilityLabel(Strings.highlightedUsageWindow, in: language)
         }
     }
 
@@ -239,7 +234,7 @@ struct DashboardView: View {
         Button {
             selectedWindowName = window.name
         } label: {
-            Text(Self.shortName(window))
+            PhraseText(Self.shortName(window))
                 .font(Theme.Typography.bodyEmphasis)
                 .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textTertiary)
                 .padding(.vertical, DashboardMetrics.segmentPaddingVertical)
@@ -248,7 +243,7 @@ struct DashboardView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Highlight the \(window.displayName) window")
+        .accessibilityLabel(Strings.highlightWindow.format(in: language, window.displayName))
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
 
@@ -270,11 +265,11 @@ struct DashboardView: View {
 
     /// The picker's own abbreviations, which the design writes as `5h` and `7d`
     /// where the tube caption underneath writes them out in full.
-    private static func shortName(_ window: UsageWindow) -> String {
+    private static func shortName(_ window: UsageWindow) -> Phrase {
         switch window.name {
-        case DashboardData.WindowKey.fiveHour: return "5h"
-        case DashboardData.WindowKey.sevenDay: return "7d"
-        default: return window.displayName
+        case DashboardData.WindowKey.fiveHour: return Strings.fiveHourShort
+        case DashboardData.WindowKey.sevenDay: return Strings.sevenDayShort
+        default: return .untranslated(window.displayName)
         }
     }
 
@@ -299,7 +294,7 @@ struct DashboardView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Refresh")
+            .accessibilityLabel(Strings.refresh, in: language)
         }
     }
 
@@ -350,8 +345,8 @@ struct DashboardView: View {
                 // The series runs up to the current bucket, so the final column
                 // is the one still in progress. The chart cannot prove that
                 // from the points alone, which is why the word arrives here.
-                latestLabel: showsHourlySeries ? "This hour" : "Today",
-                unavailableMessage: "No usage history",
+                latestLabel: showsHourlySeries ? Strings.thisHour : Strings.today,
+                unavailableMessage: Strings.noUsageHistory,
                 unavailableReason: showsHourlySeries
                     ? data.hourlySeriesUnavailableReason
                     : data.seriesUnavailableReason
@@ -416,17 +411,17 @@ struct DashboardView: View {
             && data.hourlySeries.contains { !$0.isMissing }
     }
 
-    private var chartTitle: String {
+    private var chartTitle: Phrase {
         if showsHourlySeries {
             let hours = data.hourlySeries.count
-            guard hours > 0 else { return "Token usage" }
+            guard hours > 0 else { return Strings.tokenUsage }
             return hours == 1
-                ? "Token usage · last hour"
-                : "Token usage · last \(hours) hours"
+                ? Strings.tokenUsageLastHour
+                : Strings.tokenUsageLastHours(hours)
         }
         let days = data.series.count
-        guard days > 0 else { return "Token usage" }
-        return days == 1 ? "Token usage · last day" : "Token usage · last \(days) days"
+        guard days > 0 else { return Strings.tokenUsage }
+        return days == 1 ? Strings.tokenUsageLastDay : Strings.tokenUsageLastDays(days)
     }
 
     /// Which source is behind the columns.
@@ -435,13 +430,13 @@ struct DashboardView: View {
     /// the rollups, and the two do not carry the same guarantee: an hour
     /// Claudence was not running to watch has no measurement at all. Naming the
     /// source is what makes those gaps legible instead of puzzling.
-    private var chartCaption: String {
-        if showsHourlySeries { return "sampled while running" }
+    private var chartCaption: Phrase {
+        if showsHourlySeries { return Strings.sampledWhileRunning }
         if let selected = effectiveSelection(in: pickerWindows),
            selected.hasPrefix(DashboardData.WindowKey.modelScopedPrefix) {
-            return "measured from transcripts · all models"
+            return Strings.measuredFromTranscriptsAllModels
         }
-        return "measured from transcripts"
+        return Strings.measuredFromTranscripts
     }
 
     // MARK: - 2. Sessions, and where their tokens went
@@ -481,8 +476,8 @@ struct DashboardView: View {
     /// than as two different questions.
     private var projectsCard: some View {
         DashboardCard(
-            title: "Projects",
-            subtitle: "all time · where the energy went",
+            title: Strings.projectsTitle,
+            subtitle: Strings.projectsSubtitle,
             headerLayout: .inline,
             horizontalPadding: DashboardMetrics.chartCardPaddingHorizontal,
             contentGap: Theme.Space.l
@@ -493,8 +488,8 @@ struct DashboardView: View {
 
     private var historyCard: some View {
         DashboardCard(
-            title: "Session history",
-            subtitle: "newest first",
+            title: Strings.historyTitle,
+            subtitle: Strings.historySubtitle,
             headerLayout: .inline,
             horizontalPadding: DashboardMetrics.chartCardPaddingHorizontal,
             contentGap: Theme.Space.l
@@ -517,8 +512,8 @@ struct DashboardView: View {
     /// on screen.
     private var monthlyUsageCard: some View {
         DashboardCard(
-            title: "Monthly usage",
-            subtitle: "last 30 days · Opus vs Sonnet, by project",
+            title: Strings.monthlyUsageTitle,
+            subtitle: Strings.monthlyUsageSubtitle,
             headerLayout: .inline,
             horizontalPadding: DashboardMetrics.chartCardPaddingHorizontal,
             contentGap: Theme.Space.l
@@ -530,4 +525,83 @@ struct DashboardView: View {
             )
         }
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let tagline = Phrase(
+        en: "AI Coding Agent Monitor · local only",
+        th: "ตัวติดตาม AI Coding Agent · เก็บข้อมูลในเครื่องเท่านั้น"
+    )
+    static let presenceLine = Phrase(
+        en: "Claude + Presence — Claude is always in the workflow; "
+            + "this makes that presence visible.",
+        th: "Claude + Presence — Claude อยู่ในขั้นตอนการทำงานเสมอ นี่คือสิ่งที่ทำให้เห็นการมีอยู่นั้น"
+    )
+    static let highlightedUsageWindow = Phrase(
+        en: "Highlighted usage window",
+        th: "หน้าต่างการใช้งานที่เลือกไว้"
+    )
+    static let highlightWindow = Phrase(
+        en: "Highlight the %@ window",
+        th: "เลือกหน้าต่าง %@"
+    )
+    static let refresh = Phrase(en: "Refresh", th: "รีเฟรช")
+    static let fiveHourShort = Phrase(en: "5h", th: "5 ชม.")
+    static let sevenDayShort = Phrase(en: "7d", th: "7 วัน")
+
+    static let projectsTitle = Phrase(en: "Projects", th: "โปรเจกต์")
+    static let projectsSubtitle = Phrase(
+        en: "all time · where the energy went",
+        th: "ทุกช่วงเวลา · พลังงานถูกใช้ไปที่ไหน"
+    )
+    static let historyTitle = Phrase(en: "Session history", th: "ประวัติ session")
+    static let historySubtitle = Phrase(en: "newest first", th: "ล่าสุดก่อน")
+    static let monthlyUsageTitle = Phrase(en: "Monthly usage", th: "การใช้งานรายเดือน")
+    static let monthlyUsageSubtitle = Phrase(
+        en: "last 30 days · Opus vs Sonnet, by project",
+        th: "30 วันล่าสุด · Opus เทียบ Sonnet แยกตามโปรเจกต์"
+    )
+
+    static let thisHour = Phrase(en: "This hour", th: "ชั่วโมงนี้")
+    static let today = Phrase(en: "Today", th: "วันนี้")
+    static let noUsageHistory = Phrase(en: "No usage history", th: "ยังไม่มีประวัติการใช้งาน")
+
+    static let tokenUsage = Phrase(en: "Token usage", th: "การใช้งาน token")
+    static let tokenUsageLastHour = Phrase(
+        en: "Token usage · last hour",
+        th: "การใช้งาน token · ชั่วโมงล่าสุด"
+    )
+    static let tokenUsageLastDay = Phrase(
+        en: "Token usage · last day",
+        th: "การใช้งาน token · วันล่าสุด"
+    )
+
+    static func tokenUsageLastHours(_ hours: Int) -> Phrase {
+        Phrase(
+            en: "Token usage · last \(hours) hours",
+            th: "การใช้งาน token · \(hours) ชั่วโมงล่าสุด"
+        )
+    }
+
+    static func tokenUsageLastDays(_ days: Int) -> Phrase {
+        Phrase(
+            en: "Token usage · last \(days) days",
+            th: "การใช้งาน token · \(days) วันล่าสุด"
+        )
+    }
+
+    static let sampledWhileRunning = Phrase(
+        en: "sampled while running",
+        th: "สุ่มตัวอย่างขณะแอปทำงานอยู่"
+    )
+    static let measuredFromTranscriptsAllModels = Phrase(
+        en: "measured from transcripts · all models",
+        th: "วัดจาก transcript · ทุกโมเดล"
+    )
+    static let measuredFromTranscripts = Phrase(
+        en: "measured from transcripts",
+        th: "วัดจาก transcript"
+    )
 }

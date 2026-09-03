@@ -42,19 +42,19 @@ struct UsageChart: View {
     /// claim every day produced no output.
     let outputTokens: [String: Double]
     /// What the series measures, spoken in the accessibility summary.
-    let title: String
+    let title: Phrase
     /// The quiet line under the title, where the design says what the figures
     /// were measured from. Nil leaves the chart's own summary there.
-    let caption: String?
+    let caption: Phrase?
     /// What to print on the final column's axis cell in place of its own label.
     ///
     /// The chart cannot prove that the last bucket is the current day: it is
     /// handed labels, not dates. So the word arrives from the caller that built
     /// the series and knows, and a caller that does not know passes nothing and
     /// gets the label it supplied.
-    let latestLabel: String?
-    let unavailableMessage: String
-    let unavailableReason: String?
+    let latestLabel: Phrase?
+    let unavailableMessage: Phrase
+    let unavailableReason: Phrase?
     let height: CGFloat
 
     @State private var selectedIndex: Int?
@@ -69,15 +69,16 @@ struct UsageChart: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
 
     init(
         points: [ChartPoint],
         outputTokens: [String: Double] = [:],
-        title: String = "Usage over time",
-        caption: String? = nil,
-        latestLabel: String? = nil,
-        unavailableMessage: String = "No usage history",
-        unavailableReason: String? = nil,
+        title: Phrase = Strings.defaultTitle,
+        caption: Phrase? = nil,
+        latestLabel: Phrase? = nil,
+        unavailableMessage: Phrase = Strings.noUsageHistory,
+        unavailableReason: Phrase? = nil,
         height: CGFloat = DashboardMetrics.chartHeight
     ) {
         self.points = points
@@ -178,46 +179,65 @@ struct UsageChart: View {
     /// has to be able to read the chart.
     private var legend: some View {
         HStack(spacing: Theme.Space.m) {
-            legendKey("input", color: Theme.Chart.inputBandLatest)
+            legendKey(Strings.legendInput, color: Theme.Chart.inputBandLatest)
             // The legend takes the band's own colour, not the emphasis the
             // most recent column is painted in: a key drawn in the Today
             // column's ink was naming a colour that appears on one column.
-            legendKey("output", color: Theme.Chart.outputBand)
+            legendKey(Strings.legendOutput, color: Theme.Chart.outputBand)
         }
     }
 
-    private func legendKey(_ label: String, color: Color) -> some View {
+    private func legendKey(_ label: Phrase, color: Color) -> some View {
         HStack(spacing: Theme.Space.xs) {
             RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
                 .fill(color)
                 .frame(width: ColumnMetrics.legendSwatch, height: ColumnMetrics.legendSwatch)
-            Text(label)
+            PhraseText(label)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.textTertiary)
         }
     }
 
     private var readoutPrimary: String {
-        guard let point = selectedPoint else { return title }
-        guard !point.isMissing else { return "\(point.label) · no data recorded" }
-        var text = "\(point.label) · \(Format.tokens(Int(point.value.rounded()))) tokens"
+        guard let point = selectedPoint else { return title.string(in: language) }
+        guard !point.isMissing else {
+            return Strings.noDataRecorded.format(in: language, point.label)
+        }
+        var text = Strings.pointTokens.format(
+            in: language,
+            point.label,
+            Format.tokens(Int(point.value.rounded()))
+        )
         if let split = split(for: point) {
-            text += " · \(Format.tokens(Int(split.input.rounded()))) in"
-            text += " / \(Format.tokens(Int(split.output.rounded()))) out"
+            text += Strings.pointSplit.format(
+                in: language,
+                Format.tokens(Int(split.input.rounded())),
+                Format.tokens(Int(split.output.rounded()))
+            )
         }
         return text
     }
 
     private var readoutSecondary: String {
-        if selectedPoint != nil { return "Arrow keys to move, Escape to clear" }
+        if selectedPoint != nil { return Strings.keyboardHint.string(in: language) }
         var parts: [String] = []
-        if let caption { parts.append(caption) }
-        parts.append("\(points.count) days")
+        if let caption { parts.append(caption.string(in: language)) }
+        parts.append(Strings.dayCount.format(in: language, "\(points.count)"))
         if let peak = measured.max(by: { $0.value < $1.value }) {
-            parts.append("peak \(Format.tokens(Int(peak.value.rounded()))) on \(peak.label)")
+            parts.append(
+                Strings.peakOn.format(
+                    in: language,
+                    Format.tokens(Int(peak.value.rounded())),
+                    peak.label
+                )
+            )
         }
         if missingCount > 0 {
-            parts.append(missingCount == 1 ? "1 gap" : "\(missingCount) gaps")
+            parts.append(
+                missingCount == 1
+                    ? Strings.oneGap.string(in: language)
+                    : Strings.gapCount.format(in: language, "\(missingCount)")
+            )
         }
         return parts.joined(separator: " · ")
     }
@@ -243,7 +263,7 @@ struct UsageChart: View {
                 splits: outputTokens,
                 geometry: geometry,
                 latest: latestMeasuredIndex,
-                latestLabel: latestLabel,
+                latestLabel: latestLabel?.string(in: language),
                 selected: selectedIndex,
                 growth: growth
             )
@@ -325,28 +345,40 @@ struct UsageChart: View {
     // every point is its own element so the series can be walked in order.
 
     private var spokenSummary: String {
-        var parts = ["\(title). \(points.count) days."]
+        var parts = [
+            Strings.spokenTitleDayCount.format(in: language, title.string(in: language), "\(points.count)")
+        ]
         if let latest = points.last {
             parts.append(
                 latest.isMissing
-                    ? "Latest day \(latest.label), no data recorded."
-                    : "Latest \(latest.label), \(Format.tokens(Int(latest.value.rounded()))) tokens."
+                    ? Strings.spokenLatestMissing.format(in: language, latest.label)
+                    : Strings.spokenLatest.format(
+                        in: language,
+                        latest.label,
+                        Format.tokens(Int(latest.value.rounded()))
+                    )
             )
         }
         if let peak = measured.max(by: { $0.value < $1.value }) {
-            parts.append("Peak \(Format.tokens(Int(peak.value.rounded()))) tokens on \(peak.label).")
+            parts.append(
+                Strings.spokenPeak.format(
+                    in: language,
+                    Format.tokens(Int(peak.value.rounded())),
+                    peak.label
+                )
+            )
         }
         if hasSplit {
-            parts.append("Each column is split into input below and output above.")
+            parts.append(Strings.spokenSplitExplainer.string(in: language))
         }
         if missingCount > 0 {
             parts.append(
                 missingCount == 1
-                    ? "1 day has no recorded data and is drawn as a gap."
-                    : "\(missingCount) days have no recorded data and are drawn as gaps."
+                    ? Strings.spokenOneGap.string(in: language)
+                    : Strings.spokenGapCount.format(in: language, "\(missingCount)")
             )
         }
-        parts.append("Use left and right arrow keys to read each day.")
+        parts.append(Strings.spokenArrowHint.string(in: language))
         return parts.joined(separator: " ")
     }
 
@@ -362,14 +394,82 @@ struct UsageChart: View {
     }
 
     private func spokenPoint(_ point: ChartPoint) -> String {
-        guard !point.isMissing else { return "\(point.label), no data recorded" }
-        var text = "\(point.label), \(Format.tokens(Int(point.value.rounded()))) tokens"
+        guard !point.isMissing else {
+            return Strings.spokenPointMissing.format(in: language, point.label)
+        }
+        var text = Strings.spokenPointTokens.format(
+            in: language,
+            point.label,
+            Format.tokens(Int(point.value.rounded()))
+        )
         if let split = split(for: point) {
-            text += ", \(Format.tokens(Int(split.input.rounded()))) input"
-            text += ", \(Format.tokens(Int(split.output.rounded()))) output"
+            text += Strings.spokenPointSplit.format(
+                in: language,
+                Format.tokens(Int(split.input.rounded())),
+                Format.tokens(Int(split.output.rounded()))
+            )
         }
         return text
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let defaultTitle = Phrase(en: "Usage over time", th: "การใช้งานตามเวลา")
+    static let noUsageHistory = Phrase(en: "No usage history", th: "ยังไม่มีประวัติการใช้งาน")
+
+    static let legendInput = Phrase.untranslated("input")
+    static let legendOutput = Phrase.untranslated("output")
+
+    static let noDataRecorded = Phrase(en: "%@ · no data recorded", th: "%@ · ไม่มีข้อมูลบันทึกไว้")
+    static let pointTokens = Phrase(en: "%@ · %@ tokens", th: "%@ · %@ token")
+    static let pointSplit = Phrase(en: " · %@ in / %@ out", th: " · %@ เข้า / %@ ออก")
+    static let keyboardHint = Phrase(
+        en: "Arrow keys to move, Escape to clear",
+        th: "ใช้ปุ่มลูกศรเพื่อเลื่อน กด Escape เพื่อล้าง"
+    )
+    static let dayCount = Phrase(en: "%@ days", th: "%@ วัน")
+    static let peakOn = Phrase(en: "peak %@ on %@", th: "สูงสุด %@ เมื่อ %@")
+    static let oneGap = Phrase(en: "1 gap", th: "ขาดข้อมูล 1 จุด")
+    static let gapCount = Phrase(en: "%@ gaps", th: "ขาดข้อมูล %@ จุด")
+
+    static let spokenTitleDayCount = Phrase(en: "%@. %@ days.", th: "%@ %@ วัน")
+    static let spokenLatestMissing = Phrase(
+        en: "Latest day %@, no data recorded.",
+        th: "วันล่าสุด %@ ไม่มีข้อมูลบันทึกไว้"
+    )
+    static let spokenLatest = Phrase(
+        en: "Latest %@, %@ tokens.",
+        th: "ล่าสุด %@ จำนวน %@ token"
+    )
+    static let spokenPeak = Phrase(
+        en: "Peak %@ tokens on %@.",
+        th: "สูงสุด %@ token เมื่อ %@"
+    )
+    static let spokenSplitExplainer = Phrase(
+        en: "Each column is split into input below and output above.",
+        th: "แต่ละแท่งแบ่งเป็น input ด้านล่างและ output ด้านบน"
+    )
+    static let spokenOneGap = Phrase(
+        en: "1 day has no recorded data and is drawn as a gap.",
+        th: "มี 1 วันที่ไม่มีข้อมูลบันทึกไว้ และวาดเป็นช่องว่าง"
+    )
+    static let spokenGapCount = Phrase(
+        en: "%@ days have no recorded data and are drawn as gaps.",
+        th: "มี %@ วันที่ไม่มีข้อมูลบันทึกไว้ และวาดเป็นช่องว่าง"
+    )
+    static let spokenArrowHint = Phrase(
+        en: "Use left and right arrow keys to read each day.",
+        th: "ใช้ปุ่มลูกศรซ้ายและขวาเพื่ออ่านข้อมูลแต่ละวัน"
+    )
+
+    static let spokenPointMissing = Phrase(en: "%@, no data recorded", th: "%@ ไม่มีข้อมูลบันทึกไว้")
+    static let spokenPointTokens = Phrase(en: "%@, %@ tokens", th: "%@ จำนวน %@ token")
+    static let spokenPointSplit = Phrase(
+        en: ", %@ input, %@ output",
+        th: ", input %@, output %@"
+    )
 }
 
 // MARK: - Drawing surface

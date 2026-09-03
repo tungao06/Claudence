@@ -16,20 +16,20 @@ struct SessionsSettings: View {
     @Bindable var preferences: Preferences
 
     var body: some View {
-        SettingsSection(title: "Sessions") {
+        SettingsSection(title: Self.sectionTitle) {
             VStack(alignment: .leading, spacing: Theme.Space.l) {
                 SettingsToggle(
-                    title: "Show subagents",
+                    title: Self.subagentsTitle,
                     explanation: Self.subagentsExplanation,
                     isOn: $preferences.showSubagents
                 )
                 SettingsToggle(
-                    title: "Compact rows",
+                    title: Self.compactTitle,
                     explanation: Self.compactExplanation,
                     isOn: $preferences.compactRows
                 )
                 SettingsPicker(
-                    title: "Usage refresh",
+                    title: Self.refreshTitle,
                     options: UsageRefreshInterval.allCases,
                     optionTitle: \.title,
                     explanation: Self.refreshExplanation,
@@ -41,17 +41,31 @@ struct SessionsSettings: View {
 
     // MARK: Copy
 
+    private static let sectionTitle = Phrase(en: "Sessions", th: "Session")
+
+    private static let subagentsTitle = Phrase(en: "Show subagents", th: "แสดง subagent")
+
     /// Design section 7, verbatim. Accurate: a subagent's tokens are billed to
     /// its parent, which is what "share of the parent" means here.
-    private static let subagentsExplanation =
-        "List agents spawned under each session, with their share of the parent."
+    private static let subagentsExplanation = Phrase(
+        en: "List agents spawned under each session, with their share of the parent.",
+        th: "แสดงรายการ agent ที่ถูก spawn ใต้แต่ละ session พร้อมสัดส่วนที่ใช้จาก parent"
+    )
+
+    private static let compactTitle = Phrase(en: "Compact rows", th: "แถวแบบย่อ")
 
     /// Design section 7, verbatim.
-    private static let compactExplanation =
-        "Hide duration, rate and sparkline until a row is opened."
+    private static let compactExplanation = Phrase(
+        en: "Hide duration, rate and sparkline until a row is opened.",
+        th: "ซ่อนระยะเวลา, อัตราการใช้ และ sparkline จนกว่าจะเปิดแถวนั้น"
+    )
+
+    private static let refreshTitle = Phrase(en: "Usage refresh", th: "ความถี่ในการอัปเดตการใช้งาน")
 
     /// Design section 7, verbatim, and the sentence that keeps this control
     /// honest: it paces one network call and touches nothing else.
-    private static let refreshExplanation =
-        "Sessions and tokens update on file change; this only paces the usage-limit call."
+    private static let refreshExplanation = Phrase(
+        en: "Sessions and tokens update on file change; this only paces the usage-limit call.",
+        th: "Session และ token อัปเดตทันทีเมื่อไฟล์เปลี่ยน การตั้งค่านี้กำหนดความถี่ของการเรียก usage-limit เท่านั้น"
+    )
 }

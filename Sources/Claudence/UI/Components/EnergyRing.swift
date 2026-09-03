@@ -5,16 +5,20 @@ import ClaudenceCore
 ///
 /// Same inputs, same thresholds, same refusal to draw an unknown value.
 struct EnergyRing: View {
-    let title: String
+    let title: Phrase
     let percentUsed: Double?
     let resetsAt: Date?
     let size: CGFloat
     let stroke: CGFloat
-    let unavailableMessage: String
+    let unavailableMessage: Phrase
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
 
+    /// For a caller that has not yet converted its own strings to `Phrase`.
+    /// See `PowerHero`'s own note for why this keeps the default and the
+    /// `Phrase` overload does not.
     init(
         title: String,
         percentUsed: Double?,
@@ -22,6 +26,22 @@ struct EnergyRing: View {
         size: CGFloat = Theme.Bar.ringSize,
         stroke: CGFloat = Theme.Bar.ringStroke,
         unavailableMessage: String = "Usage unavailable"
+    ) {
+        self.title = .untranslated(title)
+        self.percentUsed = percentUsed
+        self.resetsAt = resetsAt
+        self.size = size
+        self.stroke = stroke
+        self.unavailableMessage = .untranslated(unavailableMessage)
+    }
+
+    init(
+        title: Phrase,
+        percentUsed: Double?,
+        resetsAt: Date? = nil,
+        size: CGFloat = Theme.Bar.ringSize,
+        stroke: CGFloat = Theme.Bar.ringStroke,
+        unavailableMessage: Phrase = UnavailableView.usageUnavailable
     ) {
         self.title = title
         self.percentUsed = percentUsed
@@ -41,7 +61,7 @@ struct EnergyRing: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.m) {
-            Text(title)
+            PhraseText(title)
                 .font(Theme.Typography.label)
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
@@ -50,7 +70,7 @@ struct EnergyRing: View {
             if let percent = clampedPercent, let severity {
                 ring(percent: percent, severity: severity)
                 if let time = Format.timeUntil(resetsAt) {
-                    Text("Reset in \(time)")
+                    PhraseText(Strings.resetIn, time)
                         .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.textTertiary)
                 }
@@ -62,7 +82,7 @@ struct EnergyRing: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenLabel)
+        .accessibilityLabel(spokenLabel, in: language)
     }
 
     private func ring(percent: Double, severity: Severity) -> some View {
@@ -102,7 +122,7 @@ struct EnergyRing: View {
             HStack(spacing: Theme.Space.xxs) {
                 Image(systemName: Theme.glyph(for: severity))
                     .font(.system(size: Theme.Bar.statusGlyph))
-                Text(Theme.name(for: severity))
+                PhraseText(Theme.namePhrase(for: severity))
                     .font(Theme.Typography.caption)
             }
             .foregroundStyle(Theme.color(for: severity))
@@ -112,16 +132,28 @@ struct EnergyRing: View {
         .frame(width: max(0, size - stroke * 3))
     }
 
-    private var spokenLabel: String {
+    private var spokenLabel: Phrase {
         guard let percent = clampedPercent, let severity else {
-            return "\(title). \(unavailableMessage)."
+            return Phrase(
+                en: "\(title.en). \(unavailableMessage.en).",
+                th: "\(title.th) \(unavailableMessage.th)"
+            )
         }
-        var parts = ["\(title). \(Format.percent(percent)) used. \(Theme.name(for: severity))."]
+        let usedPercent = Format.percent(percent)
+        let name = Theme.namePhrase(for: severity)
+        var en = "\(title.en). \(usedPercent) used. \(name.en)."
+        var th = "\(title.th) ใช้ไป \(usedPercent) \(name.th)"
         if let time = Format.timeUntil(resetsAt) {
-            parts.append("Resets in \(time).")
+            en += " Resets in \(time)."
+            th += " รีเซ็ตใน \(time)"
         }
-        return parts.joined(separator: " ")
+        return Phrase(en: en, th: th)
     }
+}
+
+/// Words this file glues around a caller's own numbers.
+private enum Strings {
+    static let resetIn = Phrase(en: "Reset in %@", th: "รีเซ็ตใน %@")
 }
 
 /// A full circle drawn as an explicit path so `trim` starts at twelve o'clock

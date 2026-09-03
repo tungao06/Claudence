@@ -21,16 +21,18 @@ struct TokenBreakdownCard: View {
     /// answer and is drawn as one.
     let usage: TokenUsage?
     /// What the figures are a total of, shown under the title.
-    let subtitle: String
+    let subtitle: Phrase
 
-    init(usage: TokenUsage?, subtitle: String = "today · all projects") {
+    @Environment(\.appLanguage) private var language
+
+    init(usage: TokenUsage?, subtitle: Phrase = Strings.defaultSubtitle) {
         self.usage = usage
         self.subtitle = subtitle
     }
 
     var body: some View {
         DashboardCard(
-            title: "Token breakdown",
+            title: Strings.title,
             subtitle: subtitle,
             contentGap: DashboardMetrics.cardContentGapTight
         ) {
@@ -56,8 +58,8 @@ struct TokenBreakdownCard: View {
                 privacyFooter
             } else {
                 UnavailableView(
-                    "Token usage unavailable",
-                    reason: "No transcript has been read for today yet"
+                    Strings.tokenUsageUnavailable,
+                    reason: Strings.noTranscriptToday
                 )
                 privacyFooter
             }
@@ -181,7 +183,7 @@ struct TokenBreakdownCard: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
             if category == .output, usage.thinking > 0 {
-                Text("(\(Format.tokens(usage.thinking)) thinking)")
+                Text(Strings.thinkingTokens.format(in: language, Format.tokens(usage.thinking)))
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textQuaternary)
                     .lineLimit(1)
@@ -215,7 +217,7 @@ struct TokenBreakdownCard: View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
             Image(systemName: "lock.fill")
                 .font(.system(size: Theme.Bar.statusGlyph))
-            Text("Read locally. No text or commands are ever read.")
+            PhraseText(Strings.privacyFooter)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .font(Theme.Typography.caption)
@@ -232,8 +234,30 @@ struct TokenBreakdownCard: View {
         amount: Int,
         share: Double?
     ) -> String {
-        var text = "\(category.label), \(Format.tokens(amount)) tokens"
-        if let share { text += ", \(Format.share(share)) of the total" }
+        var text = Strings.spokenRow.format(in: language, category.label, Format.tokens(amount))
+        if let share { text += Strings.spokenShareOfTotal.format(in: language, Format.share(share)) }
         return text + "."
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let title = Phrase(en: "Token breakdown", th: "รายละเอียด token")
+    static let defaultSubtitle = Phrase(en: "today · all projects", th: "วันนี้ · ทุกโปรเจกต์")
+    static let tokenUsageUnavailable = Phrase(
+        en: "Token usage unavailable",
+        th: "ไม่มีข้อมูลการใช้ token"
+    )
+    static let noTranscriptToday = Phrase(
+        en: "No transcript has been read for today yet",
+        th: "ยังไม่มีการอ่าน transcript ของวันนี้"
+    )
+    static let thinkingTokens = Phrase(en: "(%@ thinking)", th: "(%@ thinking)")
+    static let privacyFooter = Phrase(
+        en: "Read locally. No text or commands are ever read.",
+        th: "อ่านในเครื่องเท่านั้น ไม่มีการอ่านข้อความหรือคำสั่งใดๆ"
+    )
+    static let spokenRow = Phrase(en: "%@, %@ tokens", th: "%@ จำนวน %@ token")
+    static let spokenShareOfTotal = Phrase(en: ", %@ of the total", th: " คิดเป็น %@ ของทั้งหมด")
 }

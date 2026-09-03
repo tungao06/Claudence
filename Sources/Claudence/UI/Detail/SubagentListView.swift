@@ -67,7 +67,12 @@ struct SubagentListView: View {
         self.now = now
     }
 
-    static let caption = "spawned by this session \u{00B7} tokens billed to the parent"
+    static let caption = Phrase(
+        en: "spawned by this session \u{00B7} tokens billed to the parent",
+        th: "spawn โดย session นี้ \u{00B7} token คิดรวมกับ parent"
+    )
+
+    @Environment(\.appLanguage) private var language
 
     /// The design's `1fr 116px 78px 22px` at popover width, less the fourth
     /// column: the chevron, and the sheet it led to, are gone (stage 2, 9.9).
@@ -85,9 +90,9 @@ struct SubagentListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                SectionEyebrow("SUBAGENTS")
+                SectionEyebrow(Self.sectionTitle)
                 Spacer(minLength: Theme.Space.xs)
-                Text(Self.caption)
+                PhraseText(Self.caption)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textQuaternary)
                     .lineLimit(1)
@@ -104,7 +109,7 @@ struct SubagentListView: View {
             if subagents.isEmpty {
                 // Most sessions spawn nothing. That is a fact about the
                 // session, not a failure to read one.
-                UnavailableView("No subagents spawned", compact: true)
+                UnavailableView(Self.noSubagentsSpawned, compact: true)
             } else {
                 VStack(alignment: .leading, spacing: Theme.Space.s) {
                     ForEach(subagents) { subagent in
@@ -123,9 +128,20 @@ struct SubagentListView: View {
     private var aggregate: String? {
         guard let subagentTotal, subagentTotal > 0,
               let share = parentUsage.share(of: subagentTotal) else { return nil }
-        return "\(Format.tokens(subagentTotal)) of this session's \(Format.tokens(parentUsage.total)), "
-            + "\(Format.percent(share * 100)) of the combined total."
+        return Self.aggregateSentence.format(
+            in: language,
+            Format.tokens(subagentTotal),
+            Format.tokens(parentUsage.total),
+            Format.percent(share * 100)
+        )
     }
+
+    private static let sectionTitle = Phrase(en: "SUBAGENTS", th: "SUBAGENT")
+    private static let noSubagentsSpawned = Phrase(en: "No subagents spawned", th: "ไม่มี subagent ถูก spawn")
+    private static let aggregateSentence = Phrase(
+        en: "%@ of this session's %@, %@ of the combined total.",
+        th: "%@ จาก %@ ของ session นี้ คิดเป็น %@ ของยอดรวม"
+    )
 
     // MARK: - Row
 
@@ -219,8 +235,13 @@ struct SubagentListView: View {
     /// leaving a blank line where a verb was.
     private func activityText(_ subagent: AISubagent, status: SessionStatus) -> String {
         if let activity = subagent.currentActivity { return activity.display }
-        return status == .running ? "Working" : "Finished"
+        return (status == .running ? Self.working : Self.finished).string(in: language)
     }
+
+    private static let working = Phrase(en: "Working", th: "กำลังทำงาน")
+    private static let finished = Phrase(en: "Finished", th: "เสร็จสิ้น")
+    private static let ofParent = Phrase(en: "%@ of parent", th: "%@ ของ parent")
+    private static let shareUnavailable = Phrase(en: "Share unavailable", th: "ไม่มีข้อมูลสัดส่วน")
 
     /// The bar and its caption, or an honest gap. A share of a zero total is
     /// undefined rather than 0%, so nothing is drawn and the caption says why.
@@ -237,7 +258,7 @@ struct SubagentListView: View {
                     }
                 }
                 .frame(height: Theme.Bar.micro)
-                Text("\(Format.percent(share * 100)) of parent")
+                Text(Self.ofParent.format(in: language, Format.percent(share * 100)))
                     .font(Theme.Typography.micro)
                     .foregroundStyle(Theme.textQuaternary)
                     .lineLimit(1)
@@ -245,7 +266,7 @@ struct SubagentListView: View {
             }
             .accessibilityHidden(true)
         } else {
-            Text("Share unavailable")
+            PhraseText(Self.shareUnavailable)
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
@@ -254,15 +275,22 @@ struct SubagentListView: View {
         }
     }
 
+    private static let tokensSuffix = Phrase(en: "%@ tokens", th: "%@ token")
+    private static let ofParentSession = Phrase(en: "%@ of the parent session", th: "%@ ของ parent session")
+    private static let shareOfParentUnavailable = Phrase(
+        en: "share of parent unavailable",
+        th: "ไม่มีข้อมูลสัดส่วนของ parent"
+    )
+
     private func spoken(_ subagent: AISubagent, share: Double?, status: SessionStatus) -> String {
         var parts: [String] = [name(subagent)]
         if let type = subagent.agentType, !type.isEmpty { parts.append(type) }
         parts.append(Theme.name(for: status))
-        parts.append("\(Format.tokens(subagent.usage.total)) tokens")
+        parts.append(Self.tokensSuffix.format(in: language, Format.tokens(subagent.usage.total)))
         if let share {
-            parts.append("\(Format.percent(share * 100)) of the parent session")
+            parts.append(Self.ofParentSession.format(in: language, Format.percent(share * 100)))
         } else {
-            parts.append("share of parent unavailable")
+            parts.append(Self.shareOfParentUnavailable.string(in: language))
         }
         return parts.joined(separator: ", ")
     }

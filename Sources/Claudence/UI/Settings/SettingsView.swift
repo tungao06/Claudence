@@ -1,4 +1,5 @@
 import SwiftUI
+import ClaudenceCore
 
 // MARK: - Layout tokens
 
@@ -64,18 +65,19 @@ private enum ControlMetric {
 /// card, `PRIVACY`, which the design does not rule off, because there is
 /// nothing beneath it before the card's rounded corner.
 struct SettingsSection<Content: View>: View {
-    let title: String
+    let title: Phrase
     var showDivider: Bool = true
     @ViewBuilder var content: Content
+    @Environment(\.appLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.l) {
-            Text(title.uppercased())
+            Text(title.string(in: language).uppercased())
                 .font(Theme.Typography.section)
                 .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textTertiary)
                 .accessibilityAddTraits(.isHeader)
-                .accessibilityLabel(title)
+                .accessibilityLabel(title, in: language)
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -96,7 +98,7 @@ struct SettingsSection<Content: View>: View {
 /// Hidden from VoiceOver: the same sentence is attached to its control as an
 /// accessibility hint, and reading it twice is worse than reading it once.
 struct SettingsExplanation: View {
-    let text: String
+    let text: Phrase
     /// True only for the notification section's nested per-event cluster,
     /// where a whole group of rows sits under a master switch. An ordinary
     /// row's own explanation shares its label's left edge, per the design's
@@ -104,7 +106,7 @@ struct SettingsExplanation: View {
     var indented: Bool = false
 
     var body: some View {
-        Text(text)
+        PhraseText(text)
             .font(Theme.Typography.help)
             .foregroundStyle(Theme.textQuaternary)
             .fixedSize(horizontal: false, vertical: true)
@@ -176,14 +178,15 @@ struct ClaudenceToggleStyle: ToggleStyle {
 /// The sentence is attached to the control as an accessibility hint and hidden
 /// from VoiceOver where it is printed, so it is heard once and read once.
 struct SettingsToggle: View {
-    let title: String
-    let explanation: String
+    let title: Phrase
+    let explanation: Phrase
     @Binding var isOn: Bool
+    @Environment(\.appLanguage) private var language
 
     var body: some View {
         HStack(alignment: .center, spacing: Theme.Space.l) {
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                Text(title)
+                PhraseText(title)
                     .font(Theme.Typography.cardTitle.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                 SettingsExplanation(text: explanation)
@@ -192,8 +195,8 @@ struct SettingsToggle: View {
             Toggle(isOn: $isOn) { EmptyView() }
                 .labelsHidden()
                 .toggleStyle(ClaudenceToggleStyle())
-                .accessibilityLabel(title)
-                .accessibilityHint(explanation)
+                .accessibilityLabel(title, in: language)
+                .accessibilityHint(explanation.string(in: language))
         }
     }
 }
@@ -207,13 +210,14 @@ struct SettingsToggle: View {
 /// and say why in a sentence rather than leaving the reader to infer it from a
 /// grey pixel.
 struct SettingsUnavailableToggle: View {
-    let title: String
-    let reason: String
+    let title: Phrase
+    let reason: Phrase
+    @Environment(\.appLanguage) private var language
 
     var body: some View {
         HStack(alignment: .center, spacing: Theme.Space.l) {
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                Text(title)
+                PhraseText(title)
                     .font(Theme.Typography.cardTitle.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                 SettingsExplanation(text: reason)
@@ -226,10 +230,12 @@ struct SettingsUnavailableToggle: View {
         }
         .opacity(Theme.Layout.settingsDisabledOpacity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityValue("Unavailable")
-        .accessibilityHint(reason)
+        .accessibilityLabel(title, in: language)
+        .accessibilityValue(Self.unavailable.string(in: language))
+        .accessibilityHint(reason.string(in: language))
     }
+
+    private static let unavailable = Phrase(en: "Unavailable", th: "ไม่พร้อมใช้งาน")
 }
 
 // MARK: - Segmented control
@@ -251,11 +257,12 @@ struct SettingsUnavailableToggle: View {
 /// what the `Picker` it replaces already offered.
 struct SettingsSegmentedControl<Value: Hashable & Identifiable>: View {
     let options: [Value]
-    let optionTitle: (Value) -> String
+    let optionTitle: (Value) -> Phrase
     @Binding var selection: Value
     var isEnabled: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appLanguage) private var language
 
     var body: some View {
         HStack(spacing: ControlMetric.segmentGap) {
@@ -291,7 +298,7 @@ struct SettingsSegmentedControl<Value: Hashable & Identifiable>: View {
             guard isEnabled else { return }
             selection = option
         } label: {
-            let label = Text(optionTitle(option))
+            let label = Text(optionTitle(option).string(in: language))
                 .font(Theme.Typography.body.weight(.semibold))
                 .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textTertiary)
                 .padding(.vertical, ControlMetric.segmentVerticalPadding)
@@ -321,16 +328,18 @@ struct SettingsSegmentedControl<Value: Hashable & Identifiable>: View {
 /// answer "what does this setting do", and a sentence that changed on every tap
 /// would make the reader re-read it to find out whether anything else had.
 struct SettingsPicker<Value: Hashable & Identifiable>: View {
-    let title: String
+    let title: Phrase
     let options: [Value]
-    let optionTitle: (Value) -> String
-    let explanation: String
+    let optionTitle: (Value) -> Phrase
+    let explanation: Phrase
     @Binding var selection: Value
     var isEnabled: Bool = true
 
+    @Environment(\.appLanguage) private var language
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Text(title)
+            PhraseText(title)
                 .font(Theme.Typography.cardTitle.weight(.semibold))
                 .foregroundStyle(Theme.textPrimary)
 
@@ -340,9 +349,9 @@ struct SettingsPicker<Value: Hashable & Identifiable>: View {
                 selection: $selection,
                 isEnabled: isEnabled
             )
-            .accessibilityLabel(title)
-            .accessibilityValue(optionTitle(selection))
-            .accessibilityHint(explanation)
+            .accessibilityLabel(title, in: language)
+            .accessibilityValue(optionTitle(selection).string(in: language))
+            .accessibilityHint(explanation.string(in: language))
 
             SettingsExplanation(text: explanation)
         }
@@ -352,10 +361,10 @@ struct SettingsPicker<Value: Hashable & Identifiable>: View {
 /// A paragraph of body copy. Used by the privacy disclosure, which is prose
 /// rather than controls.
 struct SettingsParagraph: View {
-    let text: String
+    let text: Phrase
 
     var body: some View {
-        Text(text)
+        PhraseText(text)
             .font(Theme.Typography.body)
             .foregroundStyle(Theme.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -398,6 +407,21 @@ enum AppVersion {
               !value.trimmingCharacters(in: .whitespaces).isEmpty
         else { return unknown }
         return value
+    }
+
+    /// The word `unknown`, translated. A version number itself is not: digits
+    /// and dots read the same in both languages, so only the sentinel word
+    /// needs a Thai half.
+    private static let unknownPhrase = Phrase(en: "unknown", th: "ไม่ทราบ")
+
+    /// `stamp`, in the reader's language.
+    static var stampPhrase: Phrase {
+        stamp == unknown ? unknownPhrase : .untranslated(stamp)
+    }
+
+    /// `display`, in the reader's language.
+    static var displayPhrase: Phrase {
+        display == unknown ? unknownPhrase : .untranslated(display)
     }
 }
 
@@ -473,24 +497,36 @@ struct SettingsView: View {
 /// dashboard window, which survives the popover being unreachable, and the
 /// sentence beside it names the command that works when every window is gone.
 struct QuitSection: View {
+    @Environment(\.appLanguage) private var language
+
     var body: some View {
-        SettingsSection(title: "Quit") {
+        SettingsSection(title: Self.sectionTitle) {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
-                Button("Quit Claudence") {
+                Button(Self.buttonTitle.string(in: language)) {
                     NSApplication.shared.terminate(nil)
                 }
-                .accessibilityLabel("Quit Claudence")
-                .accessibilityHint(Self.explanation)
+                .accessibilityLabel(Self.buttonTitle, in: language)
+                .accessibilityHint(Self.explanation.string(in: language))
 
                 SettingsExplanation(text: Self.explanation)
             }
         }
     }
 
-    private static let explanation = """
-    Also in the menu bar popover. If the menu bar item is not reachable, \
-    `pkill -f Claudence.app/Contents/MacOS/Claudence` in Terminal ends it.
-    """
+    private static let sectionTitle = Phrase(en: "Quit", th: "ออกจากโปรแกรม")
+    private static let buttonTitle = Phrase(en: "Quit Claudence", th: "ออกจาก Claudence")
+
+    private static let explanation = Phrase(
+        en: """
+        Also in the menu bar popover. If the menu bar item is not reachable, \
+        `pkill -f Claudence.app/Contents/MacOS/Claudence` in Terminal ends it.
+        """,
+        th: """
+        เมนูนี้อยู่ใน popover ของ menu bar ด้วยเช่นกัน หากไม่สามารถเข้าถึงไอคอนบน \
+        menu bar ได้ ให้ใช้คำสั่ง `pkill -f Claudence.app/Contents/MacOS/Claudence` \
+        ใน Terminal เพื่อปิดโปรแกรม
+        """
+    )
 }
 
 // MARK: - Header
@@ -501,11 +537,11 @@ struct QuitSection: View {
 struct SettingsHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-            Text("Claudence Settings")
+            PhraseText(Self.title)
                 .font(Theme.Typography.title)
                 .foregroundStyle(Theme.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            Text("Local only \u{00B7} nothing here leaves your Mac")
+            PhraseText(Self.subtitle)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.textQuaternary)
         }
@@ -519,6 +555,12 @@ struct SettingsHeader: View {
                 .frame(height: 1)
         }
     }
+
+    private static let title = Phrase(en: "Claudence Settings", th: "การตั้งค่า Claudence")
+    private static let subtitle = Phrase(
+        en: "Local only \u{00B7} nothing here leaves your Mac",
+        th: "อยู่ในเครื่องเท่านั้น \u{00B7} ไม่มีข้อมูลใดออกจาก Mac ของคุณ"
+    )
 }
 
 // MARK: - Scene

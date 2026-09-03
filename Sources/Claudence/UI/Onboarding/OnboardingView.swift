@@ -25,15 +25,14 @@ import ClaudenceCore
 /// claim; see the doc comments beside each paragraph below for exactly which
 /// source it was taken from.
 ///
-/// ## What it does not yet do
+/// ## Language
 ///
-/// The screen's own copy stays in English. PLAN.md 9.10b, "Thai and
-/// English," is the item that converts every user-facing literal in the
-/// application, and it has not run yet. What *is* wired here is the
-/// preference and the picker themselves (`Preferences.languagePreference`),
-/// plus the one piece of copy on this screen that is already bilingual --
-/// `ClaudeCodePresence.title`/`.detail` -- so picking a language has a
-/// visible, honest effect today instead of doing nothing until 9.10b lands.
+/// PLAN.md 9.10b, "Thai and English," converted every user-facing literal on
+/// this screen to `Phrase`, alongside the rest of the application. The
+/// language picker (`Preferences.languagePreference`) now has a visible
+/// effect on every paragraph here, not only on `ClaudeCodePresence.title`/
+/// `.detail`, which was the one piece of copy already bilingual before this
+/// item ran.
 struct OnboardingView: View {
     @Bindable var preferences: Preferences
     let historyImportRunner: HistoryImportRunner
@@ -67,29 +66,41 @@ struct OnboardingView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Text("Welcome to Claudence")
+            PhraseText(Self.welcomeTitle)
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Before anything else, here is exactly what this app reads on your Mac.")
+            PhraseText(Self.welcomeSubtitle)
                 .font(Theme.Typography.body)
                 .foregroundStyle(Theme.textSecondary)
         }
     }
 
+    private static let welcomeTitle = Phrase(en: "Welcome to Claudence", th: "ยินดีต้อนรับสู่ Claudence")
+    private static let welcomeSubtitle = Phrase(
+        en: "Before anything else, here is exactly what this app reads on your Mac.",
+        th: "ก่อนอื่นเลย นี่คือสิ่งที่แอปนี้อ่านบนเครื่อง Mac ของคุณอย่างชัดเจน"
+    )
+
     // MARK: - Language
 
     private var languageSection: some View {
-        SettingsSection(title: "Language") {
+        SettingsSection(title: Self.languageSectionTitle) {
             SettingsPicker(
-                title: "Interface language",
+                title: Self.interfaceLanguageTitle,
                 options: LanguagePreference.allCases,
                 optionTitle: \.title,
-                explanation: "Only this screen's Claude Code message follows this choice today. "
-                    + "The rest of the interface is English until translation lands.",
+                explanation: Self.languageExplanation,
                 selection: $preferences.languagePreference
             )
         }
     }
+
+    private static let languageSectionTitle = Phrase(en: "Language", th: "ภาษา")
+    private static let interfaceLanguageTitle = Phrase(en: "Interface language", th: "ภาษาของอินเทอร์เฟซ")
+    private static let languageExplanation = Phrase(
+        en: "Changes every screen in the application, including this one.",
+        th: "เปลี่ยนทุกหน้าจอในแอปพลิเคชัน รวมถึงหน้านี้ด้วย"
+    )
 
     // MARK: - Privacy
 
@@ -97,7 +108,7 @@ struct OnboardingView: View {
     /// three-paragraph summary, unchanged. `Copy.leaves` is what names the
     /// two outbound requests this task calls out specifically.
     private var privacySection: some View {
-        SettingsSection(title: "What Claudence reads") {
+        SettingsSection(title: Self.privacySectionTitle) {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
                 SettingsParagraph(text: PrivacySettings.Copy.reads)
                 SettingsParagraph(text: Self.subagentBody)
@@ -106,6 +117,8 @@ struct OnboardingView: View {
             }
         }
     }
+
+    private static let privacySectionTitle = Phrase(en: "What Claudence reads", th: "สิ่งที่ Claudence อ่าน")
 
     /// Not in `PrivacySettings.Copy` -- that file's full disclosure has no
     /// block for this yet. Drawn instead from `CLAUDE.md`'s own subagent
@@ -118,48 +131,63 @@ struct OnboardingView: View {
     /// same day, in the 9.9 subtraction pass, because nothing rendered it. A
     /// first-run screen that claims a read the code does not perform is worse
     /// than one that says too little, so this sentence follows the decoder.
-    private static let subagentBody = """
-    For a session that spawned subagents, Claudence also reads three fields \
-    from each one's spawn record: its type, a short task label, and the tool \
-    call that created it. Not its prompt, its messages, or its results -- \
-    those follow the same rules as everything else above.
-    """
+    private static let subagentBody = Phrase(
+        en: """
+        For a session that spawned subagents, Claudence also reads three fields \
+        from each one's spawn record: its type, a short task label, and the tool \
+        call that created it. Not its prompt, its messages, or its results -- \
+        those follow the same rules as everything else above.
+        """,
+        th: """
+        สำหรับ session ที่ spawn subagent ไว้ Claudence จะอ่านเพิ่มอีกสามฟิลด์จาก spawn record \
+        ของแต่ละตัว: ประเภทของมัน, label งานสั้นๆ และ tool call ที่สร้างมันขึ้นมา ไม่ใช่ prompt, \
+        message หรือผลลัพธ์ของมัน สิ่งเหล่านั้นเป็นไปตามกฎเดียวกับที่กล่าวไว้ข้างต้นทั้งหมด
+        """
+    )
 
     // MARK: - Claude Code presence
 
     @ViewBuilder
     private var presenceSection: some View {
-        SettingsSection(title: "Claude Code") {
+        SettingsSection(title: Self.claudeCodeTitle) {
             if presence.isUsable {
                 HStack(spacing: Theme.Space.s) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: Theme.Bar.severityGlyph))
                         .foregroundStyle(Theme.healthy)
-                    Text("Claude Code found. Its sessions will appear as soon as you continue.")
+                    PhraseText(Self.claudeCodeFound)
                         .font(Theme.Typography.body)
                         .foregroundStyle(Theme.textSecondary)
                 }
             } else {
                 UnavailableView(
-                    presence.title?.string(in: language) ?? "Claude Code is not installed",
-                    reason: presence.detail?.string(in: language)
+                    presence.title ?? Self.claudeCodeNotInstalled,
+                    reason: presence.detail
                 )
             }
         }
     }
 
+    private static let claudeCodeTitle = Phrase.untranslated("Claude Code")
+    private static let claudeCodeFound = Phrase(
+        en: "Claude Code found. Its sessions will appear as soon as you continue.",
+        th: "พบ Claude Code แล้ว session ของมันจะปรากฏทันทีที่คุณดำเนินการต่อ"
+    )
+    private static let claudeCodeNotInstalled = Phrase(
+        en: "Claude Code is not installed",
+        th: "ยังไม่ได้ติดตั้ง Claude Code"
+    )
+
     // MARK: - Import
 
     private var importSection: some View {
-        SettingsSection(title: "Import existing history", showDivider: false) {
+        SettingsSection(title: Self.importSectionTitle, showDivider: false) {
             VStack(alignment: .leading, spacing: Theme.Space.l) {
                 SettingsPicker(
-                    title: "How far back",
+                    title: Self.howFarBackTitle,
                     options: ImportRange.allCases,
                     optionTitle: \.title,
-                    explanation: "Reads the transcripts already on this Mac through the same "
-                        + "parser the live view uses. Nothing beyond the privacy allowlist above "
-                        + "is read here either.",
+                    explanation: Self.howFarBackExplanation,
                     selection: $importRange,
                     isEnabled: presence.isUsable && importState.isIdleOrDone
                 )
@@ -169,7 +197,7 @@ struct OnboardingView: View {
                 if let report = importState.report {
                     importReportView(report)
                 } else if case .failed = importState {
-                    Text("The import could not finish. You can try again, or skip this and continue.")
+                    PhraseText(Self.importFailed)
                         .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.critical)
                 }
@@ -177,9 +205,27 @@ struct OnboardingView: View {
         }
     }
 
+    private static let importSectionTitle = Phrase(en: "Import existing history", th: "นำเข้าประวัติที่มีอยู่")
+    private static let howFarBackTitle = Phrase(en: "How far back", th: "ย้อนหลังแค่ไหน")
+    private static let howFarBackExplanation = Phrase(
+        en: """
+        Reads the transcripts already on this Mac through the same parser the \
+        live view uses. Nothing beyond the privacy allowlist above is read here \
+        either.
+        """,
+        th: """
+        อ่าน transcript ที่มีอยู่แล้วบนเครื่อง Mac นี้ ผ่าน parser ตัวเดียวกับที่หน้าจอหลักใช้ ไม่มีการ \
+        อ่านสิ่งใดเกินกว่ารายการที่อนุญาตด้านบนที่นี่เช่นกัน
+        """
+    )
+    private static let importFailed = Phrase(
+        en: "The import could not finish. You can try again, or skip this and continue.",
+        th: "การนำเข้าไม่สำเร็จ คุณลองใหม่อีกครั้งได้ หรือข้ามขั้นตอนนี้แล้วดำเนินการต่อ"
+    )
+
     private var importActionRow: some View {
         HStack(spacing: Theme.Space.m) {
-            Button(importButtonTitle) {
+            Button(importButtonTitle.string(in: language)) {
                 runImport()
             }
             .buttonStyle(.plain)
@@ -188,18 +234,23 @@ struct OnboardingView: View {
             .disabled(!presence.isUsable || importState == .running)
 
             if importState == .running {
-                Text("Reading transcripts\u{2026}")
+                PhraseText(Self.readingTranscripts)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textTertiary)
             }
         }
     }
 
-    private var importButtonTitle: String {
+    private static let readingTranscripts = Phrase(
+        en: "Reading transcripts\u{2026}",
+        th: "กำลังอ่าน transcript\u{2026}"
+    )
+
+    private var importButtonTitle: Phrase {
         switch importState {
-        case .idle, .failed: return "Import Now"
-        case .running: return "Importing\u{2026}"
-        case .done: return "Import Again"
+        case .idle, .failed: return Phrase(en: "Import Now", th: "นำเข้าตอนนี้")
+        case .running: return Phrase(en: "Importing\u{2026}", th: "กำลังนำเข้า\u{2026}")
+        case .done: return Phrase(en: "Import Again", th: "นำเข้าอีกครั้ง")
         }
     }
 
@@ -209,17 +260,17 @@ struct OnboardingView: View {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: Theme.Bar.statusGlyph))
                     .foregroundStyle(Theme.healthy)
-                Text(Self.importedSummary(report))
+                Text(Self.importedSummary(report, in: language))
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textSecondary)
             }
             if !report.sessionsSkipped.isEmpty {
-                Text("\(report.sessionsSkipped.count) session(s) were outside the chosen range.")
+                Text(Self.sessionsSkipped.format(in: language, "\(report.sessionsSkipped.count)"))
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textQuaternary)
             }
             if !report.failures.isEmpty {
-                Text("\(report.failures.count) file(s) could not be read.")
+                Text(Self.filesUnreadable.format(in: language, "\(report.failures.count)"))
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.attention)
             }
@@ -227,26 +278,41 @@ struct OnboardingView: View {
         .accessibilityElement(children: .combine)
     }
 
+    private static let sessionsSkipped = Phrase(
+        en: "%@ session(s) were outside the chosen range.",
+        th: "มี %@ session ที่อยู่นอกช่วงเวลาที่เลือก"
+    )
+    private static let filesUnreadable = Phrase(
+        en: "%@ file(s) could not be read.",
+        th: "มี %@ ไฟล์ที่อ่านไม่ได้"
+    )
+
     /// Built as plain `String` arithmetic rather than inline inside a `Text`
     /// initializer -- the compiler could not type-check the interpolated,
     /// pluralised version in reasonable time once it sat inside a view
-    /// builder closure.
-    private static func importedSummary(_ report: HistoryImporter.Report) -> String {
-        let sessionWord = report.sessionsImported == 1 ? "session" : "sessions"
-        let projectWord = report.projectsSeen == 1 ? "project" : "projects"
-        return "Imported \(report.sessionsImported) \(sessionWord) across "
-            + "\(report.projectsSeen) \(projectWord)."
+    /// builder closure. Thai carries no plural inflection, so its half needs
+    /// only one wording, unlike the English singular/plural branch.
+    private static func importedSummary(_ report: HistoryImporter.Report, in language: AppLanguage) -> String {
+        switch language {
+        case .english:
+            let sessionWord = report.sessionsImported == 1 ? "session" : "sessions"
+            let projectWord = report.projectsSeen == 1 ? "project" : "projects"
+            return "Imported \(report.sessionsImported) \(sessionWord) across "
+                + "\(report.projectsSeen) \(projectWord)."
+        case .thai:
+            return "นำเข้า \(report.sessionsImported) session จาก \(report.projectsSeen) โปรเจกต์"
+        }
     }
 
     // MARK: - Footer
 
     private var footer: some View {
         HStack {
-            Text(AppVersion.stamp)
+            PhraseText(AppVersion.stampPhrase)
                 .font(Theme.Typography.micro)
                 .foregroundStyle(Theme.textQuaternary)
             Spacer()
-            Button("Get Started") {
+            Button(Self.getStarted.string(in: language)) {
                 onFinish()
             }
             .buttonStyle(.plain)
@@ -258,9 +324,7 @@ struct OnboardingView: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
                     .fill(Theme.accent)
             )
-            .accessibilityHint(
-                "Closes this screen and lets Claudence start reading your sessions and usage."
-            )
+            .accessibilityHint(Self.getStartedHint.string(in: language))
         }
         .padding(.horizontal, Theme.Space.xxl)
         .padding(.vertical, Theme.Space.l)
@@ -269,6 +333,12 @@ struct OnboardingView: View {
             Rectangle().fill(Theme.separator).frame(height: 1)
         }
     }
+
+    private static let getStarted = Phrase(en: "Get Started", th: "เริ่มต้นใช้งาน")
+    private static let getStartedHint = Phrase(
+        en: "Closes this screen and lets Claudence start reading your sessions and usage.",
+        th: "ปิดหน้าจอนี้และให้ Claudence เริ่มอ่าน session และการใช้งานของคุณ"
+    )
 
     // MARK: - Import action
 
@@ -296,11 +366,11 @@ enum ImportRange: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
-    var title: String {
+    var title: Phrase {
         switch self {
-        case .everything: return "Everything"
-        case .last30: return "Last 30 days"
-        case .last90: return "Last 90 days"
+        case .everything: return Phrase(en: "Everything", th: "ทั้งหมด")
+        case .last30: return Phrase(en: "Last 30 days", th: "30 วันล่าสุด")
+        case .last90: return Phrase(en: "Last 90 days", th: "90 วันล่าสุด")
         }
     }
 

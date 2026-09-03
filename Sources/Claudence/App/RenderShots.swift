@@ -14,6 +14,15 @@ import ClaudenceCore
 ///
 /// It draws fixtures, never live data: a shot of the real session list would
 /// differ on every run and could carry a project path onto disk.
+///
+/// ## Both languages, because the layout is where a translation breaks
+///
+/// A Thai string is not the same width as its English original, and this
+/// project has already recorded the trap that the system monospaced font
+/// carries no Thai glyphs. Neither of those is visible in the source; both are
+/// obvious in a picture. So every shot is rendered four times -- two
+/// appearances by two languages -- and the language is in the file name, which
+/// makes the pair openable side by side. PLAN.md 9.10b asks for exactly this.
 @MainActor
 enum RenderShots {
 
@@ -33,13 +42,14 @@ enum RenderShots {
             return
         }
 
-        for scheme in [ColorScheme.light, ColorScheme.dark] {
-            let suffix = scheme == .dark ? "dark" : "light"
+        for (language, scheme) in Self.combinations {
+            let suffix = "\(language.rawValue)-" + (scheme == .dark ? "dark" : "light")
 
             write(
                 name: "dashboard-\(suffix)",
                 size: dashboardSize,
                 scheme: scheme,
+                language: language,
                 into: root
             ) {
                 DashboardView(
@@ -54,6 +64,7 @@ enum RenderShots {
                 name: "dashboard-empty-\(suffix)",
                 size: dashboardSize,
                 scheme: scheme,
+                language: language,
                 into: root
             ) {
                 DashboardView(
@@ -68,6 +79,7 @@ enum RenderShots {
                 name: "dashboard-sliver-\(suffix)",
                 size: dashboardSize,
                 scheme: scheme,
+                language: language,
                 into: root
             ) {
                 DashboardView(
@@ -82,6 +94,7 @@ enum RenderShots {
                 name: "detail-\(suffix)",
                 size: detailSize,
                 scheme: scheme,
+                language: language,
                 into: root
             ) {
                 SessionDetailView(
@@ -99,16 +112,29 @@ enum RenderShots {
         }
     }
 
+    /// Every appearance in every language, in a fixed order so a re-run
+    /// overwrites the same file names rather than producing a second set.
+    private static var combinations: [(AppLanguage, ColorScheme)] {
+        AppLanguage.allCases.flatMap { language in
+            [ColorScheme.light, ColorScheme.dark].map { (language, $0) }
+        }
+    }
+
     private static func write<Content: View>(
         name: String,
         size: CGSize?,
         scheme: ColorScheme,
+        language: AppLanguage,
         into root: URL,
         @ViewBuilder content: () -> Content
     ) {
         let sized = size.map { AnyView(content().frame(width: $0.width, height: $0.height, alignment: .top)) }
             ?? AnyView(content())
+        // The same environment key the application injects at both of its
+        // scene roots. A shot that rendered through a different route would be
+        // a picture of something the user never sees.
         let view = sized
+            .environment(\.appLanguage, language)
             .environment(\.colorScheme, scheme)
             .environment(\.isOffscreenRender, true)
         let renderer = ImageRenderer(content: view)

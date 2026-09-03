@@ -1,3 +1,4 @@
+import ClaudenceCore
 import Foundation
 import ServiceManagement
 
@@ -39,13 +40,21 @@ enum LaunchAtLoginState: Equatable, Sendable {
 
     /// One short line naming the real status. Written for a reader who has
     /// never heard of `SMAppService`.
-    var summary: String {
+    var summary: Phrase {
         switch self {
-        case .enabled: return "Registered with macOS"
-        case .notRegistered: return "Not registered"
-        case .requiresApproval: return "Waiting for your approval"
-        case .notFound: return "No login item for this copy"
-        case .unrecognized(let raw): return "Unrecognised status \(raw)"
+        case .enabled:
+            return Phrase(en: "Registered with macOS", th: "ลงทะเบียนกับ macOS แล้ว")
+        case .notRegistered:
+            return Phrase(en: "Not registered", th: "ยังไม่ได้ลงทะเบียน")
+        case .requiresApproval:
+            return Phrase(en: "Waiting for your approval", th: "รอการอนุมัติจากคุณ")
+        case .notFound:
+            return Phrase(en: "No login item for this copy", th: "ไม่มี login item สำหรับแอปชุดนี้")
+        case .unrecognized(let raw):
+            return Phrase(
+                en: "Unrecognised status \(raw)",
+                th: "สถานะที่ไม่รู้จัก \(raw)"
+            )
         }
     }
 
@@ -72,7 +81,7 @@ enum LaunchAtLoginState: Equatable, Sendable {
 struct LaunchAtLoginOutcome: Equatable, Sendable {
     let state: LaunchAtLoginState
     /// nil when the system agreed. Never a generic "something went wrong".
-    let failure: String?
+    let failure: Phrase?
 
 }
 
@@ -102,7 +111,7 @@ struct LaunchAtLoginService {
     /// The returned state is always the freshly read one, so a caller that
     /// binds a toggle to it cannot show a value the system does not hold.
     func apply(enabled: Bool) -> LaunchAtLoginOutcome {
-        var thrown: String?
+        var thrown: Phrase?
         do {
             if enabled { try register() } else { try unregister() }
         } catch {
@@ -130,47 +139,95 @@ struct LaunchAtLoginService {
     /// Turns a thrown error into a sentence. The numeric code is kept because
     /// it is the only thing that distinguishes one refusal from another, but it
     /// is never the whole message.
-    private static func explain(_ error: Error, enabling: Bool) -> String {
+    private static func explain(_ error: Error, enabling: Bool) -> Phrase {
         let ns = error as NSError
-        let verb = enabling ? "add" : "remove"
         if ns.domain == NSOSStatusErrorDomain, ns.code == 1 {
-            return """
-            macOS would not \(verb) the login item. This copy of Claudence runs \
-            from the build directory and is signed with a local development \
-            certificate, which macOS is allowed to refuse. Moving Claudence to \
-            the Applications folder is the usual fix. (code 1)
-            """
+            return enabling
+                ? Phrase(
+                    en: """
+                    macOS would not add the login item. This copy of Claudence runs \
+                    from the build directory and is signed with a local development \
+                    certificate, which macOS is allowed to refuse. Moving Claudence to \
+                    the Applications folder is the usual fix. (code 1)
+                    """,
+                    th: """
+                    macOS ไม่ยอมเพิ่ม login item แอปชุดนี้รันจาก build directory และเซ็นด้วย \
+                    certificate สำหรับพัฒนาในเครื่อง ซึ่ง macOS มีสิทธิ์ปฏิเสธ วิธีแก้ที่ใช้ได้ทั่วไปคือ \
+                    ย้าย Claudence ไปไว้ในโฟลเดอร์ Applications (code 1)
+                    """
+                )
+                : Phrase(
+                    en: """
+                    macOS would not remove the login item. This copy of Claudence runs \
+                    from the build directory and is signed with a local development \
+                    certificate, which macOS is allowed to refuse. Moving Claudence to \
+                    the Applications folder is the usual fix. (code 1)
+                    """,
+                    th: """
+                    macOS ไม่ยอมลบ login item แอปชุดนี้รันจาก build directory และเซ็นด้วย \
+                    certificate สำหรับพัฒนาในเครื่อง ซึ่ง macOS มีสิทธิ์ปฏิเสธ วิธีแก้ที่ใช้ได้ทั่วไปคือ \
+                    ย้าย Claudence ไปไว้ในโฟลเดอร์ Applications (code 1)
+                    """
+                )
         }
-        return "macOS would not \(verb) the login item: \(ns.localizedDescription) (\(ns.domain) \(ns.code))"
+        let detail = "(\(ns.domain) \(ns.code)): \(ns.localizedDescription)"
+        return enabling
+            ? Phrase(en: "macOS would not add the login item \(detail)", th: "macOS ไม่ยอมเพิ่ม login item \(detail)")
+            : Phrase(en: "macOS would not remove the login item \(detail)", th: "macOS ไม่ยอมลบ login item \(detail)")
     }
 
     /// Nothing was thrown, yet the system is not where the user asked it to be.
     /// This is the case the toggle exists to make visible.
-    private static func disagreement(state: LaunchAtLoginState, enabling: Bool) -> String {
+    private static func disagreement(state: LaunchAtLoginState, enabling: Bool) -> Phrase {
         guard enabling else {
-            return """
-            macOS still lists Claudence as a login item. Open Login Items in \
-            System Settings and remove it there.
-            """
+            return Phrase(
+                en: """
+                macOS still lists Claudence as a login item. Open Login Items in \
+                System Settings and remove it there.
+                """,
+                th: """
+                macOS ยังคงแสดง Claudence เป็น login item อยู่ เปิด Login Items ใน \
+                System Settings แล้วลบออกจากที่นั่น
+                """
+            )
         }
         switch state {
         case .requiresApproval:
-            return """
-            macOS added the login item but is holding it off until you allow it. \
-            Open Login Items in System Settings and switch Claudence on.
-            """
+            return Phrase(
+                en: """
+                macOS added the login item but is holding it off until you allow it. \
+                Open Login Items in System Settings and switch Claudence on.
+                """,
+                th: """
+                macOS เพิ่ม login item แล้วแต่ยังไม่เปิดใช้จนกว่าคุณจะอนุญาต เปิด Login Items ใน \
+                System Settings แล้วเปิดใช้งาน Claudence
+                """
+            )
         case .notFound:
-            return """
-            macOS reports no login item for this copy of Claudence. That is the \
-            usual answer for an app running from the build directory rather than \
-            the Applications folder. Move Claudence to Applications and try again.
-            """
+            return Phrase(
+                en: """
+                macOS reports no login item for this copy of Claudence. That is the \
+                usual answer for an app running from the build directory rather than \
+                the Applications folder. Move Claudence to Applications and try again.
+                """,
+                th: """
+                macOS รายงานว่าไม่มี login item สำหรับแอปชุดนี้ ซึ่งเป็นคำตอบปกติสำหรับแอปที่รันจาก \
+                build directory แทนที่จะเป็นโฟลเดอร์ Applications ลองย้าย Claudence ไปไว้ใน \
+                Applications แล้วลองใหม่
+                """
+            )
         case .notRegistered:
-            return "macOS did not register the login item, and did not say why."
+            return Phrase(
+                en: "macOS did not register the login item, and did not say why.",
+                th: "macOS ไม่ได้ลงทะเบียน login item และไม่ได้ระบุเหตุผล"
+            )
         case .unrecognized(let raw):
-            return "macOS reported status \(raw), which this version does not recognise."
+            return Phrase(
+                en: "macOS reported status \(raw), which this version does not recognise.",
+                th: "macOS รายงานสถานะ \(raw) ซึ่งแอปเวอร์ชันนี้ไม่รู้จัก"
+            )
         case .enabled:
-            return "macOS registered the login item."
+            return Phrase(en: "macOS registered the login item.", th: "macOS ลงทะเบียน login item แล้ว")
         }
     }
 }

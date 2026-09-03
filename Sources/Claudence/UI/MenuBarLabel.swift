@@ -72,6 +72,8 @@ struct MenuBarLabel: View {
     /// Absent, the label renders `.usage`, which is what it has always rendered.
     var preferences: Preferences?
 
+    @Environment(\.appLanguage) private var language
+
     var body: some View {
         HStack(spacing: Theme.MenuBar.glyphGap) {
             // An image, not the `RingMark` view. Shapes render as nothing
@@ -104,7 +106,9 @@ struct MenuBarLabel: View {
         // usage is legible from the menu bar, and a label that reads the
         // percentage aloud is the same leak through a different channel.
         .accessibilityLabel(
-            isQuiet ? "Claudence, live reading off" : model.menuBarAccessibilityLabel
+            isQuiet
+                ? Strings.liveReadingOff.string(in: language)
+                : model.menuBarAccessibilityLabel
         )
     }
 
@@ -187,4 +191,8 @@ struct MenuBarLabel: View {
         guard let percent = model.primaryWindow?.usedPercent else { return Theme.textSecondary }
         return Theme.severityRamp(percent: percent)
     }
+}
+
+private enum Strings {
+    static let liveReadingOff = Phrase(en: "Claudence, live reading off", th: "Claudence ปิดการอ่านค่าสด")
 }

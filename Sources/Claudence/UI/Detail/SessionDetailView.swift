@@ -4,14 +4,14 @@ import ClaudenceCore
 /// An uppercase section header. Small enough to live here rather than earn its
 /// own file, and shared so the tracking is set once.
 struct SectionEyebrow: View {
-    let title: String
+    let title: Phrase
 
-    init(_ title: String) {
+    init(_ title: Phrase) {
         self.title = title
     }
 
     var body: some View {
-        Text(title)
+        PhraseText(title)
             .font(Theme.Typography.section)
             .tracking(Theme.sectionTracking)
             .foregroundStyle(Theme.textTertiary)
@@ -121,6 +121,7 @@ struct SessionDetailView: View {
     /// Whether persistence is off, which decides whether the stored-history row
     /// in the metric column exists at all. See `EnvironmentValues.liveOnlyMode`.
     @Environment(\.liveOnlyMode) private var liveOnlyMode
+    @Environment(\.appLanguage) private var language
 
     init(
         session: AISession,
@@ -208,7 +209,7 @@ struct SessionDetailView: View {
                     ActivityTimelineView(trail: session.activityTrail, now: now)
                 }
 
-                MetricColumn(title: "COST & EFFICIENCY", rows: costRows, footnote: Self.costFootnote)
+                MetricColumn(title: Self.costTitle, rows: costRows, footnote: Self.costFootnote)
 
                 TranscriptFactsBar(
                     records: session.recordsParsed,
@@ -230,8 +231,10 @@ struct SessionDetailView: View {
         }
         .scrollHeightCap(Self.maximumHeight, isOffscreenRender: isOffscreenRender)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Session detail for \(session.projectName)")
+        .accessibilityLabel(Self.sessionDetailFor.format(in: language, session.projectName))
     }
+
+    private static let sessionDetailFor = Phrase(en: "Session detail for %@", th: "รายละเอียด session ของ %@")
 
     // MARK: - Energy
 
@@ -267,11 +270,15 @@ struct SessionDetailView: View {
         case let .measured(fraction, requestInputTokens, maximumInputTokens):
             ContextWell(
                 fraction: fraction,
-                detail: "\(Format.tokens(requestInputTokens)) of \(Format.tokens(maximumInputTokens))"
+                detail: Self.usedOfLimit.format(
+                    in: language,
+                    Format.tokens(requestInputTokens),
+                    Format.tokens(maximumInputTokens)
+                )
             )
         case let .amountOnly(requestInputTokens):
             ContextWell.amountOnly(
-                amount: "\(Format.tokens(requestInputTokens)) in the last request",
+                amount: Self.inTheLastRequest.format(in: language, Format.tokens(requestInputTokens)),
                 reason: Self.limitUnknownReason
             )
         case .noRequestRead:
@@ -279,38 +286,64 @@ struct SessionDetailView: View {
         }
     }
 
+    private static let usedOfLimit = Phrase(en: "%@ of %@", th: "%@ จาก %@")
+    private static let inTheLastRequest = Phrase(en: "%@ in the last request", th: "%@ ใน request ล่าสุด")
+
     /// Why there is no bar although there is a figure. Deliberately a different
     /// sentence from `noRequestReason`: one says the reading is incomplete, the
     /// other says there is no reading at all.
-    static let limitUnknownReason =
-        "This model's limit is not in the context-limit table, and a guessed limit is worse than none"
+    static let limitUnknownReason = Phrase(
+        en: "This model's limit is not in the context-limit table, and a guessed limit is worse than none",
+        th: "ขีดจำกัดของโมเดลนี้ไม่มีในตาราง context-limit และการเดาขีดจำกัดแย่กว่าการไม่มีเลย"
+    )
 
-    static let noRequestReason = "No request with a usage block has been read yet"
+    static let noRequestReason = Phrase(
+        en: "No request with a usage block has been read yet",
+        th: "ยังไม่มี request ที่มี usage block ให้อ่าน"
+    )
 
     // MARK: - Cost and efficiency
 
-    static let costFootnote = "Cost is estimated from a per-model price table, never a billed amount."
+    private static let costTitle = Phrase(en: "COST & EFFICIENCY", th: "ต้นทุนและประสิทธิภาพ")
+
+    static let costFootnote = Phrase(
+        en: "Cost is estimated from a per-model price table, never a billed amount.",
+        th: "ต้นทุนเป็นค่าประมาณจากตารางราคาต่อโมเดล ไม่ใช่ยอดที่เรียกเก็บจริง"
+    )
+
+    private static let apiEquivalentTitle = Phrase(en: "API equivalent", th: "มูลค่าเทียบเท่า API")
+    private static let apiEquivalentUnavailable = Phrase(
+        en: "API equivalent unavailable",
+        th: "ไม่มีข้อมูลมูลค่าเทียบเท่า API"
+    )
+    private static let cacheServedTitle = Phrase(en: "Input served from cache", th: "Input ที่ตอบจาก cache")
+    private static let tokensPerHourTitle = Phrase(en: "Tokens per hour", th: "Token ต่อชั่วโมง")
+    private static let shareOfWindowTitle = Phrase(en: "Share of the 5h window", th: "สัดส่วนในหน้าต่าง 5 ชม.")
+    private static let unavailable = Phrase(en: "Unavailable", th: "ไม่มีข้อมูล")
+    private static let perHour = Phrase(en: "%@/h", th: "%@/ชม.")
 
     private var costRows: [MetricColumn.Row] {
         [
             MetricColumn.Row(
-                name: "API equivalent",
+                name: Self.apiEquivalentTitle,
                 value: costEstimator.estimate(usage: total, model: session.model).map(Format.cost),
                 tip: "cost",
-                unavailable: "API equivalent unavailable",
+                unavailable: Self.apiEquivalentUnavailable,
                 estimated: true
             ),
             MetricColumn.Row(
-                name: "Input served from cache",
+                name: Self.cacheServedTitle,
                 value: session.cacheServedFraction.map { Format.percent($0 * 100) },
                 tip: "cr",
-                unavailable: "Unavailable"
+                unavailable: Self.unavailable
             ),
             MetricColumn.Row(
-                name: "Tokens per hour",
-                value: session.tokensPerHour(now: now).map { "\(Format.tokens(Int($0.rounded())))/h" },
+                name: Self.tokensPerHourTitle,
+                value: session.tokensPerHour(now: now).map {
+                    Self.perHour.format(in: language, Format.tokens(Int($0.rounded())))
+                },
                 tip: "burn",
-                unavailable: "Unavailable"
+                unavailable: Self.unavailable
             ),
         ]
         // Dropped rather than shown unavailable in live-only mode. The share
@@ -320,10 +353,10 @@ struct SessionDetailView: View {
         // worse, print a percentage of a window it does not cover.
         + (liveOnlyMode ? [] : [
             MetricColumn.Row(
-                name: "Share of the 5h window",
+                name: Self.shareOfWindowTitle,
                 value: windowShare.map { Format.percent($0 * 100) },
                 tip: nil,
-                unavailable: "Unavailable"
+                unavailable: Self.unavailable
             ),
         ])
     }
@@ -352,6 +385,8 @@ struct DetailHeader: View {
     let statusWord: String
     let path: String
     let activity: String?
+
+    @Environment(\.appLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
@@ -383,7 +418,7 @@ struct DetailHeader: View {
                 .foregroundStyle(Theme.textQuaternary)
                 .lineLimit(1)
                 .truncationMode(.head)
-                .accessibilityLabel("Working directory \(path)")
+                .accessibilityLabel(Self.workingDirectory.format(in: language, path))
 
             if let activity {
                 Text(activity)
@@ -393,15 +428,20 @@ struct DetailHeader: View {
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
                     .tooltip(tip: "activity", edge: .leading)
-                    .accessibilityLabel("Activity, \(activity)")
+                    .accessibilityLabel(Self.activityLabel.format(in: language, activity))
             } else {
-                UnavailableView("Activity unavailable", compact: true)
+                UnavailableView(Self.activityUnavailable, compact: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(name), \(statusWord)")
+        .accessibilityLabel(Self.nameAndStatus.format(in: language, name, statusWord))
     }
+
+    private static let workingDirectory = Phrase(en: "Working directory %@", th: "โฟลเดอร์ทำงาน %@")
+    private static let activityLabel = Phrase(en: "Activity, %@", th: "กิจกรรม, %@")
+    private static let activityUnavailable = Phrase(en: "Activity unavailable", th: "ไม่มีข้อมูลกิจกรรม")
+    private static let nameAndStatus = Phrase(en: "%@, %@", th: "%@, %@")
 }
 
 // MARK: - Scaffold
@@ -429,6 +469,19 @@ struct DetailHeader: View {
 /// sheet's edge on purpose: the two hosts give this view different gutters --
 /// `detailSheetChrome()` in a window, `Theme.Layout.popoverPadding` in the
 /// popover -- and a bar that assumed either number would be wrong in the other.
+/// Copy for `DetailScaffold`, held outside it because a generic type cannot
+/// carry a static stored property.
+private enum DetailScaffoldCopy {
+    static let backTo = Phrase(en: "Back to %@", th: "กลับไปที่ %@")
+    static let backHint = Phrase(
+        en: "Returns to the session that spawned this subagent",
+        th: "กลับไปยัง session ที่ spawn subagent นี้"
+    )
+    static let closeSessionDetail = Phrase(en: "Close session detail", th: "ปิดรายละเอียด session")
+    static let spawnedBy = Phrase(en: "Spawned by %@", th: "Spawn โดย %@")
+    static let subagentBadge = Phrase.untranslated("SUBAGENT")
+}
+
 struct DetailScaffold<Header: View, Content: View, Footer: View>: View {
     /// Nil in the session variant, which has nowhere to go back to.
     let onBack: (() -> Void)?
@@ -439,6 +492,8 @@ struct DetailScaffold<Header: View, Content: View, Footer: View>: View {
     @ViewBuilder let header: Header
     @ViewBuilder let content: Content
     @ViewBuilder let footer: Footer
+
+    @Environment(\.appLanguage) private var language
 
     /// Whether the caller passed a footer at all. A type comparison rather than
     /// a flag the caller has to keep in step with what it passes.
@@ -478,8 +533,8 @@ struct DetailScaffold<Header: View, Content: View, Footer: View>: View {
             if let onBack, let parentName {
                 DetailBarButton(
                     glyph: "chevron.left",
-                    label: "Back to \(parentName)",
-                    hint: "Returns to the session that spawned this subagent",
+                    label: DetailScaffoldCopy.backTo.format(in: language, parentName),
+                    hint: DetailScaffoldCopy.backHint.string(in: language),
                     action: onBack
                 )
                 eyebrow(parentName: parentName)
@@ -489,7 +544,7 @@ struct DetailScaffold<Header: View, Content: View, Footer: View>: View {
 
             DetailBarButton(
                 glyph: "xmark",
-                label: "Close session detail",
+                label: DetailScaffoldCopy.closeSessionDetail.string(in: language),
                 hint: nil,
                 isEscape: true,
                 action: onClose
@@ -508,9 +563,9 @@ struct DetailScaffold<Header: View, Content: View, Footer: View>: View {
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .accessibilityLabel("Spawned by \(parentName)")
+                .accessibilityLabel(DetailScaffoldCopy.spawnedBy.format(in: language, parentName))
 
-            Text("SUBAGENT")
+            PhraseText(DetailScaffoldCopy.subagentBadge)
                 .font(Theme.Typography.caption.weight(.bold))
                 .tracking(Theme.sectionTracking)
                 .foregroundStyle(Theme.textTertiary)
@@ -659,11 +714,19 @@ struct EnergyPanel: View {
     let fraction: Double?
     let identity: Theme.SessionIdentity
 
+    @Environment(\.appLanguage) private var language
+
+    private static let tokenEnergy = Phrase(en: "Token energy", th: "พลังงาน token")
+    private static let tokenEnergyLabel = Phrase(en: "Token energy, %@ tokens", th: "พลังงาน token, %@ token")
+    private static let burnRate = Phrase(en: "Burn rate", th: "Burn rate")
+    private static let perMinute = Phrase(en: "%@/min", th: "%@/นาที")
+    private static let unavailable = Phrase(en: "Unavailable", th: "ไม่มีข้อมูล")
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             HStack(alignment: .top, spacing: Theme.Space.l) {
                 VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                    Text("Token energy")
+                    PhraseText(Self.tokenEnergy)
                         .font(Theme.Typography.labelEmphasis)
                         .foregroundStyle(Theme.textTertiary)
                         .tooltip(tip: "energy", edge: .leading, underline: .warm)
@@ -674,22 +737,22 @@ struct EnergyPanel: View {
                         .minimumScaleFactor(0.6)
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Token energy, \(Format.tokens(total)) tokens")
+                .accessibilityLabel(Self.tokenEnergyLabel.format(in: language, Format.tokens(total)))
 
                 Spacer(minLength: Theme.Space.s)
 
                 VStack(alignment: .trailing, spacing: Theme.Space.xs) {
-                    Text("Burn rate")
+                    PhraseText(Self.burnRate)
                         .font(Theme.Typography.body)
                         .foregroundStyle(Theme.textTertiary)
                         .tooltip(tip: "burn", edge: .trailing, underline: .warm)
                     if let burnRatePerMinute {
-                        Text("\(Format.tokens(Int(burnRatePerMinute.rounded())))/min")
+                        Text(Self.perMinute.format(in: language, Format.tokens(Int(burnRatePerMinute.rounded()))))
                             .font(Theme.Typography.panelValue)
                             .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
                     } else {
-                        Text("Unavailable")
+                        PhraseText(Self.unavailable)
                             .font(Theme.Typography.body)
                             .foregroundStyle(Theme.textTertiary)
                             .lineLimit(1)
@@ -755,13 +818,24 @@ struct EnergyPanel: View {
 /// view. A cache read costs roughly a tenth of a fresh input token, so folding
 /// the three into one "input" figure would make the display disagree with the
 /// bill by an order of magnitude on the cheap part.
+/// Copy for `TokenBreakdownColumn`, held outside it because a generic type
+/// cannot carry a static stored property.
+private enum TokenBreakdownCopy {
+    static let title = Phrase(en: "TOKEN BREAKDOWN", th: "รายละเอียด Token")
+    static let thinkingSuffix = Phrase(en: "(%@ thinking)", th: "(คิด %@)")
+    static let categoryTokens = Phrase(en: "%@, %@ tokens", th: "%@, %@ token")
+    static let ofTheTotal = Phrase(en: ", %@ of the total", th: ", %@ ของทั้งหมด")
+}
+
 struct TokenBreakdownColumn<Well: View>: View {
     let usage: TokenUsage
     @ViewBuilder let well: Well
 
+    @Environment(\.appLanguage) private var language
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
-            SectionEyebrow("TOKEN BREAKDOWN")
+            SectionEyebrow(TokenBreakdownCopy.title)
             compositionBar
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                 ForEach(Theme.TokenCategory.allCases, id: \.self) { category in
@@ -842,7 +916,7 @@ struct TokenBreakdownColumn<Well: View>: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
             if category == .output, usage.thinking > 0 {
-                Text("(\(Format.tokens(usage.thinking)) thinking)")
+                Text(TokenBreakdownCopy.thinkingSuffix.format(in: language, Format.tokens(usage.thinking)))
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textQuaternary)
                     .lineLimit(1)
@@ -869,10 +943,9 @@ struct TokenBreakdownColumn<Well: View>: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label(category, amount: amount, fraction: share))
     }
-
     private func label(_ category: Theme.TokenCategory, amount: Int, fraction: Double?) -> String {
-        var text = "\(category.label), \(Format.tokens(amount)) tokens"
-        if let fraction { text += ", \(Format.share(fraction)) of the total" }
+        var text = TokenBreakdownCopy.categoryTokens.format(in: language, category.label, Format.tokens(amount))
+        if let fraction { text += TokenBreakdownCopy.ofTheTotal.format(in: language, Format.share(fraction)) }
         return text
     }
 }
@@ -895,7 +968,9 @@ struct ContextWell: View {
     let detail: String?
     /// The measured figure shown when there is no limit to measure it against.
     let amount: String?
-    let reason: String?
+    let reason: Phrase?
+
+    @Environment(\.appLanguage) private var language
 
     init(fraction: Double, detail: String) {
         self.fraction = fraction
@@ -904,26 +979,26 @@ struct ContextWell: View {
         self.reason = nil
     }
 
-    private init(amount: String?, reason: String) {
+    private init(amount: String?, reason: Phrase) {
         self.fraction = nil
         self.detail = nil
         self.amount = amount
         self.reason = reason
     }
 
-    static func unavailable(reason: String) -> ContextWell {
+    static func unavailable(reason: Phrase) -> ContextWell {
         ContextWell(amount: nil, reason: reason)
     }
 
     /// The amount is known and the limit is not: print the figure, say why
     /// there is no bar, and never divide by a guess.
-    static func amountOnly(amount: String, reason: String) -> ContextWell {
+    static func amountOnly(amount: String, reason: Phrase) -> ContextWell {
         ContextWell(amount: amount, reason: reason)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Text("Context window")
+            PhraseText(Self.title)
                 .font(Theme.Typography.label)
                 .foregroundStyle(Theme.textTertiary)
                 .tooltip(tip: "ctx", edge: .leading)
@@ -933,7 +1008,7 @@ struct ContextWell: View {
             } else if let amount {
                 figureWithoutALimit(amount)
             } else {
-                UnavailableView("Context window unavailable", reason: reason, compact: true)
+                UnavailableView(Self.unavailableTitle, reason: reason, compact: true)
             }
         }
         .padding(Theme.Space.l)
@@ -943,6 +1018,28 @@ struct ContextWell: View {
                 .fill(Theme.surfaceInset)
         )
     }
+
+    private static let title = Phrase(en: "Context window", th: "Context window")
+    private static let unavailableTitle = Phrase(
+        en: "Context window unavailable",
+        th: "ไม่มีข้อมูล context window"
+    )
+    private static let usedSeverityEstimated = Phrase(
+        en: "%@ used \u{00B7} %@ \u{00B7} Estimated",
+        th: "ใช้ไป %@ \u{00B7} %@ \u{00B7} ค่าประมาณ"
+    )
+    private static let contextWindowFigure = Phrase(en: "Context window, %@.", th: "Context window, %@")
+    private static let contextWindowFigureReason = Phrase(en: "Context window, %@. %@", th: "Context window, %@ %@")
+    private static let contextWindowEstimated = Phrase(
+        en: """
+        Context window, estimated %@ used, %@. The limit comes from Claudence's \
+        own model table, not from the transcript.
+        """,
+        th: """
+        Context window ใช้ไปประมาณ %@, %@ ขีดจำกัดมาจากตารางโมเดลของ Claudence เอง \
+        ไม่ใช่ค่าที่ transcript ระบุไว้
+        """
+    )
 
     /// The amount with no bar behind it. No severity glyph and no colour: both
     /// would be claims about how close this request is to a limit nobody has.
@@ -954,8 +1051,8 @@ struct ContextWell: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
 
-            if let reason, !reason.isEmpty {
-                Text(reason)
+            if let reason {
+                PhraseText(reason)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(2)
@@ -965,7 +1062,8 @@ struct ContextWell: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            reason.map { "Context window, \(amount). \($0)" } ?? "Context window, \(amount)"
+            reason.map { Self.contextWindowFigureReason.format(in: language, amount, $0.string(in: language)) }
+                ?? Self.contextWindowFigure.format(in: language, amount)
         )
     }
 
@@ -988,7 +1086,13 @@ struct ContextWell: View {
                 Image(systemName: Theme.glyph(for: severity))
                     .font(.system(size: Theme.Bar.statusGlyph))
                     .foregroundStyle(Theme.color(for: severity))
-                Text("\(Format.percent(percent)) used \u{00B7} \(Theme.name(for: severity).capitalized) \u{00B7} Estimated")
+                Text(
+                    Self.usedSeverityEstimated.format(
+                        in: language,
+                        Format.percent(percent),
+                        Theme.name(for: severity).capitalized
+                    )
+                )
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textQuaternary)
                     .lineLimit(1)
@@ -1005,8 +1109,7 @@ struct ContextWell: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "Context window, estimated \(Format.percent(percent)) used, \(Theme.name(for: severity)). "
-            + "The limit comes from Claudence's own model table, not from the transcript."
+            Self.contextWindowEstimated.format(in: language, Format.percent(percent), Theme.name(for: severity))
         )
     }
 }
@@ -1017,18 +1120,20 @@ struct ContextWell: View {
 /// EFFICIENCY block, and anything else shaped like it.
 struct MetricColumn: View {
     struct Row: Identifiable {
-        let name: String
+        let name: Phrase
         let value: String?
         let tip: String?
-        let unavailable: String
+        let unavailable: Phrase
         var estimated: Bool = false
 
-        var id: String { name }
+        var id: String { name.en }
     }
 
-    let title: String
+    let title: Phrase
     let rows: [Row]
-    let footnote: String
+    let footnote: Phrase
+
+    @Environment(\.appLanguage) private var language
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
@@ -1041,7 +1146,7 @@ struct MetricColumn: View {
                         .frame(height: 1)
                 }
             }
-            Text(footnote)
+            PhraseText(footnote)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1055,19 +1160,19 @@ struct MetricColumn: View {
     private func metricRow(_ row: Row) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                Text(row.name)
+                PhraseText(row.name)
                     .font(Theme.Typography.body)
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: Theme.Space.xs)
-                Text(row.value ?? row.unavailable)
+                Text(row.value ?? row.unavailable.string(in: language))
                     .font(Theme.Typography.numeric)
                     .foregroundStyle(row.value == nil ? Theme.textTertiary : Theme.textPrimary)
                     .lineLimit(1)
             }
             if row.estimated, row.value != nil {
-                Text("Estimated")
+                PhraseText(Self.estimated)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.textQuaternary)
                     .padding(.horizontal, Theme.Space.s)
@@ -1080,9 +1185,22 @@ struct MetricColumn: View {
         .accessibilityLabel(spoken(row))
     }
 
+    private static let estimated = Phrase(en: "Estimated", th: "ค่าประมาณ")
+    private static let nameValue = Phrase(en: "%@, %@", th: "%@, %@")
+    private static let nameValueEstimated = Phrase(en: "%@, %@, estimated", th: "%@, %@, เป็นค่าประมาณ")
+
     private func spoken(_ row: Row) -> String {
-        guard let value = row.value else { return "\(row.name), \(row.unavailable.lowercased())" }
-        return row.estimated ? "\(row.name), \(value), estimated" : "\(row.name), \(value)"
+        guard let value = row.value else {
+            // Lowercased only for English, where "Unavailable" reads as a
+            // sentence fragment mid-phrase; Thai has no case to adjust.
+            let unavailable = language == .english
+                ? row.unavailable.string(in: language).lowercased()
+                : row.unavailable.string(in: language)
+            return Self.nameValue.format(in: language, row.name.string(in: language), unavailable)
+        }
+        return row.estimated
+            ? Self.nameValueEstimated.format(in: language, row.name.string(in: language), value)
+            : Self.nameValue.format(in: language, row.name.string(in: language), value)
     }
 }
 

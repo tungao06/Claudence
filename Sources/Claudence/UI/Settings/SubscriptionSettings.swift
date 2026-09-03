@@ -26,10 +26,12 @@ struct SubscriptionSettings: View {
     /// would either reject the keystroke or silently round it away.
     @State private var text: String = ""
 
+    @Environment(\.appLanguage) private var language
+
     var body: some View {
-        SettingsSection(title: "Subscription") {
+        SettingsSection(title: Self.sectionTitle) {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
-                Text("Plan price")
+                PhraseText(Self.planPrice)
                     .font(Theme.Typography.cardTitle.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
 
@@ -43,15 +45,15 @@ struct SubscriptionSettings: View {
 
     private var priceField: some View {
         HStack(spacing: Theme.Space.xs) {
-            Text("$")
+            PhraseText(Self.dollarSign)
                 .font(Theme.Typography.body)
                 .foregroundStyle(Theme.textTertiary)
-            TextField("Not set", text: $text)
+            TextField(Self.notSet.string(in: language), text: $text)
                 .textFieldStyle(.plain)
                 .font(Theme.Typography.body)
                 .foregroundStyle(Theme.textPrimary)
                 .onChange(of: text) { _, newValue in commit(newValue) }
-            Text("/ month")
+            PhraseText(Self.perMonth)
                 .font(Theme.Typography.help)
                 .foregroundStyle(Theme.textQuaternary)
         }
@@ -65,11 +67,11 @@ struct SubscriptionSettings: View {
             RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)
         )
-        .accessibilityLabel("Subscription price per month")
+        .accessibilityLabel(Self.accessibilityTitle, in: language)
         .accessibilityValue(
-            preferences.subscriptionMonthlyPrice.map { Format.cost($0) } ?? "not set"
+            preferences.subscriptionMonthlyPrice.map { Format.cost($0) } ?? Self.notSet.string(in: language)
         )
-        .accessibilityHint(Self.explanation)
+        .accessibilityHint(Self.explanation.string(in: language))
     }
 
     /// Blank clears the preference back to "not set" rather than to zero --
@@ -94,9 +96,29 @@ struct SubscriptionSettings: View {
             : String(price)
     }
 
-    private static let explanation = """
-    What this subscription costs you, so the API-equivalent estimate below \
-    reads beside a real price instead of standing on its own. Not published \
-    anywhere Claudence can read, so nothing is shown until you type it here.
-    """
+    private static let sectionTitle = Phrase(en: "Subscription", th: "แผนสมัครสมาชิก")
+
+    private static let planPrice = Phrase(en: "Plan price", th: "ราคาแผน")
+
+    private static let dollarSign = Phrase.untranslated("$")
+    private static let notSet = Phrase(en: "Not set", th: "ยังไม่ได้ตั้งค่า")
+
+    private static let perMonth = Phrase(en: "/ month", th: "/ เดือน")
+
+    private static let accessibilityTitle = Phrase(
+        en: "Subscription price per month",
+        th: "ราคาแผนสมัครสมาชิกต่อเดือน"
+    )
+
+    private static let explanation = Phrase(
+        en: """
+        What this subscription costs you, so the API-equivalent estimate below \
+        reads beside a real price instead of standing on its own. Not published \
+        anywhere Claudence can read, so nothing is shown until you type it here.
+        """,
+        th: """
+        ค่าใช้จ่ายของแผนสมัครสมาชิกนี้ เพื่อให้ค่าประมาณมูลค่าเทียบเท่า API ด้านล่างมีราคาจริงเทียบเคียง \
+        แทนที่จะยืนอยู่ลำพัง ไม่มีที่ใดเผยแพร่ตัวเลขนี้ให้ Claudence อ่านได้ จึงยังไม่แสดงจนกว่าคุณจะพิมพ์เอง
+        """
+    )
 }

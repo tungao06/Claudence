@@ -34,7 +34,7 @@ import ClaudenceCore
 /// rule, because nobody now has to tell coral from amber to learn anything.
 struct PowerHero: View {
     /// Window name, e.g. "Claude Power" or `UsageWindow.displayName`.
-    let title: String
+    let title: Phrase
     /// The window's raw key, e.g. `five_hour`. Chooses the fill's identity and
     /// nothing else; an unrecognised key takes the third identity rather than
     /// failing, because a fill has to be some colour.
@@ -45,17 +45,37 @@ struct PowerHero: View {
     /// When the window rolls over, if the source reported it.
     let resetsAt: Date?
     /// Message shown in place of the reading when `percentUsed` is nil.
-    let unavailableMessage: String
+    let unavailableMessage: Phrase
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
 
+    /// For a caller that has not yet converted its own strings to `Phrase`.
+    /// See `UnavailableView`'s own two-initialiser note for why this keeps the
+    /// default and the `Phrase` overload does not: a single initialiser taking
+    /// both a `String` and a `Phrase` default would make a zero-argument-style
+    /// call ambiguous.
     init(
         title: String,
         windowName: String = "five_hour",
         percentUsed: Double?,
         resetsAt: Date? = nil,
         unavailableMessage: String = "Usage unavailable"
+    ) {
+        self.title = .untranslated(title)
+        self.windowName = windowName
+        self.percentUsed = percentUsed
+        self.resetsAt = resetsAt
+        self.unavailableMessage = .untranslated(unavailableMessage)
+    }
+
+    init(
+        title: Phrase,
+        windowName: String = "five_hour",
+        percentUsed: Double?,
+        resetsAt: Date? = nil,
+        unavailableMessage: Phrase = UnavailableView.usageUnavailable
     ) {
         self.title = title
         self.windowName = windowName
@@ -81,7 +101,7 @@ struct PowerHero: View {
         VStack(alignment: .leading, spacing: Theme.Popover.heroGap) {
             HStack(alignment: .top, spacing: Theme.Space.m) {
                 VStack(alignment: .leading, spacing: Theme.Popover.heroLabelGap) {
-                    Text(title)
+                    PhraseText(title)
                         .font(Theme.Typography.labelEmphasis)
                         .tracking(Theme.heroLabelTracking)
                         .foregroundStyle(Theme.textTertiary)
@@ -113,7 +133,7 @@ struct PowerHero: View {
                 .strokeBorder(Theme.Hero.panelBorder)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenLabel)
+        .accessibilityLabel(spokenLabel, in: language)
     }
 
     // MARK: - Reading
@@ -127,12 +147,18 @@ struct PowerHero: View {
                 // the two have to be separate views. The rounding is the same
                 // rounding, deliberately, so the hero and every other reading of
                 // this window agree to the digit.
-                Text("\(Int(percent.rounded()))")
+                //
+                // Neither of the two views below is a word: a bare digit
+                // string and the `%` sign are identical in both languages, so
+                // there is nothing here for `Phrase` to carry.
+                let wholePercent = "\(Int(percent.rounded()))"
+                Text(wholePercent)
                     .font(Theme.Typography.hero)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-                Text("%")
+                let percentSign = "%"
+                Text(percentSign)
                     .font(Theme.Typography.heroUnit)
                     .foregroundStyle(Theme.textQuaternary)
                 // The only place severity is stated in the popover's meter, and
@@ -151,7 +177,7 @@ struct PowerHero: View {
         // being absent is no reason to withhold the other.
         if let time = Format.timeUntil(resetsAt) {
             VStack(alignment: .trailing, spacing: Theme.Popover.heroResetGap) {
-                Text("Resets in")
+                PhraseText(Strings.resetsIn)
                     .font(Theme.Typography.help)
                     .foregroundStyle(Theme.textQuaternary)
                 Text(time)
@@ -172,11 +198,18 @@ struct PowerHero: View {
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(
-                Format.resetStamp(resetsAt).map { "Resets in \(time), at \($0)" }
-                    ?? "Resets in \(time)"
-            )
+            .accessibilityLabel(resetLabel(time: time), in: language)
         }
+    }
+
+    private func resetLabel(time: String) -> Phrase {
+        guard let stamp = Format.resetStamp(resetsAt) else {
+            return Phrase(en: "Resets in \(time)", th: "รีเซ็ตใน \(time)")
+        }
+        return Phrase(
+            en: "Resets in \(time), at \(stamp)",
+            th: "รีเซ็ตใน \(time) เวลา \(stamp)"
+        )
     }
 
     // MARK: - Bar
@@ -217,15 +250,22 @@ struct PowerHero: View {
         )
     }
 
-    private var spokenLabel: String {
+    private var spokenLabel: Phrase {
         guard let percent = clampedPercent, let severity else {
-            return "\(title). \(unavailableMessage)."
+            return Phrase(
+                en: "\(title.en). \(unavailableMessage.en).",
+                th: "\(title.th) \(unavailableMessage.th)"
+            )
         }
-        var parts = ["\(title). \(Format.percent(percent)) used. \(Theme.name(for: severity))."]
+        let usedPercent = Format.percent(percent)
+        let name = Theme.namePhrase(for: severity)
+        var en = "\(title.en). \(usedPercent) used. \(name.en)."
+        var th = "\(title.th) ใช้ไป \(usedPercent) \(name.th)"
         if let time = Format.timeUntil(resetsAt) {
-            parts.append("Resets in \(time).")
+            en += " Resets in \(time)."
+            th += " รีเซ็ตใน \(time)"
         }
-        return parts.joined(separator: " ")
+        return Phrase(en: en, th: th)
     }
 }
 
@@ -254,10 +294,10 @@ struct PowerHero: View {
 /// label still names the severity for anyone who is not looking at the row.
 struct PowerBar: View {
     /// Window name, e.g. `UsageWindow.displayName`.
-    let title: String
+    let title: Phrase
     /// A muted caption beside the name. The design writes `weekly scoped` next
     /// to a model-scoped window and nothing next to the 7-day one.
-    let caption: String?
+    let caption: Phrase?
     /// The window's raw key, e.g. `seven_day`. Chooses the fill's identity.
     let windowName: String
     /// Percent of the window consumed. Nil means the value is not known and the
@@ -268,11 +308,15 @@ struct PowerBar: View {
     /// Track thickness.
     let height: CGFloat
     /// Message shown in place of the bar when `percentUsed` is nil.
-    let unavailableMessage: String
+    let unavailableMessage: Phrase
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
 
+    /// For a caller that has not yet converted its own strings to `Phrase`.
+    /// See `PowerHero`'s own note for why this keeps the default and the
+    /// `Phrase` overload does not.
     init(
         title: String,
         caption: String? = nil,
@@ -281,6 +325,24 @@ struct PowerBar: View {
         resetsAt: Date? = nil,
         height: CGFloat = Theme.Bar.row,
         unavailableMessage: String = "Usage unavailable"
+    ) {
+        self.title = .untranslated(title)
+        self.caption = caption.map(Phrase.untranslated)
+        self.windowName = windowName
+        self.percentUsed = percentUsed
+        self.resetsAt = resetsAt
+        self.height = height
+        self.unavailableMessage = .untranslated(unavailableMessage)
+    }
+
+    init(
+        title: Phrase,
+        caption: Phrase? = nil,
+        windowName: String = "seven_day",
+        percentUsed: Double?,
+        resetsAt: Date? = nil,
+        height: CGFloat = Theme.Bar.row,
+        unavailableMessage: Phrase = UnavailableView.usageUnavailable
     ) {
         self.title = title
         self.caption = caption
@@ -314,18 +376,18 @@ struct PowerBar: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenLabel)
+        .accessibilityLabel(spokenLabel, in: language)
     }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Popover.secondaryCaptionGap) {
-            Text(title)
+            PhraseText(title)
                 .font(Theme.Typography.rowLabel)
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if let caption {
-                Text(caption)
+                PhraseText(caption)
                     .font(Theme.Typography.micro)
                     .foregroundStyle(Theme.textQuaternary)
                     .lineLimit(1)
@@ -373,15 +435,25 @@ struct PowerBar: View {
         )
     }
 
-    private var spokenLabel: String {
-        let name = caption.map { "\(title), \($0)" } ?? title
+    private var spokenLabel: Phrase {
+        let en = caption.map { "\(title.en), \($0.en)" } ?? title.en
+        let th = caption.map { "\(title.th) \($0.th)" } ?? title.th
         guard let percent = clampedPercent, let severity else {
-            return "\(name). \(unavailableMessage)."
+            return Phrase(en: "\(en). \(unavailableMessage.en).", th: "\(th) \(unavailableMessage.th)")
         }
-        var parts = ["\(name). \(Format.percent(percent)) used. \(Theme.name(for: severity))."]
+        let usedPercent = Format.percent(percent)
+        let name = Theme.namePhrase(for: severity)
+        var enLine = "\(en). \(usedPercent) used. \(name.en)."
+        var thLine = "\(th) ใช้ไป \(usedPercent) \(name.th)"
         if let time = Format.timeUntil(resetsAt) {
-            parts.append("Resets in \(time).")
+            enLine += " Resets in \(time)."
+            thLine += " รีเซ็ตใน \(time)"
         }
-        return parts.joined(separator: " ")
+        return Phrase(en: enLine, th: thLine)
     }
+}
+
+/// Words shared between `PowerHero` and `PowerBar`.
+private enum Strings {
+    static let resetsIn = Phrase(en: "Resets in", th: "รีเซ็ตใน")
 }

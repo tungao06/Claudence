@@ -214,7 +214,7 @@ struct DashboardData: Sendable, Equatable {
     /// zero would claim the day produced no output.
     let seriesOutput: [String: Double]
     /// Why the series is empty, when a reason is actually known.
-    let seriesUnavailableReason: String?
+    let seriesUnavailableReason: Phrase?
 
     /// The five-hour window's own series, one point per hour.
     ///
@@ -228,7 +228,7 @@ struct DashboardData: Sendable, Equatable {
     /// `seriesOutput`.
     let hourlySeriesOutput: [String: Double]
     /// Why the hourly series is empty, when a reason is known.
-    let hourlySeriesUnavailableReason: String?
+    let hourlySeriesUnavailableReason: Phrase?
 
     let projects: [ProjectRow]
     let history: [HistoryRow]
@@ -245,7 +245,7 @@ struct DashboardData: Sendable, Equatable {
     /// known: no store at all, or a read the store's own unanswered-query
     /// counter says did not complete. Nil is the ordinary case, including a
     /// real "nothing recorded this month".
-    let monthlyUsageUnavailableReason: String?
+    let monthlyUsageUnavailableReason: Phrase?
 
     /// Nil when today's totals could not be read. Zero is a real answer and is
     /// not the same thing.
@@ -314,15 +314,15 @@ struct DashboardData: Sendable, Equatable {
         burnRates: [String: BurnSample] = [:],
         series: [ChartPoint] = [],
         seriesOutput: [String: Double] = [:],
-        seriesUnavailableReason: String? = nil,
+        seriesUnavailableReason: Phrase? = nil,
         hourlySeries: [ChartPoint] = [],
         hourlySeriesOutput: [String: Double] = [:],
-        hourlySeriesUnavailableReason: String? = nil,
+        hourlySeriesUnavailableReason: Phrase? = nil,
         projects: [ProjectRow] = [],
         history: [HistoryRow] = [],
         monthlyUsage: [MonthlyProjectRow] = [],
         monthlyUsageIncludesSubagentTokens: Bool = true,
-        monthlyUsageUnavailableReason: String? = nil,
+        monthlyUsageUnavailableReason: Phrase? = nil,
         todayUsage: TokenUsage? = nil,
         todayCost: Double? = nil,
         unpricedSessionCount: Int = 0,

@@ -46,6 +46,8 @@ struct SessionsTableView: View {
     /// the card's subtitle, so the copy can never outrun the behaviour.
     let onSelect: ((AISession) -> Void)?
 
+    @Environment(\.appLanguage) private var language
+
     init(
         sessions: [AISession],
         tokenScaleMaximum: Int?,
@@ -71,7 +73,7 @@ struct SessionsTableView: View {
         // working. Active is the running subset and is counted on the tile
         // above, from the same definition.
         DashboardCard(
-            title: "Live sessions",
+            title: Strings.title,
             subtitle: subtitle,
             headerLayout: .inline,
             horizontalPadding: DashboardMetrics.chartCardPaddingHorizontal,
@@ -80,8 +82,8 @@ struct SessionsTableView: View {
             if sessions.isEmpty {
                 // Zero sessions is an ordinary state, not an error.
                 UnavailableView(
-                    "No live sessions",
-                    reason: "Claude Code is not running, or no session is interactive"
+                    Strings.noLiveSessions,
+                    reason: Strings.noLiveSessionsReason
                 )
             } else {
                 LazyVStack(alignment: .leading, spacing: DashboardMetrics.sessionRowGap) {
@@ -95,10 +97,8 @@ struct SessionsTableView: View {
 
     /// The design's note, minus the half of it this card cannot honour when no
     /// handler was supplied.
-    private var subtitle: String {
-        let hover = "hover any value for what it means"
-        guard onSelect != nil else { return hover.prefix(1).uppercased() + hover.dropFirst() }
-        return "Click a row for full detail · " + hover
+    private var subtitle: Phrase {
+        onSelect != nil ? Strings.subtitleWithSelect : Strings.subtitleHoverOnly
     }
 
     // MARK: - Row
@@ -236,8 +236,8 @@ struct SessionsTableView: View {
             if session.subagentCount > 0 {
                 Text(
                     session.subagentCount == 1
-                        ? "1 subagent"
-                        : "\(session.subagentCount) subagents"
+                        ? Strings.oneSubagent.string(in: language)
+                        : Strings.subagentCount.format(in: language, "\(session.subagentCount)")
                 )
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.textTertiary)
@@ -255,14 +255,14 @@ struct SessionsTableView: View {
     private func activityText(_ session: AISession, isCompleted: Bool) -> String {
         guard !isCompleted else {
             let ended = max(0, now.timeIntervalSince(session.lastActivityAt))
-            let endedText = "ended \(Format.duration(ended)) ago"
+            let endedText = Strings.endedAgo.format(in: language, Format.duration(ended))
             // How long ago it stopped is when, not how long, so it survives a
             // compact row. The run length is the duration the setting names.
             guard !isCompact else { return endedText }
             let ran = max(0, session.lastActivityAt.timeIntervalSince(session.startedAt))
-            return endedText + " · \(Format.duration(ran)) run"
+            return endedText + Strings.ranFor.format(in: language, Format.duration(ran))
         }
-        return session.currentActivity?.display ?? "No activity recorded"
+        return session.currentActivity?.display ?? Strings.noActivityRecorded.string(in: language)
     }
 
     // MARK: Column 2: energy
@@ -273,7 +273,7 @@ struct SessionsTableView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             energyBar(session, identity: identity)
-            Text("token energy")
+            PhraseText(Strings.tokenEnergy)
                 .font(Theme.Typography.numeric)
                 .foregroundStyle(Theme.textQuaternary)
                 .lineLimit(1)
@@ -331,7 +331,7 @@ struct SessionsTableView: View {
                 Sparkline(
                     burn.samples,
                     height: Theme.Dashboard.sparklineHeight,
-                    label: "Token rate"
+                    label: Strings.tokenRate.string(in: language)
                 )
                 .frame(width: Theme.Dashboard.sparklineWidth)
             } else {
@@ -353,12 +353,12 @@ struct SessionsTableView: View {
         var parts = [
             "\(session.projectName).",
             "\(Theme.name(for: session.status)).",
-            "\(activityText(session, isCompleted: isCompleted)).",
-            "\(Format.tokens(session.combinedUsage.total)) tokens.",
+            Strings.spokenPeriod.format(in: language, activityText(session, isCompleted: isCompleted)),
+            Strings.spokenTokens.format(in: language, Format.tokens(session.combinedUsage.total)),
         ]
         if let scale = tokenScaleMaximum, scale > 0 {
             let share = min(1, Double(session.combinedUsage.total) / Double(scale))
-            parts.append("\(Format.percent(share * 100)) of the busiest session.")
+            parts.append(Strings.spokenShareOfBusiest.format(in: language, Format.percent(share * 100)))
         }
         // A compact row does not draw the rate, so it does not speak one
         // either. VoiceOver hears the row that is there, not the row that would
@@ -366,18 +366,63 @@ struct SessionsTableView: View {
         if !isCompact {
             let burn = burnRates[session.id] ?? .unavailable
             if let rate = burn.tokensPerMinute {
-                parts.append("\(Format.tokens(Int(rate.rounded()))) tokens per minute.")
+                parts.append(Strings.spokenTokensPerMinute.format(in: language, Format.tokens(Int(rate.rounded()))))
             } else {
-                parts.append("Burn rate unavailable.")
+                parts.append(Strings.spokenBurnRateUnavailable.string(in: language))
             }
         }
         if session.subagentCount > 0 {
             parts.append(
                 session.subagentCount == 1
-                    ? "1 subagent."
-                    : "\(session.subagentCount) subagents."
+                    ? Strings.spokenOneSubagent.string(in: language)
+                    : Strings.spokenSubagentCount.format(in: language, "\(session.subagentCount)")
             )
         }
         return parts.joined(separator: " ")
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let title = Phrase(en: "Live sessions", th: "Session ที่กำลังทำงาน")
+    static let subtitleHoverOnly = Phrase(
+        en: "Hover any value for what it means",
+        th: "วางเมาส์บนค่าใดก็ได้เพื่อดูความหมาย"
+    )
+    static let subtitleWithSelect = Phrase(
+        en: "Click a row for full detail · hover any value for what it means",
+        th: "คลิกแถวเพื่อดูรายละเอียดทั้งหมด · วางเมาส์บนค่าใดก็ได้เพื่อดูความหมาย"
+    )
+    static let noLiveSessions = Phrase(en: "No live sessions", th: "ไม่มี session ที่กำลังทำงาน")
+    static let noLiveSessionsReason = Phrase(
+        en: "Claude Code is not running, or no session is interactive",
+        th: "Claude Code ไม่ได้ทำงานอยู่ หรือไม่มี session ใดที่โต้ตอบได้"
+    )
+
+    static let oneSubagent = Phrase(en: "1 subagent", th: "1 subagent")
+    static let subagentCount = Phrase(en: "%@ subagents", th: "%@ subagent")
+
+    static let endedAgo = Phrase(en: "ended %@ ago", th: "จบเมื่อ %@ ที่แล้ว")
+    static let ranFor = Phrase(en: " · %@ run", th: " · ทำงานนาน %@")
+    static let noActivityRecorded = Phrase(en: "No activity recorded", th: "ไม่มีกิจกรรมบันทึกไว้")
+    static let tokenEnergy = Phrase(en: "token energy", th: "พลังงาน token")
+    static let tokenRate = Phrase(en: "Token rate", th: "อัตราการใช้ token")
+
+    static let spokenPeriod = Phrase(en: "%@.", th: "%@")
+    static let spokenTokens = Phrase(en: "%@ tokens.", th: "%@ token")
+    static let spokenShareOfBusiest = Phrase(
+        en: "%@ of the busiest session.",
+        th: "%@ ของ session ที่ใช้งานมากที่สุด"
+    )
+    static let spokenTokensPerMinute = Phrase(
+        en: "%@ tokens per minute.",
+        th: "%@ token ต่อนาที"
+    )
+    static let spokenBurnRateUnavailable = Phrase(
+        en: "Burn rate unavailable.",
+        th: "ไม่มีข้อมูลอัตราการใช้"
+    )
+    static let spokenOneSubagent = Phrase(en: "1 subagent.", th: "1 subagent")
+    static let spokenSubagentCount = Phrase(en: "%@ subagents.", th: "%@ subagent")
 }

@@ -35,6 +35,7 @@ struct StatTilesView: View {
     /// about live-only mode touches: burn rate and active sessions, both read
     /// straight off the live registry.
     @Environment(\.liveOnlyMode) private var liveOnlyMode
+    @Environment(\.appLanguage) private var language
 
     /// One tile's tint, ink and border, from `Theme.Tile`.
     ///
@@ -103,7 +104,7 @@ struct StatTilesView: View {
     /// time as its own headline.
     private var tokensTile: some View {
         tile(
-            label: "Tokens today",
+            label: Strings.tokensToday,
             tint: Self.warmTint,
             tooltipKey: "today",
             spoken: spokenTokens
@@ -112,7 +113,7 @@ struct StatTilesView: View {
                 value(Format.tokens(usage.total))
                 changeCaption(ink: Self.warmTint.ink)
             } else {
-                UnavailableView("Token usage unavailable", compact: true)
+                UnavailableView(Strings.tokenUsageUnavailable, compact: true)
             }
         }
     }
@@ -130,19 +131,19 @@ struct StatTilesView: View {
             HStack(spacing: Theme.Space.xxs) {
                 Image(systemName: change < 0 ? "arrow.down" : "arrow.up")
                     .font(.system(size: Theme.Bar.statusGlyph, weight: .semibold))
-                Text("\(Format.percent(abs(change) * 100)) vs yesterday")
+                Text(Strings.vsYesterday.format(in: language, Format.percent(abs(change) * 100)))
             }
             .font(Theme.Typography.help)
             .foregroundStyle(ink)
             .lineLimit(1)
         } else {
-            caption("across all projects", ink: ink)
+            caption(Strings.acrossAllProjects, ink: ink)
         }
     }
 
     private var burnTile: some View {
         tile(
-            label: "Burn rate",
+            label: Strings.burnRate,
             tint: Self.lavenderTint,
             tooltipKey: "burn",
             spoken: spokenBurn
@@ -151,11 +152,11 @@ struct StatTilesView: View {
                 // `/min` set apart from the figure, at the design's 14 px: it
                 // is a unit, not another digit.
                 value(Format.tokens(Int(rate.rounded())), unit: "/min")
-                caption(burnDenominator, ink: Self.lavenderTint.ink)
+                caption(.untranslated(burnDenominator), ink: Self.lavenderTint.ink)
             } else {
                 UnavailableView(
-                    "Rate unavailable",
-                    reason: "Too few samples to state a rate",
+                    Strings.rateUnavailable,
+                    reason: Strings.tooFewSamples,
                     compact: true
                 )
             }
@@ -169,8 +170,10 @@ struct StatTilesView: View {
     /// describing a measurement this application does not take.
     private var burnDenominator: String {
         let count = data.sessionsReportingBurn
-        let sessions = count == 1 ? "1 session" : "\(count) sessions"
-        return "rolling \(DashboardMetrics.burnWindowMinutes) min · \(sessions)"
+        let sessions = count == 1
+            ? Strings.oneSession.string(in: language)
+            : Strings.sessionCount.format(in: language, "\(count)")
+        return Strings.rollingMinutes.format(in: language, "\(DashboardMetrics.burnWindowMinutes)", sessions)
     }
 
     /// Active over live, both counted off the same array.
@@ -201,7 +204,7 @@ struct StatTilesView: View {
     /// does.
     private var activeTile: some View {
         tile(
-            label: "Active sessions",
+            label: Strings.activeSessions,
             tint: Self.mintTint,
             tooltipKey: "active",
             spoken: spokenActive
@@ -209,8 +212,8 @@ struct StatTilesView: View {
             value("\(data.activeSessionCount)")
             caption(
                 data.liveProjectCount == 1
-                    ? "1 project"
-                    : "\(data.liveProjectCount) projects",
+                    ? Strings.oneProject
+                    : .untranslated(Strings.projectCount.format(in: language, "\(data.liveProjectCount)")),
                 ink: Self.mintTint.ink
             )
         }
@@ -226,23 +229,23 @@ struct StatTilesView: View {
     /// the other question, the one it answers wrongly.
     private var costTile: some View {
         tile(
-            label: "API equivalent today",
+            label: Strings.apiEquivalentToday,
             tint: Self.amberTint,
             tooltipKey: "cost",
             spoken: spokenCost
         ) {
             if let cost = data.todayCost {
                 value(Format.cost(cost))
-                caption(costCaption, ink: Self.amberTint.ink)
+                caption(.untranslated(costCaption), ink: Self.amberTint.ink)
             } else {
                 UnavailableView(
-                    "API equivalent unavailable",
-                    reason: unpricedReason ?? "No price is known for one of today's models",
+                    Strings.apiEquivalentUnavailable,
+                    reason: unpricedReason ?? Strings.noPriceKnown,
                     compact: true
                 )
             }
             if let subscriptionLine {
-                caption(subscriptionLine, ink: Self.amberTint.ink)
+                caption(.untranslated(subscriptionLine), ink: Self.amberTint.ink)
             }
         }
     }
@@ -261,9 +264,9 @@ struct StatTilesView: View {
     private var subscriptionLine: String? {
         guard let price = data.subscriptionMonthlyPrice else { return nil }
         guard let plan = data.accountPlanDisplayName else {
-            return "Your plan costs \(Format.cost(price))/mo"
+            return Strings.yourPlanCosts.format(in: language, Format.cost(price))
         }
-        return "\(plan) costs \(Format.cost(price))/mo"
+        return Strings.planCosts.format(in: language, plan, Format.cost(price))
     }
 
     /// The word "estimated" travels with the number wherever it goes, and the
@@ -271,37 +274,37 @@ struct StatTilesView: View {
     private var costCaption: String {
         var text: String
         switch data.unpricedSessionCount {
-        case 0: text = "estimated, not billed"
-        case 1: text = "estimated, 1 session unpriced"
-        default: text = "estimated, \(data.unpricedSessionCount) sessions unpriced"
+        case 0: text = Strings.estimatedNotBilled.string(in: language)
+        case 1: text = Strings.estimatedOneUnpriced.string(in: language)
+        default: text = Strings.estimatedCountUnpriced.format(in: language, "\(data.unpricedSessionCount)")
         }
         // Only ever appended, never substituted for the sentence above: how
         // incomplete the estimate is and how old its rates are are two separate
         // facts and the caption owes the reader both.
         if let days = data.priceTableStaleDays {
-            text += " \u{00B7} prices \(days) days old"
+            text += Strings.pricesDaysOld.format(in: language, "\(days)")
         }
         return text
     }
 
-    private var unpricedReason: String? {
+    private var unpricedReason: Phrase? {
         guard data.unpricedSessionCount > 0 else { return nil }
         return data.unpricedSessionCount == 1
-            ? "1 session has no price for its model"
-            : "\(data.unpricedSessionCount) sessions have no price for their model"
+            ? Strings.oneSessionNoPrice
+            : .untranslated(Strings.sessionsNoPrice.format(in: language, "\(data.unpricedSessionCount)"))
     }
 
     // MARK: - Chrome
 
     private func tile<Content: View>(
-        label: String,
+        label: Phrase,
         tint: Tint,
         tooltipKey: String,
         spoken: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: DashboardMetrics.statTileContentGap) {
-            Text(label.uppercased())
+            Text(label.string(in: language).uppercased())
                 .font(Theme.Typography.label)
                 // `.04em` at 11 px, not the popover section heading's `.14em`.
                 .tracking(DashboardMetrics.statTileLabelTracking)
@@ -360,8 +363,8 @@ struct StatTilesView: View {
         .minimumScaleFactor(0.6)
     }
 
-    private func caption(_ text: String, ink: Color) -> some View {
-        Text(text)
+    private func caption(_ phrase: Phrase, ink: Color) -> some View {
+        PhraseText(phrase)
             .font(Theme.Typography.help)
             .foregroundStyle(ink)
             .lineLimit(1)
@@ -371,22 +374,30 @@ struct StatTilesView: View {
     // MARK: - Spoken labels
 
     private var spokenTokens: String {
-        guard let usage = data.todayUsage else { return "Tokens today, usage unavailable." }
-        var text = "Tokens today, \(Format.tokens(usage.total))."
+        guard let usage = data.todayUsage else {
+            return Strings.spokenTokensUnavailable.string(in: language)
+        }
+        var text = Strings.spokenTokensToday.format(in: language, Format.tokens(usage.total))
         if let change = data.todayVersusYesterday {
-            let direction = change < 0 ? "down" : "up"
-            text += " \(direction.capitalized) \(Format.percent(abs(change) * 100)) "
-            text += "on yesterday."
+            let direction = change < 0 ? Strings.spokenDown : Strings.spokenUp
+            text += Strings.spokenVsYesterday.format(
+                in: language,
+                direction.string(in: language),
+                Format.percent(abs(change) * 100)
+            )
         }
         return text
     }
 
     private var spokenBurn: String {
         guard let rate = data.burnRatePerMinute else {
-            return "Burn rate unavailable. Too few samples to state a rate."
+            return Strings.spokenBurnUnavailable.string(in: language)
         }
-        return "Burn rate, \(Format.tokens(Int(rate.rounded()))) tokens per minute, "
-            + "\(burnDenominator)."
+        return Strings.spokenBurnRate.format(
+            in: language,
+            Format.tokens(Int(rate.rounded())),
+            burnDenominator
+        )
     }
 
     /// The same two counts and the same two words the tile prints. A spoken
@@ -394,26 +405,135 @@ struct StatTilesView: View {
     /// is the defect this file is being edited for, one surface further down.
     private var spokenActive: String {
         let live = data.liveSessionCount == 1
-            ? "1 live session"
-            : "\(data.liveSessionCount) live sessions"
+            ? Strings.spokenOneLiveSession.string(in: language)
+            : Strings.spokenLiveSessionCount.format(in: language, "\(data.liveSessionCount)")
         let projects = data.liveProjectCount == 1
-            ? "1 project"
-            : "\(data.liveProjectCount) projects"
-        return "\(data.activeSessionCount) of \(live) active, across \(projects)."
+            ? Strings.oneProject.string(in: language)
+            : Strings.projectCount.format(in: language, "\(data.liveProjectCount)")
+        return Strings.spokenActive.format(
+            in: language,
+            "\(data.activeSessionCount)",
+            live,
+            projects
+        )
     }
 
     private var spokenCost: String {
         var text: String
         if let cost = data.todayCost {
-            text = "API equivalent today, \(Format.cost(cost)). \(costCaption.capitalized). "
-                + "This is what today's tokens would have cost on the API, not an amount owed."
+            text = Strings.spokenApiEquivalent.format(
+                in: language,
+                Format.cost(cost),
+                costCaption.capitalized
+            )
         } else {
-            text = "API equivalent unavailable. "
-                + (unpricedReason ?? "No price is known for one of today's models") + "."
+            text = Strings.spokenApiEquivalentUnavailable.format(
+                in: language,
+                (unpricedReason ?? Strings.noPriceKnown).string(in: language)
+            )
         }
         if let subscriptionLine {
-            text += " \(subscriptionLine)."
+            text += Strings.spokenSubscriptionLine.format(in: language, subscriptionLine)
         }
         return text
     }
+}
+
+// MARK: - Strings
+
+private enum Strings {
+    static let tokensToday = Phrase(en: "Tokens today", th: "Token วันนี้")
+    static let tokenUsageUnavailable = Phrase(
+        en: "Token usage unavailable",
+        th: "ไม่มีข้อมูลการใช้ token"
+    )
+    static let vsYesterday = Phrase(en: "%@ vs yesterday", th: "%@ เทียบกับเมื่อวาน")
+    static let acrossAllProjects = Phrase(en: "across all projects", th: "รวมทุกโปรเจกต์")
+
+    static let burnRate = Phrase(en: "Burn rate", th: "อัตราการใช้")
+    static let rateUnavailable = Phrase(en: "Rate unavailable", th: "ไม่มีข้อมูลอัตราการใช้")
+    static let tooFewSamples = Phrase(
+        en: "Too few samples to state a rate",
+        th: "มีตัวอย่างไม่พอที่จะระบุอัตราการใช้"
+    )
+    static let oneSession = Phrase(en: "1 session", th: "1 session")
+    static let sessionCount = Phrase(en: "%@ sessions", th: "%@ session")
+    static let rollingMinutes = Phrase(
+        en: "rolling %@ min · %@",
+        th: "rolling %@ นาที · %@"
+    )
+
+    static let activeSessions = Phrase(en: "Active sessions", th: "Session ที่กำลังทำงาน")
+    static let oneProject = Phrase(en: "1 project", th: "1 โปรเจกต์")
+    static let projectCount = Phrase(en: "%@ projects", th: "%@ โปรเจกต์")
+
+    static let apiEquivalentToday = Phrase(en: "API equivalent today", th: "มูลค่าเทียบเท่า API วันนี้")
+    static let apiEquivalentUnavailable = Phrase(
+        en: "API equivalent unavailable",
+        th: "ไม่มีข้อมูลมูลค่าเทียบเท่า API"
+    )
+    static let noPriceKnown = Phrase(
+        en: "No price is known for one of today's models",
+        th: "ไม่มีราคาของโมเดลที่ใช้ในวันนี้อย่างน้อยหนึ่งตัว"
+    )
+    static let oneSessionNoPrice = Phrase(
+        en: "1 session has no price for its model",
+        th: "1 session ไม่มีราคาสำหรับโมเดลของมัน"
+    )
+    static let sessionsNoPrice = Phrase(
+        en: "%@ sessions have no price for their model",
+        th: "%@ session ไม่มีราคาสำหรับโมเดลของตัวเอง"
+    )
+    static let yourPlanCosts = Phrase(en: "Your plan costs %@/mo", th: "แผนของคุณมีค่าใช้จ่าย %@/เดือน")
+    static let planCosts = Phrase(en: "%@ costs %@/mo", th: "%@ มีค่าใช้จ่าย %@/เดือน")
+    static let estimatedNotBilled = Phrase(
+        en: "estimated, not billed",
+        th: "ประมาณการ ไม่ได้เรียกเก็บเงินจริง"
+    )
+    static let estimatedOneUnpriced = Phrase(
+        en: "estimated, 1 session unpriced",
+        th: "ประมาณการ มี 1 session ที่ไม่มีราคา"
+    )
+    static let estimatedCountUnpriced = Phrase(
+        en: "estimated, %@ sessions unpriced",
+        th: "ประมาณการ มี %@ session ที่ไม่มีราคา"
+    )
+    static let pricesDaysOld = Phrase(en: " \u{00B7} prices %@ days old", th: " \u{00B7} ราคาเก่า %@ วัน")
+
+    static let spokenTokensUnavailable = Phrase(
+        en: "Tokens today, usage unavailable.",
+        th: "Token วันนี้ ไม่มีข้อมูลการใช้งาน"
+    )
+    static let spokenTokensToday = Phrase(en: "Tokens today, %@.", th: "Token วันนี้ %@")
+    static let spokenDown = Phrase(en: "Down", th: "ลดลง")
+    static let spokenUp = Phrase(en: "Up", th: "เพิ่มขึ้น")
+    static let spokenVsYesterday = Phrase(
+        en: " %@ %@ on yesterday.",
+        th: " %@ %@ เทียบกับเมื่อวาน"
+    )
+    static let spokenBurnUnavailable = Phrase(
+        en: "Burn rate unavailable. Too few samples to state a rate.",
+        th: "ไม่มีข้อมูลอัตราการใช้ มีตัวอย่างไม่พอที่จะระบุอัตราการใช้"
+    )
+    static let spokenBurnRate = Phrase(
+        en: "Burn rate, %@ tokens per minute, %@.",
+        th: "อัตราการใช้ %@ token ต่อนาที %@"
+    )
+    static let spokenOneLiveSession = Phrase(en: "1 live session", th: "1 session ที่ทำงานอยู่")
+    static let spokenLiveSessionCount = Phrase(en: "%@ live sessions", th: "%@ session ที่ทำงานอยู่")
+    static let spokenActive = Phrase(
+        en: "%@ of %@ active, across %@.",
+        th: "%@ จาก %@ ที่ active ครอบคลุม %@"
+    )
+    static let spokenApiEquivalent = Phrase(
+        en: "API equivalent today, %@. %@. "
+            + "This is what today's tokens would have cost on the API, not an amount owed.",
+        th: "มูลค่าเทียบเท่า API วันนี้ %@ %@ "
+            + "นี่คือมูลค่าที่ token วันนี้จะมีราคาเท่าไรถ้าใช้ผ่าน API ไม่ใช่ยอดที่ต้องจ่ายจริง"
+    )
+    static let spokenApiEquivalentUnavailable = Phrase(
+        en: "API equivalent unavailable. %@.",
+        th: "ไม่มีข้อมูลมูลค่าเทียบเท่า API %@"
+    )
+    static let spokenSubscriptionLine = Phrase(en: " %@.", th: " %@")
 }

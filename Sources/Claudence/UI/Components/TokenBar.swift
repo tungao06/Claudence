@@ -24,12 +24,24 @@ struct TokenBar: View {
     /// passes a binding and supplies its own control. Otherwise the bar keeps
     /// its own local UI state and draws its own chevron.
     let expansion: Binding<Bool>?
-    let unavailableMessage: String
+    let unavailableMessage: Phrase
 
     @State private var localExpanded: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.liveIndicators) private var liveIndicators
+    @Environment(\.appLanguage) private var language
 
+    /// The canonical "Token usage unavailable" phrase, for a converted caller
+    /// that wants this view's own default rather than writing its own copy of
+    /// it. Mirrors `UnavailableView.usageUnavailable`.
+    static let tokenUsageUnavailable = Phrase(
+        en: "Token usage unavailable",
+        th: "ไม่มีข้อมูลการใช้งาน token"
+    )
+
+    /// For a caller that has not yet converted its own strings to `Phrase`.
+    /// See `PowerHero`'s own note for why this keeps the default and the
+    /// `Phrase` overload does not.
     init(
         usage: TokenUsage?,
         scaleMaximum: Int? = nil,
@@ -39,6 +51,26 @@ struct TokenBar: View {
         startsExpanded: Bool = false,
         expansion: Binding<Bool>? = nil,
         unavailableMessage: String = "Token usage unavailable"
+    ) {
+        self.usage = usage
+        self.scaleMaximum = scaleMaximum
+        self.severity = severity
+        self.height = height
+        self.isExpandable = isExpandable
+        self.expansion = expansion
+        self.unavailableMessage = .untranslated(unavailableMessage)
+        _localExpanded = State(initialValue: startsExpanded)
+    }
+
+    init(
+        usage: TokenUsage?,
+        scaleMaximum: Int? = nil,
+        severity: Severity = .healthy,
+        height: CGFloat = Theme.Bar.row,
+        isExpandable: Bool = true,
+        startsExpanded: Bool = false,
+        expansion: Binding<Bool>? = nil,
+        unavailableMessage: Phrase
     ) {
         self.usage = usage
         self.scaleMaximum = scaleMaximum
@@ -87,7 +119,7 @@ struct TokenBar: View {
 
     private func summary(_ usage: TokenUsage) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
-            Text("Token energy")
+            PhraseText(Strings.tokenEnergy)
                 .font(Theme.Typography.label)
                 .foregroundStyle(Theme.textSecondary)
             Spacer(minLength: Theme.Space.xs)
@@ -105,19 +137,29 @@ struct TokenBar: View {
                         .rotationEffect(.degrees(localExpanded ? Theme.Motion.disclosureRotation : 0))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(localExpanded ? "Hide token breakdown" : "Show token breakdown")
+                .accessibilityLabel(
+                    localExpanded ? Strings.hideBreakdown : Strings.showBreakdown,
+                    in: language
+                )
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(summaryLabel(usage))
+        .accessibilityLabel(summaryLabel(usage), in: language)
     }
 
-    private func summaryLabel(_ usage: TokenUsage) -> String {
-        var text = "Token energy, \(Format.tokens(usage.total)) total"
-        if let fraction {
-            text += ", \(Format.percent(fraction * 100)) of scale"
+    private func summaryLabel(_ usage: TokenUsage) -> Phrase {
+        let total = Format.tokens(usage.total)
+        guard let fraction else {
+            return Phrase(
+                en: "Token energy, \(total) total",
+                th: "พลังงาน token รวม \(total)"
+            )
         }
-        return text
+        let share = Format.percent(fraction * 100)
+        return Phrase(
+            en: "Token energy, \(total) total, \(share) of scale",
+            th: "พลังงาน token รวม \(total), \(share) ของสเกล"
+        )
     }
 
     // MARK: - Bar
@@ -152,19 +194,19 @@ struct TokenBar: View {
 
     private func breakdown(_ usage: TokenUsage) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            row("Fresh input", usage.freshInput)
-            row("Cache write", usage.cacheCreation)
-            row("Cache read", usage.cacheRead)
-            row("Output", usage.output)
+            row(Theme.TokenCategory.freshInput.labelPhrase, usage.freshInput)
+            row(Theme.TokenCategory.cacheWrite.labelPhrase, usage.cacheCreation)
+            row(Theme.TokenCategory.cacheRead.labelPhrase, usage.cacheRead)
+            row(Theme.TokenCategory.output.labelPhrase, usage.output)
             Divider().overlay(Theme.separator)
-            row("Total", usage.total, emphasised: true)
+            row(Strings.total, usage.total, emphasised: true)
         }
         .padding(.top, Theme.Space.xxs)
     }
 
-    private func row(_ name: String, _ value: Int, emphasised: Bool = false) -> some View {
+    private func row(_ name: Phrase, _ value: Int, emphasised: Bool = false) -> some View {
         HStack(spacing: Theme.Space.xs) {
-            Text(name)
+            PhraseText(name)
                 .font(Theme.Typography.body)
                 .foregroundStyle(emphasised ? Theme.textPrimary : Theme.textSecondary)
                 .lineLimit(1)
@@ -175,6 +217,20 @@ struct TokenBar: View {
                 .lineLimit(1)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name), \(Format.tokens(value)) tokens")
+        .accessibilityLabel(
+            Phrase(
+                en: "\(name.en), \(Format.tokens(value)) tokens",
+                th: "\(name.th), \(Format.tokens(value)) token"
+            ),
+            in: language
+        )
     }
+}
+
+/// Words this file owns.
+private enum Strings {
+    static let tokenEnergy = Phrase(en: "Token energy", th: "พลังงาน token")
+    static let hideBreakdown = Phrase(en: "Hide token breakdown", th: "ซ่อนรายละเอียด token")
+    static let showBreakdown = Phrase(en: "Show token breakdown", th: "แสดงรายละเอียด token")
+    static let total = Phrase(en: "Total", th: "รวม")
 }
