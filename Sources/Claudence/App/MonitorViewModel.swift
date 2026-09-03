@@ -252,7 +252,7 @@ final class MonitorViewModel {
             .sorted { $0.displayName < $1.displayName }
     }
 
-    var usageUnavailableReason: String? {
+    var usageUnavailableReason: Phrase? {
         if case .unavailable(let reason) = usageState { return reason }
         return nil
     }

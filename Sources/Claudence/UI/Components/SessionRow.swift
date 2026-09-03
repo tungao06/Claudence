@@ -418,7 +418,7 @@ struct SessionRow: View {
                 Sparkline(
                     burnHistory,
                     stroke: identity.sparkline,
-                    label: "Token rate"
+                    label: Sparkline.tokenRate
                 )
                 .frame(width: Theme.Bar.sparklineWidth)
             }

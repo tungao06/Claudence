@@ -198,7 +198,7 @@ struct DashboardData: Sendable, Equatable {
     let windows: [UsageWindow]
     /// Set when usage could not be read at all. The whole hero section then
     /// says so rather than drawing empty meters.
-    let usageUnavailableReason: String?
+    let usageUnavailableReason: Phrase?
 
     let sessions: [AISession]
     /// Denominator for the per-session token bars. Nil draws no bar, because a
@@ -308,7 +308,7 @@ struct DashboardData: Sendable, Equatable {
 
     init(
         windows: [UsageWindow] = [],
-        usageUnavailableReason: String? = nil,
+        usageUnavailableReason: Phrase? = nil,
         sessions: [AISession] = [],
         tokenScaleMaximum: Int? = nil,
         burnRates: [String: BurnSample] = [:],

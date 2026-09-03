@@ -61,11 +61,10 @@ struct PowerMeterView: View {
         ) {
             if let reason = data.usageUnavailableReason {
                 // Never a meter at some default fill. See spec section 9.4.
-                // `reason` reaches here as a plain `String` from outside this
-                // file's scope (`ClaudenceCore`'s `UsageState.unavailable`),
-                // which carries no Thai translation to attach; `.untranslated`
-                // marks that honestly rather than inventing one.
-                UnavailableView(UnavailableView.usageUnavailable, reason: .untranslated(reason))
+                // `reason` arrives translated: `UsageState.unavailable` carries
+                // a `Phrase`, so a Keychain refusal or a rate limit reads in
+                // the same language as the sentence above it.
+                UnavailableView(UnavailableView.usageUnavailable, reason: reason)
             } else if data.windows.isEmpty {
                 UnavailableView(UnavailableView.usageUnavailable, reason: Strings.noWindowReported)
             } else {

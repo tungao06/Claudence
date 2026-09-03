@@ -117,6 +117,19 @@ extension Phrase {
         Phrase(en: text, th: text)
     }
 
+    /// Both halves with the same arguments substituted into each, as a
+    /// `Phrase` rather than a `String`.
+    ///
+    /// For a value that has to stay a `Phrase` after substitution because it
+    /// is stored and rendered later -- a usage failure reason carrying an HTTP
+    /// status, say -- rather than being formatted at the moment it is drawn.
+    public func asFormatted(_ arguments: String...) -> Phrase {
+        Phrase(
+            en: format(in: .english, arguments),
+            th: format(in: .thai, arguments)
+        )
+    }
+
     /// The English half with its first letter capitalised, the Thai half
     /// untouched.
     ///

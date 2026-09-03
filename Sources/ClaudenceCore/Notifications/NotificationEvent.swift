@@ -109,42 +109,47 @@ public enum NotificationEvent: Sendable, Equatable {
 
     // MARK: - Wording
 
-    /// Titles come from the spec section 10 table verbatim. They name the event,
-    /// not the instance, so Notification Center groups them sensibly.
-    public var title: String {
+    /// Titles come from the spec section 10 table verbatim, in English. They
+    /// name the event, not the instance, so Notification Center groups them
+    /// sensibly.
+    public func title(in language: AppLanguage) -> String {
         switch self {
         // Built from the constant the deriver fires on, so the notification and
         // the settings row that switches it on cannot name different numbers.
         case .usageThreshold:
-            return "Usage at \(Int(Constants.UsageThreshold.critical))%"
-        case .sessionCompleted: return "Session completed"
+            return Words.usageAt.format(in: language, "\(Int(Constants.UsageThreshold.critical))")
+        case .sessionCompleted: return Words.sessionCompleted.string(in: language)
         // Not in the section 10 table, so it is named to sit beside the row
         // that is: the state, not the instance, in the same two words.
-        case .sessionIdle: return "Session idle"
+        case .sessionIdle: return Words.sessionIdle.string(in: language)
         // Names who is being waited on rather than what the session is doing,
-        // for the same reason `Theme.name(for:)` renders this state as
+        // for the same reason `Theme.namePhrase(for:)` renders this state as
         // "Needs you": a title reading "Session waiting" sits directly above
         // "Session idle" in Notification Center and the two would not separate.
-        case .sessionNeedsInput: return "Session needs you"
+        case .sessionNeedsInput: return Words.sessionNeedsYou.string(in: language)
         }
     }
 
     /// Plain English, and never a fabricated number: anything the snapshot did
     /// not supply is simply left out of the sentence rather than defaulted.
     /// See spec section 9.4.
-    public func body(now: Date = Date()) -> String {
+    public func body(in language: AppLanguage, now: Date = Date()) -> String {
         switch self {
         case .usageThreshold(let window):
-            var sentence = "\(window.displayName) window: "
+            var sentence: String
             if let remaining = window.remainingPercent {
                 // "About" is load-bearing. The API reports a rounded percentage
                 // and the window keeps moving while the notification is queued.
-                sentence += "about \(Format.percent(remaining)) left."
+                sentence = Words.windowAboutLeft.format(
+                    in: language,
+                    window.displayName,
+                    Format.percent(remaining)
+                )
             } else {
-                sentence += "limit reached."
+                sentence = Words.windowLimitReached.format(in: language, window.displayName)
             }
             if let until = Format.timeUntil(window.resetsAt, now: now) {
-                sentence += " Resets in \(until)."
+                sentence += Words.resetsIn.format(in: language, until)
             }
             return sentence
 
@@ -152,10 +157,14 @@ public enum NotificationEvent: Sendable, Equatable {
             let elapsed = max(0, session.lastActivityAt.timeIntervalSince(session.startedAt))
             let tokens = session.usage.total
             if tokens > 0 {
-                return "\(session.projectName) ran for \(Format.duration(elapsed)) "
-                    + "and used \(Format.tokens(tokens)) tokens."
+                return Words.ranForAndUsed.format(
+                    in: language,
+                    session.projectName,
+                    Format.duration(elapsed),
+                    Format.tokens(tokens)
+                )
             }
-            return "\(session.projectName) ran for \(Format.duration(elapsed))."
+            return Words.ranFor.format(in: language, session.projectName, Format.duration(elapsed))
 
         case .sessionIdle(let session):
             // Same three facts as a completion, and deliberately no fourth. The
@@ -168,10 +177,18 @@ public enum NotificationEvent: Sendable, Equatable {
             let elapsed = max(0, session.lastActivityAt.timeIntervalSince(session.startedAt))
             let tokens = session.usage.total
             if tokens > 0 {
-                return "\(session.projectName) stopped working after \(Format.duration(elapsed)) "
-                    + "and \(Format.tokens(tokens)) tokens."
+                return Words.stoppedAfterAnd.format(
+                    in: language,
+                    session.projectName,
+                    Format.duration(elapsed),
+                    Format.tokens(tokens)
+                )
             }
-            return "\(session.projectName) stopped working after \(Format.duration(elapsed))."
+            return Words.stoppedAfter.format(
+                in: language,
+                session.projectName,
+                Format.duration(elapsed)
+            )
 
         case .sessionNeedsInput(let session):
             // The one thing a reader wants here is what was asked, and that is
@@ -182,8 +199,50 @@ public enum NotificationEvent: Sendable, Equatable {
             // since the session started says nothing about how long the
             // question has been sitting there, and printing it would invite
             // exactly that reading.
-            return "\(session.projectName) is waiting for your answer."
+            return Words.waitingForAnswer.format(in: language, session.projectName)
         }
+    }
+
+    /// The wording, both languages, in one place.
+    ///
+    /// Substitution is per language rather than by assembling an English
+    /// sentence and translating the pieces, because Thai does not put the
+    /// project name, the duration and the token count where English does.
+    enum Words {
+        static let usageAt = Phrase(en: "Usage at %@%", th: "ใช้งานถึง %@%")
+        static let sessionCompleted = Phrase(en: "Session completed", th: "Session เสร็จแล้ว")
+        static let sessionIdle = Phrase(en: "Session idle", th: "Session ว่างอยู่")
+        static let sessionNeedsYou = Phrase(en: "Session needs you", th: "Session ต้องการคุณ")
+
+        static let windowAboutLeft = Phrase(
+            en: "%@ window: about %@ left.",
+            th: "หน้าต่าง %@: เหลือประมาณ %@"
+        )
+        static let windowLimitReached = Phrase(
+            en: "%@ window: limit reached.",
+            th: "หน้าต่าง %@: ถึงขีดจำกัดแล้ว"
+        )
+        static let resetsIn = Phrase(en: " Resets in %@.", th: " รีเซ็ตอีก %@")
+
+        static let ranForAndUsed = Phrase(
+            en: "%@ ran for %@ and used %@ tokens.",
+            th: "%@ ทำงาน %@ ใช้ไป %@ token"
+        )
+        static let ranFor = Phrase(en: "%@ ran for %@.", th: "%@ ทำงาน %@")
+
+        static let stoppedAfterAnd = Phrase(
+            en: "%@ stopped working after %@ and %@ tokens.",
+            th: "%@ หยุดทำงานหลังจาก %@ และ %@ token"
+        )
+        static let stoppedAfter = Phrase(
+            en: "%@ stopped working after %@.",
+            th: "%@ หยุดทำงานหลังจาก %@"
+        )
+
+        static let waitingForAnswer = Phrase(
+            en: "%@ is waiting for your answer.",
+            th: "%@ กำลังรอคำตอบจากคุณ"
+        )
     }
 }
 

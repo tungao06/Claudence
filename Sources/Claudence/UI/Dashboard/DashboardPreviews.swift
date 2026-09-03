@@ -553,7 +553,10 @@ private enum DashboardFixture {
     /// must say what is missing without a single fabricated value.
     static let empty = DashboardData(
         windows: [],
-        usageUnavailableReason: "Keychain access was denied",
+        usageUnavailableReason: Phrase(
+            en: "Keychain access was denied",
+            th: "ไม่ได้รับสิทธิ์เข้าถึง Keychain"
+        ),
         sessions: DashboardSessions.none,
         tokenScaleMaximum: nil,
         burnRates: [:],

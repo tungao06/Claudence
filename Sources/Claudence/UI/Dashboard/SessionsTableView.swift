@@ -332,7 +332,7 @@ struct SessionsTableView: View {
                 Sparkline(
                     burn.samples,
                     height: Theme.Dashboard.sparklineHeight,
-                    label: Strings.tokenRate.string(in: language)
+                    label: Sparkline.tokenRate
                 )
                 .frame(width: Theme.Dashboard.sparklineWidth)
             } else {

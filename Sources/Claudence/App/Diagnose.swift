@@ -123,7 +123,7 @@ enum Diagnose {
         // claimed one, which was wrong.
         print("usage (the only outbound path, at most two requests):")
         let semaphore = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var state: UsageState = .unavailable(reason: "not run")
+        nonisolated(unsafe) var state: UsageState = .unavailable(reason: .untranslated("not run"))
         // Detached: an inherited main-actor context cannot run while the
         // main thread is parked on the semaphore.
         Task.detached {

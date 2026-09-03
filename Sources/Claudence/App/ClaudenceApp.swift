@@ -12,6 +12,9 @@ struct ClaudenceApp: App {
     /// something *before* the popover has ever been opened, not merely stay
     /// correct once it has. See `OnboardingWindowController`.
     @State private var onboarding: OnboardingWindowController
+    /// Held for the life of the app for the same reason `appearance` is: it
+    /// observes a preference and must not be deallocated after `init` returns.
+    @State private var language: LanguageController
 
     init() {
         let services = Composition.makeServices()
@@ -19,6 +22,18 @@ struct ClaudenceApp: App {
         let appearance = AppearanceController(preferences: services.preferences)
         _appearance = State(initialValue: appearance)
         appearance.start()
+
+        // A notification is not a view and has no environment to read the
+        // language from, so it is pushed. Started here rather than from the
+        // popover for the reason `AppearanceController` documents: the popover
+        // does not exist until it is first opened, and someone who never opens
+        // it still receives notifications.
+        let language = LanguageController(
+            preferences: services.preferences,
+            notifications: services.notifications
+        )
+        _language = State(initialValue: language)
+        language.start()
 
         let onboarding = OnboardingWindowController(preferences: services.preferences)
         _onboarding = State(initialValue: onboarding)

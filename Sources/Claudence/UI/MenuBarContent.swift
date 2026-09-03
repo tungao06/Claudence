@@ -320,7 +320,7 @@ struct MenuBarContent: View {
     private var powerSection: some View {
         if let reason = model.usageUnavailableReason {
             // Never a fabricated bar at some default fill. See spec section 9.4.
-            UnavailableView(UnavailableView.usageUnavailable, reason: .untranslated(reason))
+            UnavailableView(UnavailableView.usageUnavailable, reason: reason)
                 .padding(.horizontal, Theme.Popover.margin)
                 .padding(.bottom, Theme.Popover.margin)
         } else {

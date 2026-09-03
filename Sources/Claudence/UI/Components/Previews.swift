@@ -822,15 +822,15 @@ struct SparklineShapesPreview: PreviewProvider {
     static var previews: some View {
         PreviewFrame(title: "Sparkline") {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                Sparkline(SeriesFixture.rising, label: "Token rate")
-                Sparkline(SeriesFixture.noisy, style: .bar, label: "Token rate")
-                Sparkline(SeriesFixture.flat, label: "Token rate")
-                Sparkline(SeriesFixture.flat, style: .bar, label: "Token rate")
+                Sparkline(SeriesFixture.rising, label: Sparkline.tokenRate)
+                Sparkline(SeriesFixture.noisy, style: .bar, label: Sparkline.tokenRate)
+                Sparkline(SeriesFixture.flat, label: Sparkline.tokenRate)
+                Sparkline(SeriesFixture.flat, style: .bar, label: Sparkline.tokenRate)
                 // Neither of the next two draws anything at all.
-                Sparkline(SeriesFixture.singlePoint, label: "Token rate")
-                Sparkline(SeriesFixture.empty, label: "Token rate")
+                Sparkline(SeriesFixture.singlePoint, label: Sparkline.tokenRate)
+                Sparkline(SeriesFixture.empty, label: Sparkline.tokenRate)
                 // Same series at the small width a session row gives it.
-                Sparkline(SeriesFixture.noisy, label: "Token rate")
+                Sparkline(SeriesFixture.noisy, label: Sparkline.tokenRate)
                     .frame(width: Theme.Bar.sparklineWidth)
             }
         }

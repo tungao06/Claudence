@@ -18,9 +18,13 @@ public struct MonitorSnapshot: Sendable, Equatable {
     public var todayUsage: TokenUsage?
     public var updatedAt: Date
 
+    /// The state a snapshot is in before the first usage fetch returns. Not
+    /// an error: it is the ordinary opening condition of every launch.
+    public static let notYetFetched = Phrase(en: "Not yet fetched", th: "ยังไม่ได้ดึงข้อมูล")
+
     public init(
         sessions: [AISession] = [],
-        usage: UsageState = .unavailable(reason: "Not yet fetched"),
+        usage: UsageState = .unavailable(reason: MonitorSnapshot.notYetFetched),
         todayUsage: TokenUsage? = nil,
         updatedAt: Date = Date()
     ) {

@@ -86,12 +86,16 @@ public enum CredentialError: Error, Sendable, Equatable, CustomStringConvertible
     public var debugDescription: String { description }
 
     /// Short, human-readable, safe for display in the menu bar popover.
-    public var displayReason: String {
+    public var displayReason: Phrase {
         switch self {
-        case .notFound: return "Not signed in to Claude Code"
-        case .accessDenied: return "Keychain access denied"
-        case .malformed: return "Stored credentials unreadable"
-        case .keychain: return "Keychain unavailable"
+        case .notFound:
+            return Phrase(en: "Not signed in to Claude Code", th: "ยังไม่ได้เข้าสู่ระบบ Claude Code")
+        case .accessDenied:
+            return Phrase(en: "Keychain access denied", th: "ไม่ได้รับสิทธิ์เข้าถึง Keychain")
+        case .malformed:
+            return Phrase(en: "Stored credentials unreadable", th: "อ่านข้อมูลรับรองที่เก็บไว้ไม่ได้")
+        case .keychain:
+            return Phrase(en: "Keychain unavailable", th: "ใช้งาน Keychain ไม่ได้")
         }
     }
 }

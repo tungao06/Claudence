@@ -758,7 +758,7 @@ struct EnergyPanel: View {
                             .lineLimit(1)
                     }
                     if Sparkline.canRender(burnHistory) {
-                        Sparkline(burnHistory, label: "Token rate")
+                        Sparkline(burnHistory, label: Sparkline.tokenRate)
                             .frame(width: Theme.Bar.sparklineWidth)
                     }
                 }

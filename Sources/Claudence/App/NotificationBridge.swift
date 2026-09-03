@@ -37,6 +37,11 @@ final class NotificationBridge: @unchecked Sendable {
     private let log: Logger
 
     private let lock = NSLock()
+    /// The language notification text is built in. Pushed by
+    /// `LanguageController` rather than read from `Preferences`, which is
+    /// `@MainActor` and would put an actor hop in front of delivery. English
+    /// until that controller starts, which is one run loop turn after launch.
+    private var languageValue: AppLanguage = .english
     private var deriver: EventDeriver
     private var lastSnapshot: MonitorSnapshot?
     private var policy: NotificationFilter
@@ -61,6 +66,14 @@ final class NotificationBridge: @unchecked Sendable {
     private static func makeCenter() -> UNUserNotificationCenter? {
         guard Bundle.main.bundleIdentifier != nil else { return nil }
         return UNUserNotificationCenter.current()
+    }
+
+    /// The language notification text is built in, read and written under the
+    /// same lock as everything else this type holds, because `handle` can
+    /// arrive on any thread while Settings is being changed on the main one.
+    var language: AppLanguage {
+        get { lock.withLock { languageValue } }
+        set { lock.withLock { languageValue = newValue } }
     }
 
     // MARK: - Settings switches
@@ -173,7 +186,7 @@ final class NotificationBridge: @unchecked Sendable {
                 // Keying the request on the event identity means a repeat
                 // replaces the earlier banner instead of stacking a second one.
                 identifier: event.throttleKey,
-                content: Self.content(for: event, now: now),
+                content: Self.content(for: event, in: language, now: now),
                 trigger: nil
             )
             do {
@@ -187,10 +200,14 @@ final class NotificationBridge: @unchecked Sendable {
     }
 
     /// Wording comes from `NotificationEvent`, which follows spec section 10.
-    static func content(for event: NotificationEvent, now: Date = Date()) -> UNMutableNotificationContent {
+    static func content(
+        for event: NotificationEvent,
+        in language: AppLanguage = .english,
+        now: Date = Date()
+    ) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = event.title
-        content.body = event.body(now: now)
+        content.title = event.title(in: language)
+        content.body = event.body(in: language, now: now)
         // Groups the two kinds separately in Notification Center.
         content.threadIdentifier = event.kind.rawValue
 

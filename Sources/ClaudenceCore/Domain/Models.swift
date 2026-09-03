@@ -338,8 +338,16 @@ public struct UsageWindow: Sendable, Codable, Equatable, Identifiable {
 /// Usage is either measured or explicitly unavailable. There is no third state
 /// and no fallback value. See spec section 9.4.
 public enum UsageState: Sendable, Equatable {
-    case unavailable(reason: String)
+    case unavailable(reason: Phrase)
     case available(windows: [UsageWindow], fetchedAt: Date)
+
+    /// What an unavailable state says when nothing more specific is known.
+    /// One constant rather than a literal at each of the three places that
+    /// needed it, so the sentence cannot drift between them.
+    public static let defaultUnavailableReason = Phrase(
+        en: "Usage unavailable",
+        th: "ไม่มีข้อมูลการใช้งาน"
+    )
 
     public var windows: [UsageWindow] {
         if case .available(let w, _) = self { return w }

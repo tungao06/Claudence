@@ -26,14 +26,23 @@ struct Sparkline: View {
     /// The default stays neutral for the callers that have no identity to hand.
     let stroke: Color
     /// What the series measures, used in the spoken label, e.g. "Token rate".
-    let label: String
+    /// Spoken, so translated: this is the first thing VoiceOver says about the
+    /// chart and it is the only thing that names what the numbers are.
+    let label: Phrase
+
+    @Environment(\.appLanguage) private var language
+
+    /// The two labels this component's callers actually pass, kept here so a
+    /// row and a table cell drawing the same series cannot name it differently.
+    static let trend = Phrase(en: "Trend", th: "แนวโน้ม")
+    static let tokenRate = Phrase(en: "Token rate", th: "อัตรา token")
 
     init(
         _ values: [Double],
         style: Style = .line,
         height: CGFloat = Theme.Bar.sparklineHeight,
         stroke: Color = Theme.textTertiary,
-        label: String = "Trend"
+        label: Phrase = Sparkline.trend
     ) {
         self.values = values
         self.style = style
@@ -135,9 +144,20 @@ struct Sparkline: View {
     private var spokenLabel: String {
         let (lo, hi) = bounds
         let latest = values.last ?? 0
-        return "\(label). \(values.count) samples. Latest \(describe(latest)). "
-            + "Range \(describe(lo)) to \(describe(hi))."
+        return Self.spoken.format(
+            in: language,
+            label.string(in: language),
+            "\(values.count)",
+            describe(latest),
+            describe(lo),
+            describe(hi)
+        )
     }
+
+    private static let spoken = Phrase(
+        en: "%@. %@ samples. Latest %@. Range %@ to %@.",
+        th: "%@ %@ ตัวอย่าง ล่าสุด %@ ช่วง %@ ถึง %@"
+    )
 
     private func describe(_ value: Double) -> String {
         Format.tokens(Int(value.rounded()))

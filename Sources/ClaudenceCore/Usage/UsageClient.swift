@@ -100,16 +100,25 @@ enum UsageFailure: Error, Equatable {
     case empty
 
     /// Short, human-readable, safe to show. Never carries a token.
-    var reason: String {
+    var reason: Phrase {
         switch self {
-        case .credentials(let error): return error.displayReason
-        case .blockedHost: return "Blocked an unexpected host"
-        case .transport: return "Network unavailable"
-        case .http(429): return "Rate limited by the usage API"
-        case .http(let code): return "Usage service error (\(code))"
-        case .unauthorized: return "Sign in to Claude Code again"
-        case .malformed: return "Usage response unreadable"
-        case .empty: return "Usage response had no windows"
+        case .credentials(let error):
+            return error.displayReason
+        case .blockedHost:
+            return Phrase(en: "Blocked an unexpected host", th: "บล็อกโฮสต์ที่ไม่คาดคิด")
+        case .transport:
+            return Phrase(en: "Network unavailable", th: "เชื่อมต่อเครือข่ายไม่ได้")
+        case .http(429):
+            return Phrase(en: "Rate limited by the usage API", th: "ถูกจำกัดอัตราโดย usage API")
+        case .http(let code):
+            return Phrase(en: "Usage service error (%@)", th: "usage API ผิดพลาด (%@)")
+                .asFormatted("\(code)")
+        case .unauthorized:
+            return Phrase(en: "Sign in to Claude Code again", th: "กรุณาเข้าสู่ระบบ Claude Code อีกครั้ง")
+        case .malformed:
+            return Phrase(en: "Usage response unreadable", th: "อ่านคำตอบจาก usage API ไม่ได้")
+        case .empty:
+            return Phrase(en: "Usage response had no windows", th: "คำตอบจาก usage API ไม่มีหน้าต่างการใช้งาน")
         }
     }
 
@@ -145,7 +154,7 @@ public actor UsageClient: UsageProviding {
     private var cache: CacheEntry?
     private var failureCount = 0
     private var retryNotBefore: Date?
-    private var lastReason: String?
+    private var lastReason: Phrase?
     /// A token refreshed this run. Held in memory only, never written back.
     private var refreshedAccessToken: RedactedSecret?
     private var refreshedRefreshToken: RedactedSecret?
@@ -191,7 +200,7 @@ public actor UsageClient: UsageProviding {
 
         if let retryNotBefore, instant < retryNotBefore {
             if let cache { return .available(windows: cache.windows, fetchedAt: cache.fetchedAt) }
-            return .unavailable(reason: lastReason ?? "Usage unavailable")
+            return .unavailable(reason: lastReason ?? UsageState.defaultUnavailableReason)
         }
 
         do {

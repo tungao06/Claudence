@@ -319,7 +319,8 @@ struct UsageClientTests {
             Issue.record("expected unavailable, got \(state)")
             return
         }
-        #expect(reason.localizedCaseInsensitiveContains("rate limited"))
+        #expect(reason.en.localizedCaseInsensitiveContains("rate limited"))
+        #expect(reason.th != reason.en)
     }
 
     @Test("failures back off: no second request until the delay elapses, then the delay grows")
@@ -356,7 +357,8 @@ struct UsageClientTests {
             Issue.record("expected unavailable, got \(cold)")
             return
         }
-        #expect(!reason.isEmpty)
+        #expect(!reason.en.isEmpty)
+        #expect(!reason.th.isEmpty)
 
         let warmClock = TestClock()
         let transport = StubTransport(replies: [.json(realisticBody)], fallback: nil, error: nil)
@@ -405,7 +407,8 @@ struct UsageClientTests {
             Issue.record("expected unavailable, got \(state)")
             return
         }
-        #expect(!reason.isEmpty)
+        #expect(!reason.en.isEmpty)
+        #expect(!reason.th.isEmpty)
     }
 
     @Test("401 without a refresh token reports unavailable and never calls refresh")
@@ -436,7 +439,7 @@ struct UsageClientTests {
             Issue.record("expected unavailable, got \(state)")
             return
         }
-        #expect(reason.localizedCaseInsensitiveContains("host"))
+        #expect(reason.en.localizedCaseInsensitiveContains("host"))
     }
 
     @Test("a look-alike host is rejected too")
@@ -517,7 +520,8 @@ struct UsageClientTests {
             let client = makeClient(transport: transport, credentials: StubCredentials(error: error))
             let state = await client.fetch()
             #expect(await transport.requestCount == 0)
-            #expect(state == .unavailable(reason: expected))
+            #expect(state == .unavailable(reason: error.displayReason))
+            #expect(error.displayReason.en == expected)
         }
     }
 }
@@ -624,7 +628,8 @@ struct CredentialTests {
         for error in errors {
             #expect(!error.description.contains(Self.token))
             #expect(!error.debugDescription.contains(Self.token))
-            #expect(!error.displayReason.isEmpty)
+            #expect(!error.displayReason.en.isEmpty)
+            #expect(!error.displayReason.th.isEmpty)
         }
     }
 

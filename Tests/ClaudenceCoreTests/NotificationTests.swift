@@ -36,7 +36,7 @@ private func makeSnapshot(
     MonitorSnapshot(
         sessions: sessions,
         usage: windows.map { .available(windows: $0, fetchedAt: instant) }
-            ?? .unavailable(reason: "test"),
+            ?? .unavailable(reason: .untranslated("test")),
         todayUsage: .zero,
         updatedAt: instant
     )
@@ -541,9 +541,9 @@ struct SessionNeedsInputTests {
         let session = makeSession("alpha", status: .waiting)
         let event = NotificationEvent.sessionNeedsInput(session: session)
 
-        #expect(event.title == "Session needs you")
-        #expect(event.body().contains(session.projectName))
-        #expect(event.body().contains("waiting for your answer"))
+        #expect(event.title(in: .english) == "Session needs you")
+        #expect(event.body(in: .english).contains(session.projectName))
+        #expect(event.body(in: .english).contains("waiting for your answer"))
     }
 }
 
@@ -905,19 +905,19 @@ struct NotificationWordingTests {
 
     @Test("Titles come from the spec table")
     func titles() {
-        #expect(NotificationEvent.usageThreshold(window: window("five_hour", 92)).title == "Usage at 90%")
-        #expect(NotificationEvent.sessionCompleted(session: makeSession("alpha")).title == "Session completed")
-        #expect(NotificationEvent.sessionIdle(session: makeSession("alpha")).title == "Session idle")
+        #expect(NotificationEvent.usageThreshold(window: window("five_hour", 92)).title(in: .english) == "Usage at 90%")
+        #expect(NotificationEvent.sessionCompleted(session: makeSession("alpha")).title(in: .english) == "Session completed")
+        #expect(NotificationEvent.sessionIdle(session: makeSession("alpha")).title(in: .english) == "Session idle")
     }
 
     @Test("The idle body carries name, duration and tokens, and nothing else")
     func idleBody() {
         let session = makeSession("claudence-06", tokens: 128_000, startedAt: at(0), lastActivityAt: at(8_040))
-        #expect(NotificationEvent.sessionIdle(session: session).body()
+        #expect(NotificationEvent.sessionIdle(session: session).body(in: .english)
             == "claudence-06 stopped working after 2h 14m and 128k tokens.")
 
         let silent = makeSession("scratch", tokens: 0, startedAt: at(0), lastActivityAt: at(90))
-        #expect(NotificationEvent.sessionIdle(session: silent).body()
+        #expect(NotificationEvent.sessionIdle(session: silent).body(in: .english)
             == "scratch stopped working after 1m 30s.")
     }
 
@@ -926,22 +926,43 @@ struct NotificationWordingTests {
         let withReset = NotificationEvent.usageThreshold(
             window: window("five_hour", 92, resetsAt: at(4_500))
         )
-        #expect(withReset.body(now: at(0)) == "5 Hour window: about 8% left. Resets in 1h 15m.")
+        #expect(withReset.body(in: .english, now: at(0)) == "5 Hour window: about 8% left. Resets in 1h 15m.")
 
         // No reset point reported: the sentence simply stops rather than
         // guessing one.
         let withoutReset = NotificationEvent.usageThreshold(window: window("seven_day", 91))
-        #expect(withoutReset.body(now: at(0)) == "7 Day window: about 9% left.")
+        #expect(withoutReset.body(in: .english, now: at(0)) == "7 Day window: about 9% left.")
+    }
+
+    /// A notification is the one surface with no environment to read the
+    /// language from, so the language is pushed to it. This pins that the
+    /// wording actually follows the value pushed, in both halves of the
+    /// sentence and not only in the title.
+    @Test("notification wording follows the language it is given")
+    func wordingFollowsLanguage() {
+        let session = makeSession("claudence-06", tokens: 128_000, startedAt: at(0), lastActivityAt: at(8_040))
+        let event = NotificationEvent.sessionCompleted(session: session)
+
+        #expect(event.title(in: .english) == "Session completed")
+        #expect(event.title(in: .thai) != event.title(in: .english))
+
+        let thai = event.body(in: .thai)
+        #expect(thai != event.body(in: .english))
+        // The three substituted values are the same figures in both: a project
+        // name, a duration and a token count are not translated, only placed.
+        #expect(thai.contains("claudence-06"))
+        #expect(thai.contains("2h 14m"))
+        #expect(thai.contains("128k"))
     }
 
     @Test("The completion body carries name, duration and tokens")
     func completionBody() {
         let session = makeSession("claudence-06", tokens: 128_000, startedAt: at(0), lastActivityAt: at(8_040))
         let event = NotificationEvent.sessionCompleted(session: session)
-        #expect(event.body() == "claudence-06 ran for 2h 14m and used 128k tokens.")
+        #expect(event.body(in: .english) == "claudence-06 ran for 2h 14m and used 128k tokens.")
 
         let silent = makeSession("scratch", tokens: 0, startedAt: at(0), lastActivityAt: at(90))
-        #expect(NotificationEvent.sessionCompleted(session: silent).body() == "scratch ran for 1m 30s.")
+        #expect(NotificationEvent.sessionCompleted(session: silent).body(in: .english) == "scratch ran for 1m 30s.")
     }
 
     @Test("Throttle keys separate kind from subject")
