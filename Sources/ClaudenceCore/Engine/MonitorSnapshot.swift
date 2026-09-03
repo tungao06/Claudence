@@ -189,3 +189,14 @@ public struct BurnRateTracker: Sendable {
         return BurnRate(tokensPerMinute: perMinute, samples: series)
     }
 }
+
+/// A session's subagent total as one value, so the engine can carry the last
+/// figure it established without carrying the subagents themselves.
+///
+/// It exists because an empty list of subagents and a total of zero are the
+/// same value and not the same fact: a pass that could not read the subagent
+/// directory knows nothing, and writing zero for it collapses a stored row.
+struct SubagentFigure: Sendable, Equatable {
+    var usage: TokenUsage
+    var count: Int
+}

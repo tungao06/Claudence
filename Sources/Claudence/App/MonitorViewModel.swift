@@ -36,9 +36,33 @@ final class MonitorViewModel {
     private(set) var usageState: UsageState = MonitorSnapshot.empty.usage
     private(set) var menuBarState = MenuBarState()
 
-    /// Surfaced so the UI can say persistence is degraded rather than silently
-    /// losing history. See spec section 9.4: an honest gap beats a quiet one.
-    let storeHealth: StoreHealth
+    /// What the store reported when it was opened at launch. Captured once,
+    /// same as before: a store that fell back to memory at launch stays
+    /// degraded for the life of the process (see `ClaudenceStore.baselineHealth`),
+    /// so this value never goes stale on its own. What it cannot show is a
+    /// store that answered fine at launch and has since stopped answering —
+    /// that is `currentStoreHealth`, below.
+    let launchStoreHealth: StoreHealth
+
+    /// The store's condition as of the last time it was asked. Distinct from
+    /// `launchStoreHealth` so the banner can tell "fell back to memory at
+    /// launch" from "was fine, is not answering right now" instead of
+    /// collapsing both into one snapshot taken before either could happen.
+    ///
+    /// Refreshed from `refreshStoreHealth()`, which rides the existing usage
+    /// loop in `start()` rather than a timer of its own: a store health check
+    /// costs nothing extra on a wake the process already makes every
+    /// `usageRefreshInterval`, and adding a second recurring wake here would
+    /// collide with the no-polling rule and the idle CPU budget.
+    private(set) var currentStoreHealth: StoreHealth
+
+    /// How to ask the persistence layer its live condition. A closure rather
+    /// than a reference to the concrete store, so this file does not need to
+    /// import or know which store backs the engine; the composition root
+    /// wires it to `store.health`. Nil (the default, used by previews and by
+    /// call sites that pass no store) means health can only ever be the value
+    /// captured at launch.
+    private let healthProvider: (() -> StoreHealth)?
 
     /// Dashboard aggregates. Built on demand rather than on every snapshot,
     /// because they read the database and the dashboard is usually closed.
@@ -65,10 +89,13 @@ final class MonitorViewModel {
     init(
         engine: MonitorEngine,
         storeHealth: StoreHealth = .healthy,
+        healthProvider: (() -> StoreHealth)? = nil,
         analytics: AnalyticsService? = nil
     ) {
         self.engine = engine
-        self.storeHealth = storeHealth
+        self.launchStoreHealth = storeHealth
+        self.currentStoreHealth = storeHealth
+        self.healthProvider = healthProvider
         self.analytics = analytics
     }
 
@@ -106,6 +133,19 @@ final class MonitorViewModel {
         // Usage lives on its own cadence. Filesystem churn must never trigger a
         // network request, so this loop is deliberately separate from the
         // event-driven session refresh.
+        //
+        // It is also the only recurring wake this process has, which is why
+        // two more things ride along on it rather than getting timers of
+        // their own:
+        //
+        // - Burn rates. They decay correctly once recomputed (see the model's
+        //   own decay logic), but a quiet session produces no filesystem event
+        //   at all — its registry file is not heartbeat-updated and its
+        //   transcript stops growing — so nothing ever asks again and the
+        //   screen keeps the last busy figure for as long as the session sits
+        //   idle. This tick re-asks every session's rate on a bound no fs
+        //   event is required to hit.
+        // - Store health. See `refreshStoreHealth()`.
         usageTask = Task { [weak self, engine] in
             while !Task.isCancelled {
                 // Read on every pass rather than captured once, so changing the
@@ -113,6 +153,8 @@ final class MonitorViewModel {
                 // at the next launch.
                 let interval = self?.usageRefreshInterval ?? Constants.Usage.cacheTTL
                 await engine.refreshUsage(minimumInterval: interval)
+                await self?.refreshBurnRates()
+                self?.refreshStoreHealth()
                 try? await Task.sleep(for: .seconds(interval))
             }
         }
@@ -234,7 +276,18 @@ final class MonitorViewModel {
     }
 
     var storeWarning: String? {
-        switch storeHealth {
+        // A live health that differs from what launch reported is always a
+        // fresh runtime failure, never a second launch-time fallback: the
+        // store can only drift away from `launchStoreHealth` by a query
+        // failing after launch, and only back to exactly `launchStoreHealth`
+        // on the next success (see `ClaudenceStore.noteRecovery`). So this
+        // branch is the "not answering now" case, kept distinct from the
+        // "fell back to memory at launch" case below.
+        if currentStoreHealth != launchStoreHealth {
+            let reason = currentStoreHealth.reason ?? "unknown error"
+            return "History not saving: not responding (\(reason))"
+        }
+        switch launchStoreHealth {
         case .healthy: return nil
         case .degraded(let reason): return "History not saved: \(reason)"
         case .unavailable(let reason): return "History unavailable: \(reason)"
@@ -351,6 +404,22 @@ final class MonitorViewModel {
         }
         if burnRates != rates {
             burnRates = rates
+        }
+    }
+
+    /// Re-asks the store's live condition. Called from the usage loop in
+    /// `start()`, never on its own timer — see that loop's comment for why
+    /// piggybacking here costs nothing on top of the wake the process already
+    /// makes.
+    ///
+    /// A no-op when no `healthProvider` was supplied, which keeps every call
+    /// site and preview that constructs a `MonitorViewModel` without a store
+    /// working exactly as before.
+    private func refreshStoreHealth() {
+        guard let healthProvider else { return }
+        let next = healthProvider()
+        if currentStoreHealth != next {
+            currentStoreHealth = next
         }
     }
 }

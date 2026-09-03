@@ -66,6 +66,12 @@ enum Composition {
         let model = MonitorViewModel(
             engine: engine,
             storeHealth: store.health,
+            // A closure rather than exposing the store itself: the view model
+            // asks this on the usage loop's cadence (see
+            // `MonitorViewModel.refreshStoreHealth`) to catch a store that
+            // answered fine at launch and later stopped, which the snapshot
+            // above cannot show on its own.
+            healthProvider: { [store] in store.health },
             analytics: analytics
         )
 

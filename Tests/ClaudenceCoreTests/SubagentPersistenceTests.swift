@@ -327,7 +327,7 @@ struct SubagentPersistenceTests {
         let subagents = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
 
         let agent = try! #require(subagents.first { $0.id == "agent-a" })
         #expect(agent.usage == TokenUsage(freshInput: 1_007, cacheRead: 4_011, output: 203))
@@ -440,7 +440,7 @@ struct SubagentPersistenceTests {
         let remaining = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
 
         #expect(remaining.map(\.id) == ["agent-b"])
         let rows = store.subagentTotals(forSession: fixture.sessionID)
@@ -462,7 +462,7 @@ struct SubagentPersistenceTests {
         let subagents = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
 
         #expect(subagents.map(\.id) == ["agent-live"])
         #expect(store.subagentTotals(forSession: fixture.sessionID).map(\.subagentID) == ["agent-live"])
@@ -479,7 +479,7 @@ struct SubagentPersistenceTests {
         let subagents = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
 
         #expect(subagents.first?.usage == TokenUsage(freshInput: 11, output: 3))
         await tracker.forget(sessionID: fixture.sessionID)
@@ -517,7 +517,7 @@ struct SubagentPersistenceTests {
         let subagents = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
 
         let agent = try! #require(subagents.first)
         #expect(agent.usage == TokenUsage(freshInput: 1_007, cacheRead: 4_011, output: 203))
@@ -576,7 +576,7 @@ struct SubagentPersistenceTests {
         let skipped = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
 
         // Nothing is known about this session's subagents yet, and inventing a
         // zero would be the undercount itself.
@@ -600,7 +600,7 @@ struct SubagentPersistenceTests {
         let resumed = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
 
         let agent = try #require(resumed.first { $0.id == "agent-a" })
         #expect(agent.usage == TokenUsage(freshInput: 1_007, cacheRead: 4_011, output: 203))
@@ -626,8 +626,154 @@ struct SubagentPersistenceTests {
         let subagents = await tracker.refresh(
             sessionID: fixture.sessionID,
             workingDirectory: fixture.workingDirectory
-        )
+        ).subagents
         #expect(subagents.map(\.id) == ["agent-a"])
         #expect(subagents.first?.usage == TokenUsage(freshInput: 5, output: 1))
+    }
+}
+
+// MARK: - The engine over a withheld subagent answer
+
+/// Discovery that reports one fixed session, so a pass can be driven without a
+/// registry on disk.
+private struct StubDiscovery: SessionDiscovering {
+    let sourceName = "stub-discovery"
+    let sessions: [AISession]
+    func discover() -> [AISession] { sessions }
+}
+
+/// A parent transcript that always answers and always carries nothing. The
+/// parent side is deliberately uninteresting here: what is under test is what
+/// the engine writes for the *subagents* when their figure cannot be
+/// established, and a parent delta of its own would only add a second moving
+/// part.
+private struct StubTranscripts: TranscriptReading, @unchecked Sendable {
+    let sourceName = "stub-transcripts"
+    func readIncremental(sessionID: String, workingDirectory: String) -> TranscriptDelta { .empty }
+}
+
+@Suite("Engine over a withheld subagent answer")
+struct EngineWithheldSubagentTests {
+
+    /// What a previous run left on disk: a parent total, a subagent total, and
+    /// the rollup row that stands for both.
+    private func seedRow(store: ClaudenceStore, sessionID: String, workingDirectory: String) -> AISession {
+        let session = AISession(
+            id: sessionID,
+            pid: 4242,
+            procStart: "Tue Sep  1 19:27:02 2026",
+            projectName: "Claudence",
+            workingDirectory: workingDirectory,
+            status: .running,
+            startedAt: Date(),
+            lastActivityAt: Date(),
+            usage: TokenUsage(freshInput: 500, cacheRead: 2_000, output: 100),
+            subagentUsage: TokenUsage(freshInput: 1_000, cacheRead: 4_000, output: 200),
+            subagentCount: 1
+        )
+        store.upsert(session: session)
+        return session
+    }
+
+    /// The blocker this suite exists for. `SubagentTracker.refresh` refuses to
+    /// write a figure it could not establish, and until 2026-09-03 the engine
+    /// wrote it on the tracker's behalf: an empty answer became
+    /// `subagentUsage = .zero`, the upsert subtracted the stored combined total
+    /// from the rollup and added a parent-only one, and the collapse the
+    /// tracker prevents happened one layer up. The tracker's own test could not
+    /// see it, because the tracker did nothing wrong.
+    @Test("a withheld subagent seed leaves the session row and the rollup alone")
+    func withheldSeedLeavesStoredSubagentTotalAlone() async throws {
+        let fixture = SubagentFixture()
+        fixture.create(
+            "agent-a",
+            agentType: "Explore",
+            description: "map the store",
+            lines: [fixture.record(input: 1_000, cacheRead: 4_000, output: 200)]
+        )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudenceEngineWithheldSeed", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+        let session = seedRow(store: store, sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        let before = try #require(store.session(id: fixture.sessionID))
+        let rollupBefore = store.dailyTotals(days: 1)
+
+        // The subagent side cannot read its stored totals; everything else
+        // works, which is what one bad statement looks like from outside.
+        let totals = ReadFailingTotalStore(inner: store, failTotalReads: true)
+        let engine = MonitorEngine(
+            discovery: StubDiscovery(sessions: [session]),
+            transcripts: StubTranscripts(),
+            store: store,
+            subagents: fixture.makeTracker(store: totals, cursors: store)
+        )
+        await engine.refreshSessions()
+
+        let after = try #require(store.session(id: fixture.sessionID))
+        #expect(after.subagentUsage == before.subagentUsage)
+        #expect(after.subagentCount == before.subagentCount)
+        #expect(store.dailyTotals(days: 1).map(\.usage) == rollupBefore.map(\.usage))
+
+        // And the interface is told the combined figure, not a parent-only one.
+        let published = try #require(await engine.current().sessions.first)
+        #expect(published.subagentUsage == before.subagentUsage)
+    }
+
+    /// The second blocker, from the other source. A directory that exists and
+    /// cannot be listed is not a session with no subagents, and reading it as
+    /// one wrote the same zero over the same row.
+    @Test("a subagent directory that cannot be listed leaves the stored total alone")
+    func unreadableSubagentDirectoryLeavesStoredTotalAlone() async throws {
+        let fixture = SubagentFixture()
+        fixture.create(
+            "agent-a",
+            agentType: "Explore",
+            description: "map the store",
+            lines: [fixture.record(input: 1_000, cacheRead: 4_000, output: 200)]
+        )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClaudenceEngineUnreadableSubagents", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ClaudenceStore(url: directory.appendingPathComponent("claudence.db"))
+        let session = seedRow(store: store, sessionID: fixture.sessionID, workingDirectory: fixture.workingDirectory)
+        let before = try #require(store.session(id: fixture.sessionID))
+
+        let engine = MonitorEngine(
+            discovery: StubDiscovery(sessions: [session]),
+            transcripts: StubTranscripts(),
+            store: store,
+            subagents: fixture.makeTracker(store: StoreTotals(store: store), cursors: store)
+        )
+
+        // The directory is there and unreadable, which is the case
+        // `SubagentLocator` reports as nil and everything above it used to
+        // read as "no subagents".
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0],
+            ofItemAtPath: fixture.subagentsDirectory.path
+        )
+        let withheldBefore = EngineCounters.shared.snapshot.withheldSubagentListings
+        await engine.refreshSessions()
+        let withheldAfter = EngineCounters.shared.snapshot.withheldSubagentListings
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: fixture.subagentsDirectory.path
+        )
+
+        #expect(withheldAfter > withheldBefore)
+        let after = try #require(store.session(id: fixture.sessionID))
+        #expect(after.subagentUsage == before.subagentUsage)
+        #expect(after.subagentCount == before.subagentCount)
+
+        // The pass that follows, with the directory readable again, is the
+        // proof that the skip was a skip and not a loss: the figure comes back
+        // from the transcript rather than staying stuck at what was stored.
+        await engine.refreshSessions()
+        let restored = try #require(store.session(id: fixture.sessionID))
+        #expect(restored.subagentUsage == TokenUsage(freshInput: 1_000, cacheRead: 4_000, output: 200))
+        #expect(restored.subagentCount == 1)
     }
 }

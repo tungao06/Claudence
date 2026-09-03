@@ -17,6 +17,13 @@ public actor MonitorEngine {
     private var burnTrackers: [String: BurnRateTracker] = [:]
     private var accumulated: [String: TokenUsage] = [:]
     private var subagentsBySession: [String: [AISubagent]] = [:]
+    /// The last subagent total this process established for a session, seeded
+    /// from the store. Used only when a pass cannot establish a new one.
+    private var lastKnownSubagents: [String: SubagentFigure] = [:]
+    /// Set when a session that predates today ends, so the rollup repair runs
+    /// once more before the day's attribution is left as the incremental path
+    /// wrote it.
+    private var rollupRepairPending = false
     private var accumulatedTools: [String: [String: Int]] = [:]
     private var accumulatedPaths: [String: [String]] = [:]
     private var accumulatedTrail: [String: [TimedActivity]] = [:]
@@ -210,13 +217,38 @@ public actor MonitorEngine {
             // none of their records. Read before the burn tracker samples, so
             // the rate reflects what the session actually spent.
             if let subagents {
-                let spawned = await subagents.refresh(
+                switch await subagents.refresh(
                     sessionID: session.id,
                     workingDirectory: session.workingDirectory
-                )
-                subagentsBySession[session.id] = spawned
-                session.subagentUsage = spawned.reduce(TokenUsage.zero) { $0 + $1.usage }
-                session.subagentCount = spawned.count
+                ) {
+                case .answered(let spawned):
+                    subagentsBySession[session.id] = spawned
+                    let measured = spawned.reduce(TokenUsage.zero) { $0 + $1.usage }
+                    session.subagentUsage = measured
+                    session.subagentCount = spawned.count
+                    lastKnownSubagents[session.id] = SubagentFigure(usage: measured, count: spawned.count)
+                case .withheld(let known):
+                    // The tracker refuses to write a figure it could not
+                    // establish, and until 2026-09-03 this line wrote it for
+                    // the tracker: an empty answer became `subagentUsage =
+                    // .zero`, the upsert below subtracted the stored combined
+                    // total from the rollup and added a parent-only one, and
+                    // the collapse the tracker prevents happened one layer up.
+                    //
+                    // The last figure known for this session is used instead.
+                    // It comes from the store at seed time and is refreshed on
+                    // every answering pass, so writing it back is a no-op
+                    // against the row it came from, and the parent's own
+                    // tokens, which were read successfully, still land.
+                    let figure = lastKnownSubagents[session.id]
+                        ?? SubagentFigure(
+                            usage: known.reduce(TokenUsage.zero) { $0 + $1.usage },
+                            count: known.count
+                        )
+                    session.subagentUsage = figure.usage
+                    session.subagentCount = figure.count
+                    if !known.isEmpty { subagentsBySession[session.id] = known }
+                }
             }
 
             if let tier = delta.serviceTier { session.serviceTier = tier }
@@ -254,8 +286,16 @@ public actor MonitorEngine {
             // An unchanged session is already in the store. Writing it again
             // on every filesystem event buys nothing and costs a statement.
             if lastUpserted[session.id] != session {
+                // Recorded as written only when the store says it answered. An
+                // upsert that threw is swallowed by the store's own error
+                // path, and marking it done regardless left a session whose
+                // write failed and which then went quiet with a stale row and
+                // a stale rollup for the life of the process.
+                let beforeUpsert = store?.unansweredQueries
                 store?.upsert(session: session)
-                lastUpserted[session.id] = session
+                if store == nil || store?.unansweredQueries == beforeUpsert {
+                    lastUpserted[session.id] = session
+                }
             }
             // Keyed on the combined total rather than on the parent delta, so a
             // pass in which only a subagent spent anything still records a
@@ -372,6 +412,12 @@ public actor MonitorEngine {
         seeded.insert(session.id)
         guard let stored else { return true }
         accumulated[session.id] = stored.usage
+        // The durable subagent figure, which is what a pass that cannot read
+        // the subagent directory falls back to rather than zero.
+        lastKnownSubagents[session.id] = SubagentFigure(
+            usage: stored.subagentUsage,
+            count: stored.subagentCount
+        )
         // A session read back from the store carries no per-record detail: the
         // schema keeps tokens, not tool names or paths. Those accumulators stay
         // empty and rebuild from the records read after the resume point, which
@@ -383,6 +429,17 @@ public actor MonitorEngine {
     /// dropped so a recycled id cannot inherit a stale total.
     private func reapVanished(liveIDs: Set<String>, at date: Date) async {
         let vanished = Set(snapshot.sessions.map(\.id)).subtracting(liveIDs)
+        // A session that started before today and has now ended stops being a
+        // reason for the rollup repair to run, and the last tokens it spent
+        // were filed on its start day by the incremental write. Without this,
+        // the repair's own trigger disappears with the session and the wrong
+        // day is permanent until the app is relaunched.
+        let today = ClaudenceStore.dayString(for: date)
+        for session in snapshot.sessions where vanished.contains(session.id) {
+            if ClaudenceStore.dayString(for: session.startedAt) != today {
+                rollupRepairPending = true
+            }
+        }
         for id in vanished {
             store?.markEnded(sessionID: id, at: date)
             burnTrackers[id] = nil
@@ -397,6 +454,7 @@ public actor MonitorEngine {
             accumulatedRecords[id] = nil
             lastRequestUsage[id] = nil
             subagentsBySession[id] = nil
+            lastKnownSubagents[id] = nil
             seeded.remove(id)
             await subagents?.forget(sessionID: id)
         }
@@ -442,12 +500,15 @@ public actor MonitorEngine {
     /// all. Only the store can put that right, from the samples; this decides
     /// when to ask.
     ///
-    /// Three reasons to ask, and no others:
+    /// Four reasons to ask, and no others:
     ///
     /// - the first pass of the process, which heals whatever drifted while the
     ///   app was not running;
     /// - the local day changing under a running app, which is the midnight this
     ///   defect is named after and is not allowed to wait for the interval;
+    /// - a session that started before today and has just ended, whose last
+    ///   delta was filed on its start day and which will never trigger a repair
+    ///   again, because it is no longer live;
     /// - a live session that started before today, which is the only shape that
     ///   keeps misfiling tokens while the app watches. Throttled to
     ///   `rollupRepairInterval`, because that misfiling is corrected within a
@@ -466,6 +527,12 @@ public actor MonitorEngine {
         }
         if last.day != today {
             store.recomputeRollups()
+            lastRollupRepair = (today, now)
+            return
+        }
+        if rollupRepairPending {
+            store.recomputeRollups()
+            rollupRepairPending = false
             lastRollupRepair = (today, now)
             return
         }

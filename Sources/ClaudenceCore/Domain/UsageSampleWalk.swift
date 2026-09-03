@@ -14,6 +14,21 @@ import Foundation
 /// the analytics layer that reads it.
 enum UsageSampleWalk {
 
+    /// Where a session's very first sample is filed when it counts in full.
+    ///
+    /// The first sample carries everything the session had already spent before
+    /// anything sampled it, which for a session discovered at launch can be its
+    /// whole life. Filing that at the moment of the sample says the tokens were
+    /// spent then, which is true for a session that started inside the range
+    /// and false for one that was already running. The rollup repair asks for
+    /// `.sessionStart` for exactly that reason: the day the session began is
+    /// the best-supported day for spend nothing observed, and it is the day the
+    /// incremental write already uses, so the two agree.
+    enum FirstSampleTime {
+        case sampleTime
+        case sessionStart
+    }
+
     /// Walks sample rows in store order and hands each session's rise inside
     /// `range` to `body`, as `(sessionID, sampledAt, delta)`.
     ///
@@ -28,14 +43,18 @@ enum UsageSampleWalk {
     ///     before the range where one exists.
     ///   - range: the span whose buckets are being filled. A row outside it
     ///     still sets a floor and never opens a bucket of its own.
-    ///   - sessionStarts: when each session began, used only to recognise the
-    ///     one case where a first sample carries no history from before it.
-    ///     Passed as the dates rather than as a pre-filtered set so the rule
-    ///     that reads them stays here with the walk.
+    ///   - sessionStarts: when each session began, used to recognise the one
+    ///     case where a first sample carries no history from before it, and to
+    ///     date that sample when `firstSampleTime` is `.sessionStart`. Passed
+    ///     as the dates rather than as a pre-filtered set so the rule that
+    ///     reads them stays here with the walk.
+    ///   - firstSampleTime: which moment a counted-in-full first sample is
+    ///     attributed to. See `FirstSampleTime`.
     static func enumerateIncreases(
         in rows: [UsageSampleRow],
         range: Range<Date>,
         sessionStarts: [String: Date],
+        firstSampleTime: FirstSampleTime = .sampleTime,
         body: (_ sessionID: String, _ sampledAt: Date, _ delta: TokenUsage) -> Void
     ) {
         // A session that began inside the range is the one case where a first
@@ -64,10 +83,14 @@ enum UsageSampleWalk {
             peak[row.sessionID] = higher(mark ?? .zero, row.usage)
 
             let delta: TokenUsage
+            var at = row.sampledAt
             if let mark {
                 delta = increase(from: mark, to: row.usage)
             } else if startedInRange.contains(row.sessionID) {
                 delta = row.usage
+                if firstSampleTime == .sessionStart, let began = sessionStarts[row.sessionID] {
+                    at = began
+                }
             } else {
                 // The baseline row, or a session whose history predates the
                 // range. Either way it establishes a floor and contributes
@@ -78,7 +101,7 @@ enum UsageSampleWalk {
             // The baseline row sits before the range and must not open a bucket
             // of its own even when it is also a session's first sample.
             guard range.contains(row.sampledAt) else { continue }
-            body(row.sessionID, row.sampledAt, delta)
+            body(row.sessionID, at, delta)
         }
     }
 

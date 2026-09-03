@@ -441,11 +441,11 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                        SUM(fresh_input), SUM(cache_creation), SUM(cache_read),
                        SUM(output), SUM(thinking)
                   FROM daily_rollups
-                 WHERE day >= ?
+                 WHERE day >= ? AND day <= ?
                  GROUP BY day
                  ORDER BY day ASC
                 """,
-                [.text(lowerBound)]
+                [.text(lowerBound), .text(dayString(for: now))]
             ) { row in
                 (
                     day: row.string(0),
@@ -659,6 +659,14 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         // counts in full: a rollup covers a session's whole life rather than a
         // window of it, and there is no earlier bucket for those tokens to
         // belong to.
+        //
+        // It is filed on the day the session started rather than the day it was
+        // first sampled. Those tokens were spent before anything sampled them,
+        // which for every session already running when the app launches is most
+        // of what they hold, and dating them at the launch moment put a month
+        // of another day's work on today's row. The start day is the same day
+        // the incremental write uses, so the repair and the write agree about
+        // the part neither of them observed.
         let everything = Date.distantPast..<Date.distantFuture
         var measured: [String: [String: TokenUsage]] = [:]
         UsageSampleWalk.enumerateIncreases(
@@ -667,7 +675,8 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
             sessionStarts: Dictionary(
                 sessions.map { ($0.id, $0.startedAt) },
                 uniquingKeysWith: { first, _ in first }
-            )
+            ),
+            firstSampleTime: .sessionStart
         ) { sessionID, sampledAt, delta in
             measured[sessionID, default: [:]][self.dayString(for: sampledAt), default: .zero] += delta
         }

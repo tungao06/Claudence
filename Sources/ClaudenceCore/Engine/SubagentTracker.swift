@@ -153,6 +153,31 @@ public protocol SubagentTotalStoring: Sendable, StoreOutcomeReporting {
 /// Accumulation is incremental, using the same `(path, inode, byteOffset)`
 /// cursor discipline as the parent reader. Cursor keys are namespaced by
 /// subagent id so they cannot collide with a session id.
+/// What a refresh pass knows about a session's subagents.
+///
+/// The two cases exist because an empty list has two meanings and only one of
+/// them may be written down. A session with no subagents genuinely has none; a
+/// session whose seed read or whose directory listing did not answer has an
+/// unknown number of them, and the figure already on disk is the best one there
+/// is. The engine writes the first and preserves the second, which is the same
+/// rule the cursor and the seed already follow: a read that did not answer is
+/// skipped and retried, never substituted with a default.
+public enum SubagentRefresh: Sendable, Equatable {
+    /// The directory was listed and every subagent in it was read.
+    case answered([AISubagent])
+    /// The pass could not establish the figure. Carries the last view this
+    /// process held, which is empty before the first successful seed.
+    case withheld([AISubagent])
+
+    /// The subagents to show. Both cases carry the honest display, and the
+    /// difference is what may be persisted, not what may be drawn.
+    public var subagents: [AISubagent] {
+        switch self {
+        case .answered(let list), .withheld(let list): return list
+        }
+    }
+}
+
 public actor SubagentTracker {
     private let locator: SubagentLocator
     private let reader: TranscriptReader
@@ -183,7 +208,7 @@ public actor SubagentTracker {
 
     /// Reads new records for every subagent of a session and returns the full
     /// current set, newest activity first.
-    public func refresh(sessionID: String, workingDirectory: String) -> [AISubagent] {
+    public func refresh(sessionID: String, workingDirectory: String) -> SubagentRefresh {
         // A seed that did not answer means the stored totals are unknown, and
         // the transcript reads below are what would advance every subagent
         // cursor past records the accumulators have no baseline for. The cursor
@@ -200,14 +225,22 @@ public actor SubagentTracker {
         // subagents it has not read yet, and nothing durable is written.
         guard seedIfNeeded(sessionID: sessionID) else {
             EngineCounters.shared.countSkippedUnseededSubagents()
-            return subagents(forSession: sessionID)
+            return .withheld(subagents(forSession: sessionID))
         }
 
-        let listing = locator.listSubagents(forSession: sessionID, workingDirectory: workingDirectory)
-        let descriptors = listing ?? []
         // Nil means the directory could not be listed, which is not the same
-        // fact as "this session has no subagents" and must not drive a delete.
-        let directoryWasRead = listing != nil
+        // fact as "this session has no subagents". Carrying on with an empty
+        // list would empty `byParent`, report zero subagent tokens to the
+        // engine, and have the engine write that zero over the stored row: the
+        // collapse this type refuses to write itself, performed by its caller.
+        // The answer is withheld instead, and the pass retried.
+        guard let descriptors = locator.listSubagents(
+            forSession: sessionID,
+            workingDirectory: workingDirectory
+        ) else {
+            EngineCounters.shared.countWithheldSubagentListing()
+            return .withheld(subagents(forSession: sessionID))
+        }
         var ids: Set<String> = []
 
         for descriptor in descriptors {
@@ -266,13 +299,13 @@ public actor SubagentTracker {
         // A subagent that disappeared from disk drops its accumulator, so a
         // reused id cannot inherit a stale total.
         //
-        // Guarded on the directory having actually been read. `subagents` used
+        // Reached only when the directory was actually read. `subagents` used
         // to return an empty array both for a session with no subagents and for
         // a directory it could not read, and this branch treats empty as "they
         // all vanished". One unreadable pass, from a rename or a permissions
-        // blip, therefore deleted every persisted total and reset the
+        // blip, would otherwise delete every persisted total and reset the
         // accumulators to zero against cursors already at end of file.
-        if directoryWasRead, let previous = byParent[sessionID] {
+        if let previous = byParent[sessionID] {
             let stale = previous.subtracting(ids)
             if !stale.isEmpty {
                 for id in stale { accumulated[id] = nil }
@@ -291,9 +324,11 @@ public actor SubagentTracker {
         }
         byParent[sessionID] = ids
 
-        return ids
-            .compactMap { accumulated[$0] }
-            .sorted { ($0.lastActivityAt ?? .distantPast) > ($1.lastActivityAt ?? .distantPast) }
+        return .answered(
+            ids
+                .compactMap { accumulated[$0] }
+                .sorted { ($0.lastActivityAt ?? .distantPast) > ($1.lastActivityAt ?? .distantPast) }
+        )
     }
 
     /// Drops the in-memory state for a session's subagents. Called when the

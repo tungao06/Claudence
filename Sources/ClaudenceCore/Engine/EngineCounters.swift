@@ -51,6 +51,9 @@ public final class EngineCounters: @unchecked Sendable {
         /// same reason the seeds are: one number could not say which half of
         /// the pipeline the store is failing.
         public var skippedUnreadSubagentCursors = 0
+        /// Passes where a session's subagent directory could not be listed, so
+        /// the figure was withheld rather than reported as zero.
+        public var withheldSubagentListings = 0
 
         public init() {}
     }
@@ -91,6 +94,7 @@ public final class EngineCounters: @unchecked Sendable {
     func countSkippedUnseededSubagents() { bump { $0.skippedUnseededSubagents += 1 } }
     func countSkippedUnreadCursor() { bump { $0.skippedUnreadCursors += 1 } }
     func countSkippedUnreadSubagentCursor() { bump { $0.skippedUnreadSubagentCursors += 1 } }
+    func countWithheldSubagentListing() { bump { $0.withheldSubagentListings += 1 } }
 
     private func bump(_ mutate: (inout Reading) -> Void) {
         lock.lock(); defer { lock.unlock() }
@@ -120,6 +124,7 @@ extension EngineCounters.Reading {
         result.skippedUnreadCursors = skippedUnreadCursors - earlier.skippedUnreadCursors
         result.skippedUnreadSubagentCursors =
             skippedUnreadSubagentCursors - earlier.skippedUnreadSubagentCursors
+        result.withheldSubagentListings = withheldSubagentListings - earlier.withheldSubagentListings
         return result
     }
 
@@ -142,6 +147,7 @@ extension EngineCounters.Reading {
             ("  subagent seeds", skippedUnseededSubagents),
             ("skipped cursors", skippedUnreadCursors),
             ("  subagent cursors", skippedUnreadSubagentCursors),
+            ("  subagent listings", withheldSubagentListings),
         ]
         return rows.map { name, count in
             let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)
