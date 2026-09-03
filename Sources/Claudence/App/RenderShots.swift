@@ -96,29 +96,6 @@ enum RenderShots {
                 )
                 .detailSheetChrome()
             }
-
-            // The subagent variant, which is the one whose title bar carries a
-            // back button. It had no shot, which is part of why a back link
-            // that scrolled out of reach was found by a user rather than here.
-            if let subagent = DetailRenderFixture.subagents.first {
-                write(
-                    name: "detail-subagent-\(suffix)",
-                    size: detailSize,
-                    scheme: scheme,
-                    into: root
-                ) {
-                    SubagentDetailView(
-                        subagent: subagent,
-                        parent: DetailRenderFixture.session,
-                        parentTotal: DetailRenderFixture.session.combinedUsage.total,
-                        costEstimator: CostEstimator(),
-                        now: DashboardRenderFixture.now,
-                        onBack: {},
-                        onClose: {}
-                    )
-                    .detailSheetChrome()
-                }
-            }
         }
     }
 

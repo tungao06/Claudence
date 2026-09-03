@@ -14,18 +14,16 @@ import ClaudenceCore
 ///
 /// ## The row
 ///
-/// The design's row is a four-column grid, `1fr 116px 78px 22px`, and every one
-/// of those columns is here: the identity dot, the name, the agent-type pill,
-/// the status pill and the activity line on the left; the share bar and its
-/// caption next; the total; then the chevron that says the row opens something.
-/// An earlier build drew none of the four — no dot, no status, no activity, no
-/// chevron — collapsed the name and the agent type into one field, and made the
-/// row inert, which left the subagent's own sheet with nothing that could reach
-/// it.
-///
-/// `onOpen` is what the chevron promises. The sheet it opens is
-/// `SubagentDetailView`, and four of its nine facts are unavailable; that is an
-/// argument for saying so on the sheet, not for making the row a dead end.
+/// The design's row is a four-column grid, `1fr 116px 78px 22px`; the fourth
+/// column, a chevron into the subagent's own sheet, is gone along with that
+/// sheet. Thirteen of its roughly twenty facts were unavailable by construction,
+/// and the four that were real — parent, agent type, tokens, share of parent —
+/// are exactly what this row already carries: the identity dot, the name, the
+/// agent-type pill, the status pill and the activity line on the left; the
+/// share bar and its caption next; the total; and the parent itself, which is
+/// the session whose sheet this list is already inside. Nothing was lost except
+/// the per-subagent cache split, which stayed one navigation step too far for
+/// what it told a reader.
 ///
 /// ## Privacy
 ///
@@ -52,39 +50,31 @@ struct SubagentListView: View {
     let subagentTotal: Int?
     /// Rendering clock, so a preview's liveness does not drift.
     let now: Date
-    /// Opens one subagent's own sheet. Nil leaves the rows inert, which is what
-    /// a standalone preview wants.
-    let onOpen: ((AISubagent) -> Void)?
 
     init(
         subagents: [AISubagent],
         parentTotal: Int,
         subagentTotal: Int? = nil,
-        now: Date = Date(),
-        onOpen: ((AISubagent) -> Void)? = nil
+        now: Date = Date()
     ) {
         self.subagents = subagents
         self.parentTotal = parentTotal
         self.subagentTotal = subagentTotal
         self.now = now
-        self.onOpen = onOpen
     }
 
     static let caption = "spawned by this session \u{00B7} tokens billed to the parent"
 
-    /// The design's `1fr 116px 78px 22px` at popover width.
+    /// The design's `1fr 116px 78px 22px` at popover width, less the fourth
+    /// column: the chevron, and the sheet it led to, are gone (stage 2, 9.9).
     ///
-    /// The sheet is 760 pt wide and this popover is 420, so the three fixed
-    /// columns are taken down by roughly the same ratio rather than kept at
-    /// their sheet widths, which would leave 106 pt for a name column that has
-    /// to hold a task description. The gap comes down with them.
-    /// TODO(theme): exact HTML values live in `Theme.DetailSheet` already
-    /// (116 / 78 / 22 / gap 14); a popover-scale set beside them would put
-    /// these three numbers in the same file as the ones they derive from.
+    /// The sheet is 760 pt wide and this popover is 420, so the two remaining
+    /// fixed columns are taken down by roughly the same ratio rather than kept
+    /// at their sheet widths, which would leave too little for a name column
+    /// that has to hold a task description. The gap comes down with them.
     private enum Column {
         static let share: CGFloat = 92
         static let total: CGFloat = 56
-        static let chevron: CGFloat = 16
         static let gap: CGFloat = Theme.Space.m
     }
 
@@ -140,90 +130,76 @@ struct SubagentListView: View {
         let share = subagent.share(ofParentTotal: parentTotal)
         let status: SessionStatus = subagent.isActive(now: now) ? .running : .completed
 
-        return Button {
-            onOpen?(subagent)
-        } label: {
-            HStack(alignment: .center, spacing: Column.gap) {
-                VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                    HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                        Circle()
-                            .fill(identity.dot)
-                            .frame(width: Theme.Bar.micro, height: Theme.Bar.micro)
-                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-                            .accessibilityHidden(true)
-                        // Two lines and first claim on the width. A subagent is
-                        // named by the task description Claude Code wrote at
-                        // spawn time, which is a sentence; on one line, sharing
-                        // a row with a type capsule and a status pill that both
-                        // take their full width first, every row elided
-                        // mid-word.
-                        Text(name(subagent))
-                            .font(Theme.Typography.rowLabel)
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .layoutPriority(1)
-                        if let type = subagent.agentType, !type.isEmpty {
-                            Text(type)
-                                .font(Theme.Typography.micro)
-                                .foregroundStyle(Theme.textTertiary)
-                                .lineLimit(1)
-                                .fixedSize()
-                                .padding(.horizontal, Theme.Space.s)
-                                .padding(.vertical, Theme.Space.xxs)
-                                .background(Capsule(style: .continuous).fill(Theme.surfaceControl))
-                        }
-                        // Never squeezed. It is two words and a glyph, and it
-                        // is the row's only statement of state; the name has
-                        // first claim on the width, so without this the pill
-                        // was what elided.
-                        StatusPill(status: status, identity: identity)
-                            .fixedSize()
-                        Spacer(minLength: 0)
-                    }
-
-                    Text(activityText(subagent, status: status))
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
+        return HStack(alignment: .center, spacing: Column.gap) {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                    Circle()
+                        .fill(identity.dot)
+                        .frame(width: Theme.Bar.micro, height: Theme.Bar.micro)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                        .accessibilityHidden(true)
+                    // Two lines and first claim on the width. A subagent is
+                    // named by the task description Claude Code wrote at
+                    // spawn time, which is a sentence; on one line, sharing
+                    // a row with a type capsule and a status pill that both
+                    // take their full width first, every row elided
+                    // mid-word.
+                    Text(name(subagent))
+                        .font(Theme.Typography.rowLabel)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
                         .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
+                    if let type = subagent.agentType, !type.isEmpty {
+                        Text(type)
+                            .font(Theme.Typography.micro)
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, Theme.Space.s)
+                            .padding(.vertical, Theme.Space.xxs)
+                            .background(Capsule(style: .continuous).fill(Theme.surfaceControl))
+                    }
+                    // Never squeezed. It is two words and a glyph, and it
+                    // is the row's only statement of state; the name has
+                    // first claim on the width, so without this the pill
+                    // was what elided.
+                    StatusPill(status: status, identity: identity)
+                        .fixedSize()
+                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                shareColumn(share, colour: identity.dot)
-                    .frame(width: Column.share)
-
-                Text(Format.tokens(subagent.usage.total))
-                    .font(Theme.Typography.rowValue)
-                    .foregroundStyle(Theme.textPrimary)
+                Text(activityText(subagent, status: status))
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
-                    .frame(width: Column.total, alignment: .trailing)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: Theme.Bar.statusGlyph, weight: .semibold))
-                    .foregroundStyle(Theme.textQuaternary)
-                    .frame(width: Column.chevron, alignment: .trailing)
-                    .accessibilityHidden(true)
+                    .truncationMode(.tail)
             }
-            .padding(.vertical, Theme.Space.m)
-            .padding(.horizontal, Theme.Space.l)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous)
-                    .fill(Theme.surfaceRecessed)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous)
-                    .strokeBorder(Theme.separator, lineWidth: 1)
-            )
+
+            shareColumn(share, colour: identity.dot)
+                .frame(width: Column.share)
+
+            Text(Format.tokens(subagent.usage.total))
+                .font(Theme.Typography.rowValue)
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+                .frame(width: Column.total, alignment: .trailing)
         }
-        .buttonStyle(.plain)
-        .disabled(onOpen == nil)
+        .padding(.vertical, Theme.Space.m)
+        .padding(.horizontal, Theme.Space.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous)
+                .fill(Theme.surfaceRecessed)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.large, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 1)
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spoken(subagent, share: share, status: status))
-        .accessibilityHint(onOpen == nil ? "" : "Opens this subagent's own detail")
     }
 
     /// The design names a row by the task the parent gave it, falling back to

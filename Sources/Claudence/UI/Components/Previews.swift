@@ -1056,9 +1056,8 @@ struct SessionFactsPopulatedPreview: PreviewProvider {
 struct SessionFactsGapsPreview: PreviewProvider {
     static var previews: some View {
         PreviewFrame(title: "Session facts") {
-            // Kind, Git branch and Registry are unavailable on every session
-            // in this build; this fixture also lacks a pid and a model, so
-            // every tile that can be a gap is one, each with its own reason.
+            // This fixture has no model and no branch read yet, so both of
+            // its non-clock tiles are honest gaps rather than a guess.
             SessionFactsView(session: SessionFixture.noProcessRecord)
         }
         .previewDisplayName("SessionFactsView / gaps")
@@ -1245,9 +1244,10 @@ struct PowerWindowIdentitiesPreview: PreviewProvider {
 
 // MARK: - Session row, path line
 
-/// The path line with and without a branch. The second is what actually renders
-/// today: nothing carries `gitBranch` into `AISession` yet, so the branch half
-/// of this line is structure waiting for a source rather than a live feature.
+/// The path line with and without a branch. `AISession.gitBranch` is nil until
+/// a transcript record carrying one has been read, so a session shown right
+/// after launch renders the second, branchless state honestly rather than
+/// waiting to draw the first.
 struct SessionRowBranchPreview: PreviewProvider {
     static var previews: some View {
         PreviewFrame(title: "Session row / path line") {

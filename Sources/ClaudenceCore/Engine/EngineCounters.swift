@@ -133,10 +133,31 @@ extension EngineCounters.Reading {
         return result
     }
 
+    /// The same rows as `lines(over:)`, as counts alone.
+    ///
+    /// The problem report has no run length to divide by and no reason to
+    /// invent one: a friend sends the file after something looked wrong, and
+    /// what the maintainer reads it for is whether a skip counter moved at all.
+    public func reportLines() -> [String] {
+        rows().map { name, count in
+            let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)
+            return String(format: "%@ %6d", padded, count)
+        }
+    }
+
     /// Ordered for printing: name, count, and rate over `seconds`.
     public func lines(over seconds: TimeInterval) -> [String] {
         let span = max(seconds, 0.001)
-        let rows: [(String, Int)] = [
+        return rows().map { name, count in
+            let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)
+            return String(format: "  %@ %6d   %6.2f/s", padded, count, Double(count) / span)
+        }
+    }
+
+    /// One list of counters, so the terminal report and the file a friend sends
+    /// cannot name different things.
+    private func rows() -> [(String, Int)] {
+        [
             ("fsevent callbacks", fsEventCallbacks),
             ("debounced refreshes", debouncedRefreshes),
             ("session refreshes", sessionRefreshes),
@@ -155,9 +176,5 @@ extension EngineCounters.Reading {
             ("  subagent listings", withheldSubagentListings),
             ("samples compacted", compactedSamples),
         ]
-        return rows.map { name, count in
-            let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)
-            return String(format: "  %@ %6d   %6.2f/s", padded, count, Double(count) / span)
-        }
     }
 }

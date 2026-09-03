@@ -981,8 +981,6 @@ enum Theme {
         static var eventBody: Font { .system(size: 12.5, weight: .regular) }
         /// A fact tile's value. HTML mono 12.5 px / 500.
         static var factValue: Font { .system(size: 12.5, weight: .medium, design: .monospaced) }
-        /// A tool-mix name and count. HTML mono 11.5 px.
-        static var toolValue: Font { .system(size: 11.5, weight: .regular, design: .monospaced) }
         /// A fact tile's name, the smallest label in the product.
         /// HTML 10.5 px sans.
         static var tileLabel: Font { .system(size: 10.5, weight: .regular) }
@@ -1390,13 +1388,6 @@ enum Theme {
         /// into a column a reader can compare down.
         static let breakdownValueColumn: CGFloat = 46
         static let breakdownShareColumn: CGFloat = 34
-
-        /// The subagent list.
-        /// HTML `grid-template-columns: 1fr 116px 78px 22px; gap: 14px`.
-        static let subagentTokensColumn: CGFloat = 116
-        static let subagentShareColumn: CGFloat = 78
-        static let subagentChevronColumn: CGFloat = 22
-        static let subagentColumnGap: CGFloat = 14
     }
 
     // MARK: - Menu bar label

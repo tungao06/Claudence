@@ -31,13 +31,18 @@ struct SectionEyebrow: View {
 /// header
 /// energy panel
 /// TOKEN BREAKDOWN + context well  |  RECENT ACTIVITY
-/// COST & EFFICIENCY               |  TOOL MIX
-/// FILES TOUCHED
+/// COST & EFFICIENCY
 /// transcript facts bar
 /// SESSION FACTS
 /// SUBAGENTS
 /// action row
 /// ```
+///
+/// `TOOL MIX` and `FILES TOUCHED` were removed in stage 2 (9.9): no reader
+/// named a decision that changed on `Read 41, Edit 19`, and Files Touched
+/// showed three truncated chips for a session that touched sixty. `COST &
+/// EFFICIENCY` lost its paired column and now runs full width rather than
+/// leaving a gap where Tool Mix stood.
 ///
 /// Two pairs of sections are genuine two-column rows in `Claudence-UI.dc.html`
 /// (`grid-template-columns: 1fr 1fr`) and are two-column rows here. The design
@@ -67,9 +72,12 @@ struct SectionEyebrow: View {
 /// `MenuBarExtra(style: .window)` popover is not an ordinary window, its content
 /// stays mounted after dismissal, and every extra layer of presentation is
 /// another thing holding state while nothing is on screen. Swapping the
-/// popover's content costs nothing when closed. Opening a subagent does the same
-/// thing one level down: `openSubagent` swaps this view for the subagent's own,
-/// which is what the design's `‹ parent` back link returns from.
+/// popover's content costs nothing when closed.
+///
+/// The subagent's own sheet, and the navigation into it, are gone (stage 2,
+/// 9.9): thirteen of its roughly twenty facts were unavailable by construction.
+/// The four that were real — parent, agent type, tokens, share of parent — now
+/// live on the subagent's row in `SubagentListView`, below.
 ///
 /// Nothing here repeats. The design fills every bar from zero on open and draws
 /// the sparkline in; both would be one-shot and therefore permissible, but this
@@ -108,10 +116,6 @@ struct SessionDetailView: View {
     let actions: SessionActions
     let onClose: () -> Void
 
-    /// The subagent whose own sheet is open, if any. Local state: drilling into
-    /// a subagent and coming back is a reading move inside this sheet, and the
-    /// popover above has no business knowing about it.
-    @State private var openSubagentID: String?
     /// Set only by `--render-ui`. See `RenderableScrollView`.
     @Environment(\.isOffscreenRender) private var isOffscreenRender
     /// Whether persistence is off, which decides whether the stored-history row
@@ -156,31 +160,12 @@ struct SessionDetailView: View {
     private var identity: Theme.SessionIdentity { Theme.identity(forSessionID: session.id) }
     private var total: TokenUsage { session.combinedUsage }
 
-    private var openSubagent: AISubagent? {
-        guard let openSubagentID else { return nil }
-        return subagents.first { $0.id == openSubagentID }
-    }
-
     var body: some View {
-        Group {
-            if let subagent = openSubagent {
-                SubagentDetailView(
-                    subagent: subagent,
-                    parent: session,
-                    parentTotal: total.total,
-                    costEstimator: costEstimator,
-                    now: now,
-                    onBack: { openSubagentID = nil },
-                    onClose: onClose
-                )
-            } else {
-                sessionBody
-            }
-        }
-        // The detail is presented as its own window when the dashboard opens
-        // it, so it carries its own layer rather than borrowing the one on the
-        // window behind it.
-        .tooltipLayer()
+        sessionBody
+            // The detail is presented as its own window when the dashboard
+            // opens it, so it carries its own layer rather than borrowing the
+            // one on the window behind it.
+            .tooltipLayer()
     }
 
     private var sessionBody: some View {
@@ -223,13 +208,7 @@ struct SessionDetailView: View {
                     ActivityTimelineView(trail: session.activityTrail, now: now)
                 }
 
-                DetailColumns {
-                    MetricColumn(title: "COST & EFFICIENCY", rows: costRows, footnote: Self.costFootnote)
-                } trailing: {
-                    ToolMixColumn(mix: session.toolMix)
-                }
-
-                FilesTouchedSection(paths: session.filePaths)
+                MetricColumn(title: "COST & EFFICIENCY", rows: costRows, footnote: Self.costFootnote)
 
                 TranscriptFactsBar(
                     records: session.recordsParsed,
@@ -242,8 +221,7 @@ struct SessionDetailView: View {
                     SubagentListView(
                         subagents: subagents,
                         parentTotal: total.total,
-                        subagentTotal: session.subagentUsage.total,
-                        onOpen: { openSubagentID = $0.id }
+                        subagentTotal: session.subagentUsage.total
                     )
                 }
             }
@@ -348,182 +326,6 @@ struct SessionDetailView: View {
                 unavailable: "Unavailable"
             ),
         ])
-    }
-}
-
-// MARK: - Subagent detail
-
-/// The same sheet, one level down.
-///
-/// The design draws exactly one detail overlay with a `sub` flag on it: a way
-/// back to the parent and a `SUBAGENT` badge above the name, and otherwise the
-/// same shape. This is that variant. The back link the mockup draws as text is
-/// a round button in the title bar here, beside close and the same size as it;
-/// see `DetailScaffold`. It exists because without it the
-/// subagent rows are a list that leads nowhere, which is what the mockup's
-/// `onClick` on every row is for.
-///
-/// Four of the panels the parent sheet fills have no source for a subagent, and
-/// each says so rather than showing a plausible figure:
-///
-/// - Burn rate: no rate is sampled per subagent.
-/// - Context window: `AISubagent` carries no per-request usage block.
-/// - Tool mix and files touched: `AISubagent` carries no tool counts and no
-///   file list. Its `Tool calls` fact is unavailable for the same reason.
-/// - Started, duration and `Spawned by`: a subagent has no process, no recorded
-///   start, and nothing stores which tool call spawned it.
-///
-/// What IS measured is the part that matters: its own token breakdown, its
-/// share of the parent, its record count, its model and its estimated cost.
-struct SubagentDetailView: View {
-    let subagent: AISubagent
-    let parent: AISession
-    /// The parent's combined total, the denominator of the share.
-    let parentTotal: Int
-    let costEstimator: CostEstimator
-    let now: Date
-    let onBack: () -> Void
-    let onClose: () -> Void
-
-    /// Set only by `--render-ui`. See `RenderableScrollView`.
-    @Environment(\.isOffscreenRender) private var isOffscreenRender
-
-    private var identity: Theme.SessionIdentity { Theme.identity(forSessionID: subagent.id) }
-    private var isActive: Bool { subagent.isActive(now: now) }
-    private var status: SessionStatus { isActive ? .running : .completed }
-
-    /// The name the design puts in the title. A subagent has no project name;
-    /// the label Claude Code wrote for it at spawn time is the closest thing,
-    /// and it is the same field the list rows are named by.
-    private var name: String {
-        if let task = subagent.taskDescription, !task.isEmpty { return task }
-        if let type = subagent.agentType, !type.isEmpty { return type }
-        return subagent.id
-    }
-
-    var body: some View {
-        DetailScaffold(
-            onBack: onBack,
-            parentName: parent.projectName,
-            onClose: onClose
-        ) {
-            header
-        } content: {
-            scrollingBody
-        } footer: {
-            EmptyView()
-        }
-    }
-
-    private var header: DetailHeader {
-        DetailHeader(
-            dot: identity.dot,
-            name: name,
-            status: StatusPill(status: status, identity: identity),
-            statusWord: Theme.name(for: status),
-            path: parent.displayPath,
-            activity: subagent.currentActivity?.display
-        )
-    }
-
-    private var scrollingBody: some View {
-        RenderableScrollView(heightCap: Theme.Layout.detailScrollHeight) {
-            VStack(alignment: .leading, spacing: Theme.DetailSheet.bodyGap) {
-                EnergyPanel(
-                    total: subagent.usage.total,
-                    burnRatePerMinute: nil,
-                    burnHistory: [],
-                    fraction: subagent.share(ofParentTotal: parentTotal),
-                    identity: identity
-                )
-
-                DetailColumns {
-                    TokenBreakdownColumn(usage: subagent.usage) {
-                        ContextWell.unavailable(
-                            reason: "A subagent's per-request usage is not kept, so there is no numerator"
-                        )
-                    }
-                } trailing: {
-                    ActivityTimelineView(
-                        trail: currentTrail,
-                        now: now,
-                        emptyMessage: "No activity trail for a subagent"
-                    )
-                }
-
-                DetailColumns {
-                    MetricColumn(
-                        title: "COST & EFFICIENCY",
-                        rows: costRows,
-                        footnote: SessionDetailView.costFootnote
-                    )
-                } trailing: {
-                    ToolMixColumn(
-                        mix: [],
-                        emptyMessage: "Tool counts are not kept per subagent"
-                    )
-                }
-
-                TranscriptFactsBar(records: subagent.recordsParsed, serviceTier: nil)
-
-                SubagentFactsView(
-                    subagent: subagent,
-                    parentName: parent.projectName,
-                    parentTotal: parentTotal
-                )
-            }
-            .padding(.vertical, Theme.Space.s)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .scrollHeightCap(SessionDetailView.maximumHeight, isOffscreenRender: isOffscreenRender)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Subagent detail for \(name), spawned by \(parent.projectName)")
-    }
-
-    /// A subagent keeps only what it is doing now, not a trail. One entry is
-    /// still a truthful timeline; none is an honest gap.
-    private var currentTrail: [TimedActivity] {
-        guard let activity = subagent.currentActivity, let at = subagent.lastActivityAt else { return [] }
-        return [TimedActivity(at: at, activity: activity)]
-    }
-
-    private var costRows: [MetricColumn.Row] {
-        [
-            MetricColumn.Row(
-                name: "Estimated cost",
-                value: costEstimator.estimate(usage: subagent.usage, model: subagent.model).map(Format.cost),
-                tip: "cost",
-                unavailable: "Cost unavailable",
-                estimated: true
-            ),
-            MetricColumn.Row(
-                name: "Input served from cache",
-                value: cacheServed.map { Format.percent($0 * 100) },
-                tip: "cr",
-                unavailable: "Unavailable"
-            ),
-            MetricColumn.Row(
-                name: "Tokens per hour",
-                value: nil,
-                tip: "burn",
-                unavailable: "Unavailable"
-            ),
-            MetricColumn.Row(
-                name: "Share of the parent",
-                value: subagent.share(ofParentTotal: parentTotal).map { Format.percent($0 * 100) },
-                tip: nil,
-                unavailable: "Unavailable"
-            ),
-        ]
-    }
-
-    /// The same ratio `AISession.cacheServedFraction` reports, over this
-    /// subagent's own usage, and over `billableInput` rather than a locally
-    /// re-derived sum so the one definition of billable input still holds.
-    private var cacheServed: Double? {
-        let billable = subagent.usage.billableInput
-        guard billable > 0 else { return nil }
-        return Double(subagent.usage.cacheRead) / Double(billable)
     }
 }
 
@@ -1279,112 +1081,6 @@ struct MetricColumn: View {
     private func spoken(_ row: Row) -> String {
         guard let value = row.value else { return "\(row.name), \(row.unavailable.lowercased())" }
         return row.estimated ? "\(row.name), \(value), estimated" : "\(row.name), \(value)"
-    }
-}
-
-// MARK: - Tool mix
-
-/// Counts by tool name, and nothing about what the tool was given. A Bash call
-/// contributes one to `Bash` and nothing else, because command strings
-/// routinely carry API keys and connection strings.
-struct ToolMixColumn: View {
-    let mix: [(name: String, count: Int)]
-    var emptyMessage: String = "No tool calls recorded yet"
-
-    static let footnote = "Counted by tool name only. Arguments are never read."
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.m) {
-            SectionEyebrow("TOOL MIX")
-            let rows = Array(mix.prefix(6))
-            if rows.isEmpty {
-                UnavailableView(emptyMessage, compact: true)
-            } else {
-                let peak = rows.first?.count ?? 0
-                ForEach(Array(rows.enumerated()), id: \.element.name) { index, entry in
-                    row(entry.name, count: entry.count, peak: peak, index: index)
-                }
-            }
-            Text(Self.footnote)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(Theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func row(_ name: String, count: Int, peak: Int, index: Int) -> some View {
-        // The design cycles the four category colours through the tool bars.
-        // They carry no meaning here beyond telling one row from the next.
-        let palette = Theme.TokenCategory.allCases
-        let colour = Theme.color(for: palette[index % palette.count])
-        let fraction = peak > 0 ? Double(count) / Double(peak) : 0
-        return VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            HStack(spacing: Theme.Space.s) {
-                Text(name)
-                    .font(Theme.Typography.toolValue)
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                Spacer(minLength: Theme.Space.xs)
-                Text("\(count)")
-                    .font(Theme.Typography.toolValue)
-                    .foregroundStyle(Theme.textQuaternary)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous).fill(Theme.track)
-                    Capsule(style: .continuous)
-                        .fill(colour)
-                        .frame(width: fraction * geo.size.width)
-                }
-            }
-            .frame(height: Theme.Bar.micro)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name), \(count) calls")
-    }
-}
-
-// MARK: - Files touched
-
-/// File paths are on the allowlist; file contents are not, and nothing here
-/// opens a file. The chip shows the name and the full path is available to the
-/// pointer and to a screen reader.
-struct FilesTouchedSection: View {
-    let paths: [String]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.m) {
-            SectionEyebrow("FILES TOUCHED")
-            if paths.isEmpty {
-                UnavailableView("No files touched yet", compact: true)
-            } else {
-                FlowLayout(spacing: Theme.Space.s) {
-                    ForEach(paths, id: \.self) { path in
-                        chip(path)
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func chip(_ path: String) -> some View {
-        Text((path as NSString).lastPathComponent)
-            .font(Theme.Typography.numeric)
-            .foregroundStyle(Theme.textSecondary)
-            .lineLimit(1)
-            .padding(.horizontal, Theme.Space.m)
-            .padding(.vertical, Theme.Space.xs)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-                    .fill(Theme.surfaceInset)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-                    .strokeBorder(Theme.separator, lineWidth: 1)
-            )
-            .accessibilityLabel("File \(path)")
     }
 }
 

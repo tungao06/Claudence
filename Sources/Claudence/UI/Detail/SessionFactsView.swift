@@ -19,23 +19,27 @@ struct DetailFact: Identifiable {
     }
 }
 
-/// The design's `repeat(3, 1fr)` grid of fact tiles, used by both the session
-/// variant and the subagent variant.
+/// The design's fact-tile grid. `SESSION FACTS` is its only caller now that
+/// the subagent variant is gone (stage 2, 9.9): four of its nine tiles were
+/// permanent `Unavailable` labels serving a reader `--diagnose --counters`
+/// already covers from the terminal, and a fifth read `nil` for a reason that
+/// was false — `Git branch`, fixed rather than deleted, is item 4 of the same
+/// change. What is left is four facts, so this now lays out two columns
+/// rather than three: a 3-column grid of four items left an empty pair of
+/// slots in the second row, which read as a gap rather than as a finished
+/// layout.
 ///
-/// Three columns, as the design draws them, and not the two an earlier build
-/// used. The popover is 420 pt against the design sheet's 760, so a tile is
-/// about 120 pt: a session id or a model name is set on one line at 12.5 pt
-/// mono and truncated in the middle, which keeps the head and tail of an id
-/// legible — the two ends are what a reader matches against a file name.
+/// The popover is 420 pt against the design sheet's 760, so a two-column tile
+/// is about 190 pt: a model name is set on one line at 12.5 pt mono and
+/// truncated in the middle, which keeps the head and tail legible.
 ///
 /// The tooltip's hanging edge follows the column, because a 320 pt bubble is
-/// wider than a 120 pt tile and has to open away from the nearest window edge.
+/// wider than a tile and has to open away from the nearest window edge.
 struct DetailFactsGrid: View {
     let title: String
     let facts: [DetailFact]
 
     private let columns = [
-        GridItem(.flexible(), spacing: Theme.Space.m, alignment: .leading),
         GridItem(.flexible(), spacing: Theme.Space.m, alignment: .leading),
         GridItem(.flexible(), spacing: Theme.Space.m, alignment: .leading),
     ]
@@ -102,23 +106,18 @@ struct DetailFactsGrid: View {
 /// The identifying facts about a session, every one of them on the privacy
 /// allowlist.
 ///
-/// Exactly the design's nine tiles, in the design's order, and no more. Two
-/// extra fields had been appended here — `Service tier` and `Records` — which
-/// belong to the transcript bar the design draws separately; that bar exists
-/// again as `TranscriptFactsBar` and they are back inside it.
+/// Five of the design's nine tiles were removed rather than fixed (stage 2,
+/// 9.9): `PID`, `Kind`, `Registry`, `Session id` and `CC version` exist for
+/// whoever is debugging the reader, and `--diagnose --counters` already serves
+/// that reader from the terminal. Four of the five were permanent `Unavailable`
+/// labels in this build regardless.
 ///
-/// Three of the nine have no field in this build and are drawn as explicit gaps
-/// rather than dropped, because a missing tile is invisible and an empty one is
-/// a question somebody will answer. Each gap carries its reason in the spoken
-/// label, so the absence is attributable rather than mysterious:
-///
-/// - `Kind` — `RegistryRecord` reads a `kind` and the adapter filters on it, but
-///   `AISession` does not carry it forward.
-/// - `Git branch` — `TranscriptRecord` decodes `gitBranch` and the reader
-///   discards it; nothing reaches the domain model.
-/// - `Registry` — the adapter maps the raw registry word onto `SessionStatus`
-///   and keeps only the mapping. The design wants the unmapped word, which would
-///   distinguish `reaped` from an ordinary exit.
+/// `Git branch` survives as the sixth removal candidate turned correction: it
+/// used to render `nil` with a reason that was false — `TranscriptReader`
+/// collects the branch (`TranscriptReader.swift:216` at the time this was
+/// written) and `MonitorEngine` assigns it onto `AISession.gitBranch`
+/// (`MonitorEngine.swift:182`), which `SessionRow`'s meta line already
+/// displays. This tile reads the same field.
 struct SessionFactsView: View {
 
     let session: AISession
@@ -132,21 +131,12 @@ struct SessionFactsView: View {
 
     private var facts: [DetailFact] {
         [
-            DetailFact("PID", session.pid > 0 ? String(session.pid) : nil,
-                       reason: "No live process is recorded for this session"),
             DetailFact("Model", session.model,
                        reason: "No assistant record with a model has been read yet"),
-            DetailFact("Kind", nil,
-                       reason: "The session model does not carry the registry kind"),
+            DetailFact("Git branch", session.gitBranch,
+                       reason: "No transcript record carrying a branch has been read yet"),
             DetailFact("Started", session.startedAt.formatted(date: .omitted, time: .standard)),
             DetailFact("Duration", Format.duration(now.timeIntervalSince(session.startedAt))),
-            DetailFact("Git branch", nil,
-                       reason: "The transcript reader does not carry the branch into the session"),
-            DetailFact("CC version", session.claudeCodeVersion,
-                       reason: "No record carrying a version has been read yet"),
-            DetailFact("Session id", session.id),
-            DetailFact("Registry", nil,
-                       reason: "Only the mapped status is kept, not the raw registry word"),
         ]
     }
 
@@ -155,76 +145,24 @@ struct SessionFactsView: View {
     }
 }
 
-// MARK: - Subagent facts
-
-/// The design's subagent variant of the same grid: `Parent`, `Agent type` and
-/// `Spawned by` replace `PID`, `Kind` and `Git branch`, and `Tool calls`,
-/// `Records` and `Share` close it out.
-///
-/// Four of the nine have no source and say so:
-///
-/// - `Spawned by` — nothing records which tool call created the subagent. The
-///   design's own tooltip says it is `Agent` on 2.1.257 and `Task` on older
-///   transcripts, which is exactly the kind of thing that must be read rather
-///   than assumed.
-/// - `Started` and `Duration` — a subagent has no process and no recorded start.
-///   `lastActivityAt` is the only clock it carries, and an end without a
-///   beginning is not a duration.
-/// - `Tool calls` — `AISubagent` carries no tool counts.
-struct SubagentFactsView: View {
-    let subagent: AISubagent
-    let parentName: String
-    let parentTotal: Int
-
-    private var facts: [DetailFact] {
-        [
-            DetailFact("Parent", parentName),
-            DetailFact("Agent type", subagent.agentType,
-                       reason: "The spawn metadata beside the transcript names no agent type"),
-            DetailFact("Spawned by", nil,
-                       reason: "Nothing records which tool call spawned this subagent"),
-            DetailFact("Started", nil,
-                       reason: "A subagent has no process and no recorded start time"),
-            DetailFact("Duration", nil,
-                       reason: "Without a start time there is no elapsed time to report"),
-            DetailFact("Model", subagent.model,
-                       reason: "No assistant record with a model has been read yet"),
-            DetailFact("Tool calls", nil,
-                       reason: "Tool counts are kept per session, not per subagent"),
-            DetailFact("Records", String(subagent.recordsParsed)),
-            DetailFact("Share", subagent.share(ofParentTotal: parentTotal).map { Format.percent($0 * 100) },
-                       reason: "The parent has spent nothing, so a share of it is undefined"),
-        ]
-    }
-
-    var body: some View {
-        DetailFactsGrid(title: "SUBAGENT FACTS", facts: facts)
-    }
-}
-
 // MARK: - Transcript facts bar
 
 /// The design's standalone strip of transcript facts: `Transcript`, `Parsed`,
 /// `Tail offset`, `Service tier`.
 ///
-/// This existed in the design and not in the build; two of its four values were
-/// folded into the session grid and the other two vanished. It is back, with
-/// the two that have no field saying so, because the reason they are missing is
-/// itself worth knowing: this application's whole correctness argument rests on
-/// tailing a transcript from a stored byte offset, and the offset is the one
-/// number that proves it is doing that. `TranscriptOffset` persists it;
-/// `AISession` does not carry it, so the interface cannot show it yet.
+/// `Transcript` and `Tail offset` were removed rather than filled in (stage 2,
+/// 9.9): the byte offset proves this application is tailing rather than
+/// re-parsing, which is a fact worth knowing, but `--diagnose --counters`
+/// already reports it from the terminal for the reader who needs it, and a
+/// permanent `Unavailable` label here served nobody else. `Parsed` and
+/// `Service tier` are the two that had a field all along.
 struct TranscriptFactsBar: View {
     let records: Int
     let serviceTier: String?
 
     private var facts: [DetailFact] {
         [
-            DetailFact("Transcript", nil,
-                       reason: "The session model does not carry the transcript path or its size"),
             DetailFact("Parsed", "\(records) assistant records"),
-            DetailFact("Tail offset", nil,
-                       reason: "The stored byte offset is not carried into the session model"),
             DetailFact("Service tier", serviceTier,
                        reason: "No record carrying a service tier has been read yet"),
         ]
