@@ -806,7 +806,7 @@ lean on it rather than adding a test target late.
 Approved after all four user perspectives independently named the same things, without seeing
 each other's answers.
 
-### 9.9 Remove what does not earn its place  `UI HALF DONE 2026-09-03`
+### 9.9 Remove what does not earn its place  `DONE 2026-09-03`
 
 **~0.5 day, and it is a net deletion.** Measured: 135 lines in, 557 out.
 
@@ -826,30 +826,30 @@ each other's answers.
       `SessionFactsView` hardcodes it to nil with a reason that is false: `TranscriptReader.swift:216`
       collects the branch, `MonitorEngine.swift:182` assigns it, and `MenuBarContent.swift:340`
       already displays it.
-- [ ] **Dead code.** `ClaudenceStore.projectTotals(since:)` (zero callers, and its SQL selects
+- [x] **Dead code.** `ClaudenceStore.projectTotals(since:)` (zero callers, and its SQL selects
       parent-only columns, so wiring it up would reproduce 9.1); `usageSamples(sessionID:since:)`
       (zero callers); six `RegistryRecord` fields decoded and never read; seven `CostEstimate`
       members including a `gapDescription` that composes a user-facing sentence nothing prints;
       `DerivedMetrics.percentChange` and `hasComparison`; nineteen `Theme` tokens including four
       `subagent*Column` widths left over from a table layout that no longer exists.
-- [ ] **`AISubagent.spawnDepth`**, and its entry in the privacy allowlist. It is read from
+- [x] **`AISubagent.spawnDepth`**, and its entry in the privacy allowlist. It is read from
       `meta.json`, carried through the tracker, written to SQLite and read back, and no view
       renders it. CLAUDE.md argues at length about which fields of that file may be read; one of
       the four is used for nothing, and permission to read it should not outlive the use.
 
-### 9.10 De-duplicate what is displayed twice
+### 9.10 De-duplicate what is displayed twice  `DONE 2026-09-03`
 
 **~0.5 day**
 
-- [ ] `TOKENS TODAY` and the token breakdown card's `Total` are the same number on one window
-- [ ] `ACTIVE SESSIONS 4` restates the row count of the card directly above it
-- [ ] The power meter's attention banner restates the tube and caption forty pixels above it
-- [ ] `Share of the parent` and `Share` appear in the same detail sheet
-- [ ] Three independent computations of "this component as a share of the total" — `Tooltip.swift:395`,
+- [x] `TOKENS TODAY` and the token breakdown card's `Total` are the same number on one window
+- [x] `ACTIVE SESSIONS 4` restates the row count of the card directly above it
+- [x] The power meter's attention banner restates the tube and caption forty pixels above it
+- [x] `Share of the parent` and `Share` appear in the same detail sheet
+- [x] Three independent computations of "this component as a share of the total" — `Tooltip.swift:395`,
       `SessionDetailView.swift:966`, `TokenBreakdownCard.swift:156`. One helper on `TokenUsage`.
-- [ ] `SubagentListView.swift:131` computes a share by hand two lines above using
+- [x] `SubagentListView.swift:131` computes a share by hand two lines above using
       `AISubagent.share(ofParentTotal:)`, which exists
-- [ ] The usage chart occupies half the top row and renders `No usage history` in every captured
+- [x] The usage chart occupies half the top row and renders `No usage history` in every captured
       screenshot, including populated ones. Give it a daily fallback when the hourly series is
       empty, or collapse the card.
 
@@ -985,16 +985,23 @@ Depends on 9.4: a burn rate that never decays produces a projection that never m
 Every month-shaped question the application invites is currently unanswerable while 242 MB of the
 answer sits on disk and the database holds one day.
 
-### 9.12 Import the history already on disk
+### 9.12 Import the history already on disk  `CORE DONE 2026-09-03`
 
 **~1.5 days**
 
-- [ ] A one-time import with a chosen start date, and a way to clear a range and re-run it
-- [ ] A path that does not require liveness. Historical sessions have dead PIDs, and discovery is
+`HistoryImporter` landed 2026-09-03: it walks the projects directory through the same reader the
+live path uses, keys cursors the same way so nothing is read twice, and writes one cumulative
+sample per local day a session actually spent tokens on, so `recomputeRollups` splits a three-day
+session across three days instead of filing it on the day it started. Per-record attribution, not
+apportionment: every assistant record carries its own usage block. What remains is the screen that
+runs it, which belongs with first launch in 9.10a.
+
+- [x] A one-time import with a chosen start date, and a way to clear a range and re-run it
+- [x] A path that does not require liveness. Historical sessions have dead PIDs, and discovery is
       gated on `kill(pid, 0)` plus a matching `procStart`
-- [ ] Report what the import found and what it could not read. An import that silently drops a
+- [x] Report what the import found and what it could not read. An import that silently drops a
       project is worse than none, because the totals afterwards are trusted
-- [ ] The largest transcript on disk is 19.9 MB against a 12 MB performance fixture. Re-measure
+- [x] The largest transcript on disk is 19.9 MB against a 12 MB performance fixture. Re-measure
       the 50 ms re-scan budget against the real file, not the fixture
 
 ### 9.13 The monthly table
