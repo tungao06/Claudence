@@ -35,7 +35,7 @@ struct Sparkline: View {
     /// The two labels this component's callers actually pass, kept here so a
     /// row and a table cell drawing the same series cannot name it differently.
     static let trend = Phrase(en: "Trend", th: "แนวโน้ม")
-    static let tokenRate = Phrase(en: "Token rate", th: "อัตรา token")
+    static let tokenRate = Phrase(en: "Token rate", th: "อัตราการใช้ token")
 
     init(
         _ values: [Double],

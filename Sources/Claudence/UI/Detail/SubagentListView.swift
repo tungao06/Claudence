@@ -136,7 +136,7 @@ struct SubagentListView: View {
         )
     }
 
-    private static let sectionTitle = Phrase(en: "SUBAGENTS", th: "SUBAGENT")
+    private static let sectionTitle = Phrase(en: "SUBAGENTS", th: "รายการ Subagent")
     private static let noSubagentsSpawned = Phrase(en: "No subagents spawned", th: "ไม่มี subagent ถูก spawn")
     private static let aggregateSentence = Phrase(
         en: "%@ of this session's %@, %@ of the combined total.",

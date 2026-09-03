@@ -249,7 +249,7 @@ private enum Strings {
         en: "No transcript has been read for today yet",
         th: "ยังไม่มีการอ่าน transcript ของวันนี้"
     )
-    static let thinkingTokens = Phrase(en: "(%@ thinking)", th: "(%@ thinking)")
+    static let thinkingTokens = Phrase(en: "(%@ thinking)", th: "(คิด %@)")
     static let privacyFooter = Phrase(
         en: "Read locally. No text or commands are ever read.",
         th: "อ่านในเครื่องเท่านั้น ไม่มีการอ่านข้อความหรือคำสั่งใดๆ"

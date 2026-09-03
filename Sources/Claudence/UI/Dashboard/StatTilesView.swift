@@ -446,7 +446,7 @@ private enum Strings {
     static let vsYesterday = Phrase(en: "%@ vs yesterday", th: "%@ เทียบกับเมื่อวาน")
     static let acrossAllProjects = Phrase(en: "across all projects", th: "รวมทุกโปรเจกต์")
 
-    static let burnRate = Phrase(en: "Burn rate", th: "อัตราการใช้")
+    static let burnRate = Phrase.untranslated("Burn rate")
     static let rateUnavailable = Phrase(en: "Rate unavailable", th: "ไม่มีข้อมูลอัตราการใช้")
     static let tooFewSamples = Phrase(
         en: "Too few samples to state a rate",
@@ -484,15 +484,15 @@ private enum Strings {
     static let planCosts = Phrase(en: "%@ costs %@/mo", th: "%@ มีค่าใช้จ่าย %@/เดือน")
     static let estimatedNotBilled = Phrase(
         en: "estimated, not billed",
-        th: "ประมาณการ ไม่ได้เรียกเก็บเงินจริง"
+        th: "ค่าประมาณ ไม่ได้เรียกเก็บเงินจริง"
     )
     static let estimatedOneUnpriced = Phrase(
         en: "estimated, 1 session unpriced",
-        th: "ประมาณการ มี 1 session ที่ไม่มีราคา"
+        th: "ค่าประมาณ มี 1 session ที่ไม่มีราคา"
     )
     static let estimatedCountUnpriced = Phrase(
         en: "estimated, %@ sessions unpriced",
-        th: "ประมาณการ มี %@ session ที่ไม่มีราคา"
+        th: "ค่าประมาณ มี %@ session ที่ไม่มีราคา"
     )
     static let pricesDaysOld = Phrase(en: " \u{00B7} prices %@ days old", th: " \u{00B7} ราคาเก่า %@ วัน")
 
@@ -509,17 +509,17 @@ private enum Strings {
     )
     static let spokenBurnUnavailable = Phrase(
         en: "Burn rate unavailable. Too few samples to state a rate.",
-        th: "ไม่มีข้อมูลอัตราการใช้ มีตัวอย่างไม่พอที่จะระบุอัตราการใช้"
+        th: "ไม่มีข้อมูล burn rate มีตัวอย่างไม่พอที่จะระบุอัตราการใช้"
     )
     static let spokenBurnRate = Phrase(
         en: "Burn rate, %@ tokens per minute, %@.",
-        th: "อัตราการใช้ %@ token ต่อนาที %@"
+        th: "Burn rate %@ token ต่อนาที %@"
     )
-    static let spokenOneLiveSession = Phrase(en: "1 live session", th: "1 session ที่ทำงานอยู่")
-    static let spokenLiveSessionCount = Phrase(en: "%@ live sessions", th: "%@ session ที่ทำงานอยู่")
+    static let spokenOneLiveSession = Phrase(en: "1 live session", th: "1 session ที่เปิดอยู่")
+    static let spokenLiveSessionCount = Phrase(en: "%@ live sessions", th: "%@ session ที่เปิดอยู่")
     static let spokenActive = Phrase(
         en: "%@ of %@ active, across %@.",
-        th: "%@ จาก %@ ที่ active ครอบคลุม %@"
+        th: "%@ จาก %@ กำลังทำงาน ครอบคลุม %@"
     )
     static let spokenApiEquivalent = Phrase(
         en: "API equivalent today, %@. %@. "

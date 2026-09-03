@@ -424,10 +424,10 @@ struct MenuBarContent: View {
     private var spokenSessionsHeader: Phrase {
         let live = model.sessions.count
         let en = live == 1 ? "1 live session" : "\(live) live sessions"
-        let th = "\(live) live session"
+        let th = "\(live) session ที่เปิดอยู่"
         return Phrase(
             en: "\(en), \(model.activeCount) active",
-            th: "\(th), active \(model.activeCount)"
+            th: "\(th) กำลังทำงาน \(model.activeCount)"
         )
     }
 
@@ -583,7 +583,7 @@ struct MenuBarContent: View {
         guard let cost = model.dashboard.todayCost else {
             return Phrase(
                 en: "Estimated cost unavailable: no price is known for one of today's models.",
-                th: "ไม่มีข้อมูลมูลค่าประมาณการ: ไม่ทราบราคาของบางโมเดลที่ใช้วันนี้"
+                th: "ไม่มีข้อมูลมูลค่าโดยประมาณ: ไม่ทราบราคาของบางโมเดลที่ใช้วันนี้"
             )
         }
         let unpriced = model.dashboard.unpricedSessionCount
@@ -591,15 +591,15 @@ struct MenuBarContent: View {
         guard unpriced > 0 else {
             return Phrase(
                 en: "Estimated cost today, \(costText). This is an estimate, not a bill.",
-                th: "มูลค่าประมาณการวันนี้ \(costText) นี่เป็นค่าประมาณการ ไม่ใช่บิลจริง"
+                th: "มูลค่าโดยประมาณวันนี้ \(costText) นี่เป็นค่าประมาณ ไม่ใช่บิลจริง"
             )
         }
         let sessionsEn = unpriced == 1 ? "1 session" : "\(unpriced) sessions"
         return Phrase(
             en: "Estimated cost today, at least \(costText); "
                 + "\(sessionsEn) could not be priced. This is an estimate, not a bill.",
-            th: "มูลค่าประมาณการวันนี้ อย่างน้อย \(costText); "
-                + "\(unpriced) session ไม่สามารถคำนวณราคาได้ นี่เป็นค่าประมาณการ ไม่ใช่บิลจริง"
+            th: "มูลค่าโดยประมาณวันนี้ อย่างน้อย \(costText); "
+                + "\(unpriced) session ไม่สามารถคำนวณราคาได้ นี่เป็นค่าประมาณ ไม่ใช่บิลจริง"
         )
     }
 
@@ -702,8 +702,8 @@ private enum Strings {
     )
     static let sevenDay = Phrase(en: "7 day", th: "7 วัน")
     static let weeklyScoped = Phrase(en: "weekly scoped", th: "รายสัปดาห์เฉพาะโมเดล")
-    static let liveSessions = Phrase(en: "LIVE SESSIONS", th: "SESSION ที่กำลังทำงาน")
-    static let noLiveSessions = Phrase(en: "No live sessions", th: "ไม่มี session ที่กำลังทำงาน")
+    static let liveSessions = Phrase(en: "LIVE SESSIONS", th: "Session ที่เปิดอยู่")
+    static let noLiveSessions = Phrase(en: "No live sessions", th: "ไม่มี session ที่เปิดอยู่")
     static let liveOnly = Phrase(en: "Live only", th: "โหมดสดเท่านั้น")
     static let nothingStored = Phrase(en: "nothing stored", th: "ไม่มีการบันทึกข้อมูล")
     static let today = Phrase(en: "Today", th: "วันนี้")

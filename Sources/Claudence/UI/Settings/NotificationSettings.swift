@@ -125,7 +125,7 @@ struct NotificationSettings: View {
         """
     )
 
-    private static let completedTitle = Phrase(en: "Session completed", th: "Session เสร็จสิ้น")
+    private static let completedTitle = Phrase(en: "Session completed", th: "Session เสร็จแล้ว")
 
     private static let completedExplanation = Phrase(
         en: """

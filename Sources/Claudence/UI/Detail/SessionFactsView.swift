@@ -170,7 +170,7 @@ struct SessionFactsView: View {
         DetailFactsGrid(title: Self.sectionTitle, facts: facts)
     }
 
-    private static let sectionTitle = Phrase(en: "SESSION FACTS", th: "ข้อมูล SESSION")
+    private static let sectionTitle = Phrase(en: "SESSION FACTS", th: "ข้อมูล Session")
     private static let modelName = Phrase(en: "Model", th: "โมเดล")
     private static let modelUnreadReason = Phrase(
         en: "No assistant record with a model has been read yet",

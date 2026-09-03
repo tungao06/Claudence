@@ -386,7 +386,7 @@ struct SessionsTableView: View {
 // MARK: - Strings
 
 private enum Strings {
-    static let title = Phrase(en: "Live sessions", th: "Session ที่กำลังทำงาน")
+    static let title = Phrase(en: "Live sessions", th: "Session ที่เปิดอยู่")
     static let subtitleHoverOnly = Phrase(
         en: "Hover any value for what it means",
         th: "วางเมาส์บนค่าใดก็ได้เพื่อดูความหมาย"
@@ -395,7 +395,7 @@ private enum Strings {
         en: "Click a row for full detail · hover any value for what it means",
         th: "คลิกแถวเพื่อดูรายละเอียดทั้งหมด · วางเมาส์บนค่าใดก็ได้เพื่อดูความหมาย"
     )
-    static let noLiveSessions = Phrase(en: "No live sessions", th: "ไม่มี session ที่กำลังทำงาน")
+    static let noLiveSessions = Phrase(en: "No live sessions", th: "ไม่มี session ที่เปิดอยู่")
     static let noLiveSessionsReason = Phrase(
         en: "Claude Code is not running, or no session is interactive",
         th: "Claude Code ไม่ได้ทำงานอยู่ หรือไม่มี session ใดที่โต้ตอบได้"

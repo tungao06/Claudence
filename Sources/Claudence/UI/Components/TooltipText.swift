@@ -125,7 +125,7 @@ enum TooltipText {
             title: Phrase(en: "Active sessions", th: "Session ที่กำลังทำงาน"),
             body: Phrase(
                 en: "Sessions doing work right now, out of the sessions with a live process. A session waiting on you is live but not active. Liveness is confirmed by pid plus process start time, never by counting processes named claude.",
-                th: "session ที่กำลังทำงานอยู่จริงตอนนี้ จากจำนวน session ทั้งหมดที่มี process ทำงานอยู่ (live) session ที่รอคุณตอบอยู่ถือว่า live แต่ไม่ active ตรวจสอบสถานะ live ด้วย PID บวกเวลาที่ process เริ่มทำงาน ไม่เคยนับจากจำนวน process ที่ชื่อ claude"
+                th: "session ที่กำลังทำงานอยู่จริงตอนนี้ จากจำนวน session ที่เปิดอยู่ทั้งหมด session ที่รอคุณตอบอยู่นับว่าเปิดอยู่ แต่ไม่ได้กำลังทำงาน ตรวจสอบว่าเปิดอยู่จริงด้วย PID บวกเวลาที่ process เริ่มทำงาน ไม่เคยนับจากจำนวน process ที่ชื่อ claude"
             )
         ),
         "status": Entry(
@@ -181,7 +181,7 @@ enum TooltipText {
             title: Phrase.untranslated("Context window"),
             body: Phrase(
                 en: "How much of the model's context window the newest request used. The used value is measured from that request; the limit is Claudence's own model table, not something the transcript states, so the reading is labelled Estimated. Under 70% Healthy, 70–85% Attention, 85–95% Warning, above 95% Critical. When that table has no limit for the model, the amount in use is still shown, with no bar and no percentage.",
-                th: "context window ของโมเดลถูกใช้ไปเท่าไรจาก request ล่าสุด ค่าที่ใช้วัดจาก request นั้นโดยตรง ส่วนขีดจำกัดมาจากตารางโมเดลของ Claudence เอง ไม่ใช่ค่าที่ transcript ระบุไว้ จึงติดป้ายว่า Estimated ต่ำกว่า 70% คือ Healthy, 70–85% คือ Attention, 85–95% คือ Warning, สูงกว่า 95% คือ Critical หากตารางไม่มีขีดจำกัดของโมเดลนั้น จะยังแสดงจำนวนที่ใช้อยู่ แต่ไม่มีแท่งและไม่มีเปอร์เซ็นต์"
+                th: "context window ของโมเดลถูกใช้ไปเท่าไรจาก request ล่าสุด ค่าที่ใช้วัดจาก request นั้นโดยตรง ส่วนขีดจำกัดมาจากตารางโมเดลของ Claudence เอง ไม่ใช่ค่าที่ transcript ระบุไว้ จึงติดป้ายว่าเป็นค่าประมาณ ต่ำกว่า 70% คือปกติ 70–85% คือเฝ้าระวัง 85–95% คือเตือน สูงกว่า 95% คือวิกฤต หากตารางไม่มีขีดจำกัดของโมเดลนั้น จะยังแสดงจำนวนที่ใช้อยู่ แต่ไม่มีแท่งและไม่มีเปอร์เซ็นต์"
             )
         ),
     ]
@@ -247,7 +247,7 @@ enum TooltipText {
             title: Phrase(en: "Model", th: "โมเดล"),
             body: Phrase(
                 en: "message.model from the most recent assistant record. Determines which price row the cost estimate uses.",
-                th: "message.model จาก assistant record ล่าสุด ใช้กำหนดว่าจะคำนวณราคาประมาณการจากแถวราคาใด"
+                th: "message.model จาก assistant record ล่าสุด ใช้กำหนดว่าจะคำนวณราคาโดยประมาณจากแถวราคาใด"
             )
         ),
         "Started": Entry(

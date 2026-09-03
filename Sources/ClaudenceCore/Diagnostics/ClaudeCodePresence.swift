@@ -84,7 +84,7 @@ public enum ClaudeCodePresence: Sendable, Equatable {
         case .installedButNeverRun:
             return Phrase(
                 en: "Start a session in any project and it will appear here.",
-                th: "เริ่มเซสชันในโปรเจกต์ใดก็ได้ แล้วเซสชันนั้นจะปรากฏที่นี่"
+                th: "เริ่ม session ในโปรเจกต์ใดก็ได้ แล้ว session นั้นจะปรากฏที่นี่"
             )
         case .absent:
             return Phrase(

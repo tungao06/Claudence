@@ -436,7 +436,7 @@ struct SessionRow: View {
 
     private var burnRateText: Phrase {
         guard let rate = burnRatePerMinute else {
-            return Phrase(en: "Rate unavailable", th: "ไม่มีข้อมูลอัตรา")
+            return Phrase(en: "Rate unavailable", th: "ไม่มีข้อมูลอัตราการใช้")
         }
         let text = "\(Format.tokens(Int(rate.rounded())))/min"
         return .untranslated(text)
