@@ -371,6 +371,37 @@ change to a view was verified by reading its call sites. That is why three of th
 found defects the audits had not, and it is the argument for leaning on `RenderShots` in stage 2.5
 rather than adding a test target late.
 
+### 9.16 Live-only mode  `DONE 2026-09-03`
+
+**~0.5 day**
+
+Asked for during stage 1 and built alongside it, because the answer touched the store's own
+lifecycle rather than a view. A switch in the privacy settings that turns persistence off: the
+shared `ClaudenceStore` reopens in memory, nothing is written to
+`~/Library/Application Support/Claudence/claudence.db`, and the application reads Claude Code's own
+files and the usage endpoint and nothing else.
+
+- [x] `ClaudenceStore.reopen(url:)` replaces the connection under a lock and carries the read
+      cursors across. The carry is the whole point: a fresh database answers "no cursor", the reader
+      restarts at byte 0, and the engine adds a transcript to an accumulator that already holds it,
+      which is 9.5b through 9.5e arriving again through a preference. A test drives the reader over
+      the switch and asserts 7 tokens rather than 107.
+- [x] `storedDataSummary()`, `deleteStoredData()` and `removeStoredFile(at:)`. The delete takes the
+      cursors with the rows, for the reason recorded at the top of this file.
+- [x] `StoreModeController` reopens, deletes if asked, then records the preference, in that order.
+- [x] The confirmation names real row counts and offers delete or keep. Cancel is the default action.
+      A file that could not be removed is shown rather than swallowed.
+- [x] Every history-derived surface is hidden rather than emptied: both charts, project totals, the
+      session history table, the Tokens today, Est. cost today and day-over-day tiles, the token
+      breakdown card, and the popover's Today figure. The layouts close up around them.
+- [x] Verified by running the built app both ways: zero open handles on the database with the mode
+      on, five with it off.
+
+The part worth remembering: two surfaces survived the first pass because their numbers were real.
+They read `daily_rollups`, which in this mode holds only what the current run wrote, so `Today` sat
+over a figure that was not today's. Arithmetically sound and still a fabricated measurement, which
+is the reading of that rule this file should keep.
+
 ### 9.15 What the stage's own audit found  `OPEN 2026-09-03`
 
 The seventeen commits were audited as a whole before stage 2 started, against the promise that
