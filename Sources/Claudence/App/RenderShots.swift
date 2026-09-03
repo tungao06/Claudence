@@ -23,6 +23,19 @@ import ClaudenceCore
 /// obvious in a picture. So every shot is rendered four times -- two
 /// appearances by two languages -- and the language is in the file name, which
 /// makes the pair openable side by side. PLAN.md 9.10b asks for exactly this.
+///
+/// It found one on its first run: the burn-leader line was written long enough
+/// in Thai to truncate inside a column the English sat comfortably in.
+///
+/// ## Two things a shot does not show
+///
+/// A segmented `Picker` renders as `ImageRenderer`'s yellow placeholder rather
+/// than as itself, in both languages, so the history range control is a block
+/// of colour in every shot. And the daily chart's axis labels come from a
+/// fixture formatted against the machine's locale, not from
+/// `DashboardAdapter`, so they read `Aug 16` in the Thai shot too. Neither is
+/// a defect in the product and neither is worth working around here; both are
+/// recorded so nobody spends an afternoon chasing them.
 @MainActor
 enum RenderShots {
 

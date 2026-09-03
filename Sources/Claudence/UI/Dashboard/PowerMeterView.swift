@@ -484,9 +484,14 @@ private enum Strings {
         th: "ไม่มีหน้าต่างใดรายงานเปอร์เซ็นต์การใช้งาน"
     )
 
+    /// One line, `lineLimit(1)`, in a column the meter's own width. The first
+    /// Thai wording was true and did not fit: a render shot in both languages
+    /// showed it truncated at "คิดเป็น 79% ข\u{2026}" while the English sat
+    /// comfortably inside the same column. Shortened until it fits rather than
+    /// widening a column the design fixes, which is what the shots are for.
     static let burnLeaderLine = Phrase(
         en: "%@ is driving the burn, %@ of it",
-        th: "%@ เป็นตัวขับเคลื่อนการใช้ token หลัก คิดเป็น %@ ของทั้งหมด"
+        th: "%@ ใช้ token มากที่สุด %@"
     )
     static let burnLeaderSpoken = Phrase(
         en: "%@ is responsible for %@ of the current burn.",

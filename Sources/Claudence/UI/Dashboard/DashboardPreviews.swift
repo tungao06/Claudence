@@ -193,7 +193,7 @@ private enum DashboardSessions {
         projectName: "claudence-06",
         workingDirectory: DashboardPaths.short,
         status: .running,
-        activity: Activity(verb: .untranslated("Editing"), subject: .untranslated("DashboardView.swift")),
+        activity: Activity(verb: ActivityMapper.Verb.editing, subject: .untranslated("DashboardView.swift")),
         usage: DashboardUsage.small,
         age: 37 * DashboardClock.minute
     )
@@ -203,7 +203,7 @@ private enum DashboardSessions {
         projectName: "hr-leave-management-14",
         workingDirectory: DashboardPaths.short,
         status: .idle,
-        activity: Activity(verb: .untranslated("Running tests")),
+        activity: Activity(verb: ActivityMapper.Verb.running, subject: .untranslated("tests")),
         usage: DashboardUsage.medium,
         age: 6 * DashboardClock.hour
     )
@@ -213,7 +213,10 @@ private enum DashboardSessions {
         projectName: "reconciliation-worker-integration-suite",
         workingDirectory: DashboardPaths.veryLong,
         status: .running,
-        activity: Activity(verb: .untranslated("Editing"), subject: .untranslated("ReconciliationWorkerConfigurationBuilder+Defaults.swift")),
+        activity: Activity(
+            verb: ActivityMapper.Verb.editing,
+            subject: .untranslated("ReconciliationWorkerConfigurationBuilder+Defaults.swift")
+        ),
         usage: DashboardUsage.medium,
         age: 2 * DashboardClock.hour
     )
@@ -223,7 +226,7 @@ private enum DashboardSessions {
         projectName: "monorepo-migration",
         workingDirectory: DashboardPaths.short,
         status: .running,
-        activity: Activity(verb: .untranslated("Searching codebase")),
+        activity: Activity(verb: ActivityMapper.Verb.searching, subject: ActivityMapper.Subject.codebase),
         usage: DashboardUsage.enormous,
         age: 4 * DashboardClock.day
     )
@@ -259,6 +262,15 @@ private enum DashboardSessions {
 private enum DashboardSeries {
     /// Builds a series ending today. A nil entry is a bucket the store could
     /// not answer for, which must render as a gap and never as a zero.
+    ///
+    /// The axis labels here are formatted against the machine's locale and
+    /// are built once, when this `static let` is first read. A render shot's
+    /// chart axis therefore says `Aug 16` in both languages, and that is a
+    /// property of the fixture, not of the product: the running application
+    /// takes these labels from `DashboardAdapter.chartLabel(_:in:)`, which
+    /// has a formatter per language with the calendar pinned to Gregorian.
+    /// Read the axis in a shot as placeholder text, not as a translation that
+    /// was missed.
     static func build(_ values: [Double?]) -> [ChartPoint] {
         let count = values.count
         return values.enumerated().map { offset, value in
