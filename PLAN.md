@@ -886,7 +886,7 @@ Ordered before the gauge and the ledger on purpose: the friends' feedback is the
 available for what those two should be, and a build with wrong numbers on it is not a build to
 collect feedback with. That is why Stage 1 precedes this.
 
-### 9.10a First launch
+### 9.10a First launch  `DONE 2026-09-03`
 
 **~1.5 days**
 
@@ -948,13 +948,16 @@ The second parked trap, the system monospaced font carrying no Thai glyphs, did 
 The render shots show Thai in `Theme.Typography.numeric` and `micro` cells rendering through
 fallback correctly.
 
-### 9.10c A report the friend can send
+### 9.10c A report the friend can send  `DONE 2026-09-03`
 
 **~1 day**
 
 `ProblemReport` landed 2026-09-03: the text, its file name, and tests that assert the home
 directory appears as `~`, that a count the store could not answer reads `unavailable` rather than
-zero, and that the file says what it does not contain. The button that writes it is what remains.
+zero, and that the file says what it does not contain. The button that writes it is in the
+privacy pane, behind an `NSSavePanel`, so the file exists only where the user put it. Its
+contents stay English whatever the interface language is, because it is read by the maintainer
+against the source.
 
 The two defects that were inside the error-monitoring request are already Stage 1 work (9.5).
 What returns here is the part the sceptic rejected for a single user: a button that writes one
@@ -963,7 +966,7 @@ macOS version, database size and row counts, the engine's counters — for the f
 hand. Nothing is sent automatically. The file is English regardless of the interface language,
 because it is read by the maintainer against the source.
 
-### 9.10d Clear stored data  `UN-PARKED, REDUCED`
+### 9.10d Clear stored data  `DONE 2026-09-03`
 
 **~0.5 day**
 
@@ -971,6 +974,13 @@ One button in the privacy settings: delete everything and `VACUUM`, behind a con
 names the real row counts. Not the date-range delete; a friend who wants the app to forget wants
 it to forget, and a friend who wants to keep some history is not the person pressing this. The
 invariant recorded under *Parked* still binds: session rows and their cursors go together.
+
+Done, and the invariant needed one thing the plan did not anticipate. Deleting the rows takes the
+cursors with them, which is correct on disk, but this process still holds every session's
+accumulated total in memory. Left alone, the next pass would find no cursor, read each transcript
+from byte 0, and add a file the accumulator already contained -- the same double count this phase
+removed from three other directions, arriving through a delete button. So the button also calls
+`MonitorEngine.forgetAccumulatedTotals()`, and cursors and totals reach zero together.
 
 ### 9.10e Ship
 
@@ -1012,7 +1022,7 @@ invariant recorded under *Parked* still binds: session rows and their cursors go
 The application's stated priority is `power meter -> active sessions -> analytics`, and the
 cheapest unbuilt thing is at the top of it.
 
-### 9.11 Time to empty
+### 9.11 Time to empty  `DONE 2026-09-03`
 
 **~1 day**
 
@@ -1055,7 +1065,7 @@ Depends on 9.4: a burn rate that never decays produces a projection that never m
 Every month-shaped question the application invites is currently unanswerable while 242 MB of the
 answer sits on disk and the database holds one day.
 
-### 9.12 Import the history already on disk  `CORE DONE 2026-09-03`
+### 9.12 Import the history already on disk  `DONE 2026-09-03`
 
 **~1.5 days**
 
@@ -1074,7 +1084,7 @@ runs it, which belongs with first launch in 9.10a.
 - [x] The largest transcript on disk is 19.9 MB against a 12 MB performance fixture. Re-measure
       the 50 ms re-scan budget against the real file, not the fixture
 
-### 9.13 The monthly table  `DATA DONE 2026-09-03`
+### 9.13 The monthly table  `DONE 2026-09-03`
 
 **~1 day**
 
@@ -1104,7 +1114,7 @@ Sonnet share, and the API-equivalent figure. Sorted by tokens.
       not in `Format.cost`, because that function is handed a number and has no way to know which
       kind of nil produced it.
 
-### 9.14 Reframe the money  `LABELS DONE 2026-09-03`
+### 9.14 Reframe the money  `DONE 2026-09-03`
 
 **~0.5 day**
 
