@@ -197,8 +197,8 @@ Neither touches anything under `~/.claude`.
 ### Moving it to another Mac
 
 ```
-make dmg   # Claudence-0.1.0.dmg, drag-to-Applications layout
-make pkg   # Claudence-0.1.0.pkg, for a non-interactive install
+make dmg   # Claudence-<version>.dmg, drag-to-Applications layout
+make pkg   # Claudence-<version>.pkg, for a non-interactive install
 ```
 
 The `.dmg` opens as the usual install window: the app on the left, an
@@ -218,7 +218,7 @@ what they are copying, and it needs no administrator password. The `.pkg` exists
 for the case where an install has to run from a script:
 
 ```
-sudo installer -pkg Claudence-0.1.0.pkg -target /
+sudo installer -pkg Claudence-<version>.pkg -target /
 ```
 
 **Neither is notarised, and neither can be.** Notarisation requires a paid Apple
