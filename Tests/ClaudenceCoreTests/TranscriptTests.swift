@@ -347,6 +347,60 @@ struct TranscriptTests {
         #expect(delta.recordsParsed == 3)
     }
 
+    /// A session where the user typed a prompt and left before Claude replied
+    /// still knows where it ran.
+    ///
+    /// Every record type carries `cwd`, but only assistant records were ever
+    /// looked at, so these sessions reached the history table named after the
+    /// projects directory's own slug -- the path with every separator replaced,
+    /// which is not reversible. They are common: a prompt typed and abandoned
+    /// writes `user`, `mode` and `last-prompt` lines and no assistant record at
+    /// all.
+    ///
+    /// What such a session still has nothing to say about is its model and its
+    /// tokens, and this pins that too. There is no `message.model` anywhere in
+    /// the file, so the honest cell is empty rather than guessed.
+    @Test("a session with no assistant record still reports where it ran")
+    func workingDirectoryComesFromAnyRecordType() {
+        let fixture = TranscriptFixture()
+        fixture.appendLines([
+            """
+            {"type":"user","cwd":"/Users/someone/code/demo","sessionId":"\(fixture.sessionID)",\
+            "message":{"role":"user","content":[{"type":"text","text":"hello"}]}}
+            """,
+            #"{"type":"mode","mode":"default"}"#,
+            #"{"type":"last-prompt","lastPrompt":"a prompt"}"#,
+        ])
+
+        let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
+
+        #expect(delta.workingDirectory == "/Users/someone/code/demo")
+        // And nothing else came with it.
+        #expect(delta.usage == .zero)
+        #expect(delta.latestModel == nil)
+        #expect(delta.latestActivity == nil)
+    }
+
+    /// An assistant record's own `cwd` is the better answer whenever there is
+    /// one; the user line's value is only there so a session that never gets
+    /// one is not left anonymous.
+    @Test("an assistant record's working directory outranks a user line's")
+    func assistantWorkingDirectoryWins() {
+        let fixture = TranscriptFixture()
+        fixture.appendLines([
+            """
+            {"type":"user","cwd":"/tmp/stale","sessionId":"\(fixture.sessionID)",\
+            "message":{"role":"user","content":[]}}
+            """,
+            fixture.assistantRecord(),
+        ])
+
+        let delta = fixture.read(with: fixture.makeReader(store: TranscriptMemoryCursorStore()))
+
+        #expect(delta.workingDirectory == fixture.workingDirectory)
+        #expect(delta.workingDirectory != "/tmp/stale")
+    }
+
     @Test("Non-assistant record types contribute nothing")
     func nonAssistantRecordsContributeNothing() {
         let fixture = TranscriptFixture()

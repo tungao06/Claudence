@@ -178,7 +178,15 @@ public struct TranscriptReader: TranscriptReading {
             builder.skip()
             return
         }
-        guard probe.isAssistant else { return }
+        guard probe.isAssistant else {
+            // The one thing taken from a non-assistant line, and only until
+            // there is one: a session with no assistant record at all still
+            // knows where it ran. See `TranscriptLineType`.
+            if let cwd = probe.cwd, !cwd.isEmpty {
+                builder.noteWorkingDirectoryIfAbsent(cwd)
+            }
+            return
+        }
         guard let record = try? decoder.decode(TranscriptRecord.self, from: line) else {
             builder.skip()
             return
@@ -233,6 +241,18 @@ final class DeltaBuilder {
     /// `recordsParsed` counts assistant records only. A `user`, `system`, or
     /// `attachment` line is neither parsed nor skipped: it simply contributes
     /// nothing.
+    /// Records a working directory seen on a line this builder otherwise
+    /// ignores.
+    ///
+    /// `IfAbsent`, unlike the assignment in `absorb`, which is newest-wins. An
+    /// assistant record's own `cwd` is the better answer whenever there is
+    /// one, and it arrives later in the file than the first user line; taking
+    /// this one only when nothing has been seen keeps the fallback a fallback.
+    func noteWorkingDirectoryIfAbsent(_ cwd: String) {
+        guard workingDirectory == nil else { return }
+        workingDirectory = cwd
+    }
+
     func absorb(_ record: TranscriptRecord) {
         parsed += 1
 

@@ -20,10 +20,27 @@ import Foundation
 /// First-pass decode. Every line is classified by `type` before anything else
 /// is decoded, so a `user`, `attachment`, `file-history-snapshot` or
 /// `file-history-delta` line is never decoded past this struct.
+///
+/// It carries `cwd` as well, and that is deliberate rather than convenient.
+/// Claude Code writes the working directory on every record type, not only on
+/// assistant ones, and a session that never got an assistant reply -- a prompt
+/// typed and abandoned, which happens often enough to fill a history table --
+/// therefore had no record this reader would look at and no working directory
+/// to name itself with. Those rows fell back to the projects directory's own
+/// slug and appeared as `-Users-someone-Some-Project`, which is the path with
+/// every separator replaced and is not reversible.
+///
+/// `cwd` is on the privacy allowlist already; this reads the same field from a
+/// different record type and nothing else. Widening this probe rather than
+/// decoding the whole record is the point: a `user` line still never reaches
+/// `TranscriptRecord`, so its content blocks are still never decoded, and the
+/// rule that a non-assistant line stops at the type probe survives with one
+/// named exception written down here.
 struct TranscriptLineType: Decodable {
     let type: String?
+    let cwd: String?
 
-    private enum CodingKeys: String, CodingKey { case type }
+    private enum CodingKeys: String, CodingKey { case type, cwd }
 
     var isAssistant: Bool { type == "assistant" }
 }
