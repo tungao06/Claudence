@@ -303,6 +303,7 @@ struct PrivacySettings: View {
         let environment = ProblemReport.Environment(
             appVersion: AppVersion.short,
             appBuild: AppVersion.build,
+            sourceRevision: AppVersion.sourceRevision,
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
             storeHealth: storeMode.storeHealth,
             isLiveOnly: storeMode.isLiveOnly,

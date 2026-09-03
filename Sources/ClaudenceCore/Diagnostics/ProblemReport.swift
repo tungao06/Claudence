@@ -25,6 +25,15 @@ public struct ProblemReport: Sendable, Equatable {
     public struct Environment: Sendable, Equatable {
         public var appVersion: String
         public var appBuild: String
+        /// The commit this bundle was built from, `-modified` when the tree
+        /// was dirty. Nil when the bundle carries no such key, which is what a
+        /// build outside a git checkout produces.
+        ///
+        /// Worth a line of its own because self-distribution has no build
+        /// server: two friends can hold bundles that call themselves
+        /// `0.1.1 (72)` and were built from different working trees, and this
+        /// is the only thing in the report that can tell them apart.
+        public var sourceRevision: String?
         public var operatingSystem: String
         public var storeHealth: StoreHealth
         public var isLiveOnly: Bool
@@ -40,6 +49,7 @@ public struct ProblemReport: Sendable, Equatable {
         public init(
             appVersion: String,
             appBuild: String,
+            sourceRevision: String? = nil,
             operatingSystem: String,
             storeHealth: StoreHealth,
             isLiveOnly: Bool,
@@ -54,6 +64,7 @@ public struct ProblemReport: Sendable, Equatable {
         ) {
             self.appVersion = appVersion
             self.appBuild = appBuild
+            self.sourceRevision = sourceRevision
             self.operatingSystem = operatingSystem
             self.storeHealth = storeHealth
             self.isLiveOnly = isLiveOnly
@@ -97,6 +108,7 @@ public struct ProblemReport: Sendable, Equatable {
 
         lines.append("Application")
         lines.append("  version:        \(environment.appVersion) (\(environment.appBuild))")
+        lines.append("  source:         \(environment.sourceRevision ?? "unknown")")
         lines.append("  macOS:          \(environment.operatingSystem)")
         lines.append("  Claude Code:    \(environment.claudeCodeVersion ?? "not seen")")
         lines.append("  live-only mode: \(environment.isLiveOnly ? "on" : "off")")

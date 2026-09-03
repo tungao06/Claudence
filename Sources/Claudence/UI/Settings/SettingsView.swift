@@ -385,6 +385,15 @@ enum AppVersion {
     static var short: String { string(forKey: "CFBundleShortVersionString") }
     static var build: String { string(forKey: "CFBundleVersion") }
 
+    /// The commit this bundle was built from, stamped by `Scripts/make-app.sh`,
+    /// with `-modified` on it when the working tree was dirty. Nil outside a
+    /// git checkout. It never appears on screen -- it goes in the problem
+    /// report, which is the only place it answers a question anyone has.
+    static var sourceRevision: String? {
+        let value = string(forKey: "ClaudenceSourceRevision")
+        return value == unknown ? nil : value
+    }
+
     /// The design's footer stamp: `v0.1.0`, or the bundle's own short version
     /// with a `v` in front of it. `unknown` is passed through unprefixed, since
     /// `vunknown` reads as a version rather than as an absence.

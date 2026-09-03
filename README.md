@@ -106,6 +106,53 @@ own scratch path:
 swift build --scratch-path .build-alt
 ```
 
+## Versions
+
+Two numbers, and only one of them is a decision.
+
+| | Where it comes from | When it changes |
+|---|---|---|
+| `CFBundleShortVersionString` | `Resources/Info.plist`, edited by hand | when you decide a release means something |
+| `CFBundleVersion` | `git rev-list --count HEAD`, stamped at build | every commit, automatically |
+| `ClaudenceSourceRevision` | `git rev-parse --short HEAD`, stamped at build | every commit, automatically |
+
+`make app` stamps the last two into the copy of `Info.plist` inside the bundle.
+It never writes back to `Resources/Info.plist`, so building leaves the working
+tree clean and two people building the same commit get the same numbers without
+coordinating.
+
+**Before a release, do one thing:** edit `CFBundleShortVersionString` in
+`Resources/Info.plist`.
+
+```
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.2.0" Resources/Info.plist
+git commit -am "release 0.2.0"
+make app
+```
+
+The build number takes care of itself. It only has to go up and to differ
+between two bundles a friend might both have, and the commit count does both
+without a state file that would go stale.
+
+`ClaudenceSourceRevision` carries `-modified` when the working tree was dirty at
+build time. It never appears on screen; it goes in the problem report, and it is
+the only thing that can tell apart two bundles that both call themselves
+`0.1.1 (72)` and were built from different trees. Self-distribution has no build
+server to ask.
+
+Both can be overridden for one build without touching any file:
+
+```
+MARKETING_VERSION=0.2.0-rc1 BUILD_NUMBER=9001 make app
+```
+
+Outside a git checkout — a source tarball, say — the build number stays whatever
+`Resources/Info.plist` says, rather than a number invented on the spot that could
+go backwards.
+
+There is no update check and there never will be one; see `CLAUDE.md`. A new
+version reaches a friend as a new `.dmg` and nothing else.
+
 ## Installing
 
 `make run` opens the app straight out of the repository, which is fine for a

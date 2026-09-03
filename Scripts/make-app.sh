@@ -72,6 +72,59 @@ cp "$BIN" "$APP/Contents/MacOS/Claudence"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
+# ---------------------------------------------------------------------------
+# Version stamping
+#
+# Two numbers, and only one of them is a decision.
+#
+# CFBundleShortVersionString is what a person sees and chooses -- 0.2.0 means
+# something about the release and no script can know what. It is edited in
+# Resources/Info.plist, or overridden here for one build with MARKETING_VERSION.
+#
+# CFBundleVersion is bookkeeping: it only has to go up, and it has to differ
+# between two builds a friend might both have. It is the commit count, which is
+# monotonic, identical for anyone building the same commit, and needs no state
+# file that would go stale or dirty the tree. BUILD_NUMBER overrides it.
+#
+# Stamped into the copy inside the bundle, never back into the source plist, so
+# building never modifies the working tree.
+# ---------------------------------------------------------------------------
+PLIST_BUDDY=/usr/libexec/PlistBuddy
+BUNDLE_PLIST="$APP/Contents/Info.plist"
+
+if [ -n "${MARKETING_VERSION:-}" ]; then
+    "$PLIST_BUDDY" -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$BUNDLE_PLIST"
+fi
+
+if [ -n "${BUILD_NUMBER:-}" ]; then
+    RESOLVED_BUILD="$BUILD_NUMBER"
+elif RESOLVED_BUILD=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null) && [ -n "$RESOLVED_BUILD" ]; then
+    : # commit count
+else
+    # Not a git checkout. Leave whatever the source plist says rather than
+    # inventing a number that could go backwards.
+    RESOLVED_BUILD=""
+fi
+
+if [ -n "$RESOLVED_BUILD" ]; then
+    "$PLIST_BUDDY" -c "Set :CFBundleVersion $RESOLVED_BUILD" "$BUNDLE_PLIST"
+fi
+
+# The exact source this bundle came from, for a problem report sent by hand.
+# A dirty tree says so, because "0.1.1 (412)" from a modified checkout is not
+# the same software as "0.1.1 (412)" from the commit.
+if SOURCE_REVISION=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null); then
+    if ! git -C "$ROOT" diff --quiet HEAD 2>/dev/null; then
+        SOURCE_REVISION="$SOURCE_REVISION-modified"
+    fi
+    "$PLIST_BUDDY" -c "Add :ClaudenceSourceRevision string $SOURCE_REVISION" "$BUNDLE_PLIST" 2>/dev/null \
+        || "$PLIST_BUDDY" -c "Set :ClaudenceSourceRevision $SOURCE_REVISION" "$BUNDLE_PLIST"
+fi
+
+STAMPED_SHORT=$("$PLIST_BUDDY" -c "Print :CFBundleShortVersionString" "$BUNDLE_PLIST")
+STAMPED_BUILD=$("$PLIST_BUDDY" -c "Print :CFBundleVersion" "$BUNDLE_PLIST")
+echo "version $STAMPED_SHORT ($STAMPED_BUILD)${SOURCE_REVISION:+, source $SOURCE_REVISION}"
+
 codesign "${SIGN_FLAGS[@]}" --sign "$IDENTITY" "$APP"
 
 case "$IDENTITY_KIND" in
