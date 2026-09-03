@@ -960,13 +960,21 @@ Nothing new has to be read. `UsageWindow` already carries `usedPercent` and `res
 `BurnRateTracker` already produces tokens per minute. The remaining work is division, plus the
 honesty around it.
 
+The arithmetic landed 2026-09-03 as `UsageProjector` and `BurnAttribution`, with tests. It
+measures percent per minute rather than tokens per minute: the endpoint reports a share of a
+window whose size it never states, so a token rate cannot be turned into one without inventing
+the capacity. What remains of this item is the tile that shows it.
+
 - [ ] Projected exhaustion time per window, shown beside the reset time in the same tile, because
       the gap between those two is the entire decision
 - [ ] Which window binds first. 21% on 5h and 66% on 7d are given equal visual weight today, and
       the 7-day one is the one that ends the day
 - [ ] The session responsible for the largest share of the current burn, named
-- [ ] `Rate unavailable` until there are enough samples. A projection from one sample is a
-      fabricated number, and this is the feature most able to produce one
+- [x] `Rate unavailable` until there are enough samples. A projection from one sample is a
+      fabricated number, and this is the feature most able to produce one. Four outcomes, three of
+      which are not a time: fewer than two readings or less than five minutes between them, a share
+      that has not moved, and a window that fell between readings because it reset. A projection
+      past the reset says `holds until reset` rather than naming a moment after it.
 
 Depends on 9.4: a burn rate that never decays produces a projection that never moves.
 
