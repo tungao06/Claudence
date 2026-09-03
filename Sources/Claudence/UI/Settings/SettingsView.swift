@@ -419,6 +419,7 @@ enum AppVersion {
 /// the card needs no spacing of its own between them — the rule is the gap.
 struct SettingsView: View {
     @Bindable var preferences: Preferences
+    let storeMode: StoreModeController
 
     var body: some View {
         ScrollView {
@@ -428,7 +429,7 @@ struct SettingsView: View {
                 MenuBarSettings(preferences: preferences)
                 SessionsSettings(preferences: preferences)
                 NotificationSettings(preferences: preferences)
-                PrivacySettings()
+                PrivacySettings(storeMode: storeMode)
                 QuitSection()
             }
             .frame(width: Theme.Layout.settingsWidth, alignment: .leading)
@@ -522,10 +523,11 @@ struct SettingsHeader: View {
 /// what settings contains.
 struct SettingsScene: Scene {
     let preferences: Preferences
+    let storeMode: StoreModeController
 
     var body: some Scene {
         Settings {
-            SettingsView(preferences: preferences)
+            SettingsView(preferences: preferences, storeMode: storeMode)
         }
     }
 }

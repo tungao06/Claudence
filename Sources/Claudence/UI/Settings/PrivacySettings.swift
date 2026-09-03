@@ -1,4 +1,5 @@
 import SwiftUI
+import ClaudenceCore
 
 /// The privacy disclosure required by spec section 3.3.
 ///
@@ -33,8 +34,41 @@ import SwiftUI
 /// Written in the second person, in short sentences. The reader is the person
 /// whose files these are, not an engineer.
 struct PrivacySettings: View {
+    let storeMode: StoreModeController
     @State private var isShowingFullDisclosure = false
+    /// Set right before the confirmation opens, from the same summary the
+    /// dialog's message is built from, so the counts on screen and the counts
+    /// a "Delete" tap acts on are never two different reads of the store a
+    /// moment apart.
+    @State private var pendingSummary: ClaudenceStore.StoredDataSummary?
+    @State private var isConfirmingLiveOnly = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// `SettingsToggle` wants a plain `Binding<Bool>`, but this switch cannot
+    /// just write the value it is given: turning it on has to decide whether a
+    /// confirmation is needed first, and turning it off has to reopen the
+    /// store rather than merely record intent. The source of truth stays
+    /// `storeMode.isLiveOnly`; a cancelled confirmation leaves that unchanged,
+    /// so the toggle relaxes back to where it was without anything having
+    /// moved.
+    private var liveOnlyBinding: Binding<Bool> {
+        Binding(
+            get: { storeMode.isLiveOnly },
+            set: { turnOn in
+                guard turnOn else {
+                    storeMode.setLiveOnly(false, deletingStoredData: false)
+                    return
+                }
+                let summary = storeMode.storedDataSummary()
+                if summary.isEmpty {
+                    storeMode.setLiveOnly(true, deletingStoredData: false)
+                } else {
+                    pendingSummary = summary
+                    isConfirmingLiveOnly = true
+                }
+            }
+        )
+    }
 
     var body: some View {
         SettingsSection(title: "Privacy", showDivider: false) {
@@ -42,6 +76,17 @@ struct PrivacySettings: View {
                 SettingsParagraph(text: Copy.reads)
                 SettingsParagraph(text: Copy.leaves)
                 SettingsParagraph(text: Copy.never)
+
+                SettingsToggle(
+                    title: Copy.liveOnlyTitle,
+                    explanation: Copy.liveOnlyExplanation,
+                    isOn: liveOnlyBinding
+                )
+                .padding(.top, Theme.Space.xs)
+
+                if !storeMode.lastDeletionFailures.isEmpty {
+                    deletionFailureNotice(storeMode.lastDeletionFailures)
+                }
 
                 HStack(alignment: .center, spacing: Theme.Space.m) {
                     Button {
@@ -96,6 +141,58 @@ struct PrivacySettings: View {
                 value: isShowingFullDisclosure
             )
         }
+        .confirmationDialog(
+            Copy.liveOnlyConfirmTitle,
+            isPresented: $isConfirmingLiveOnly,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Stored History", role: .destructive) {
+                storeMode.setLiveOnly(true, deletingStoredData: true)
+                pendingSummary = nil
+            }
+            Button("Keep File, Stop Using It") {
+                storeMode.setLiveOnly(true, deletingStoredData: false)
+                pendingSummary = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingSummary = nil
+            }
+            // Cancel is the default action, so a stray Return key does not
+            // delete a history the user only meant to inspect.
+            .keyboardShortcut(.defaultAction)
+        } message: {
+            Text(pendingSummary.map(Copy.liveOnlyConfirmMessage) ?? Copy.liveOnlyConfirmFallback)
+        }
+    }
+
+    // MARK: - Deletion failures
+
+    /// What `StoreModeController.lastDeletionFailures` is for: a delete that
+    /// silently left a file behind is worse than one that never ran, because
+    /// the user is told the mode switched and believes the history is gone
+    /// when the `-wal` or `-shm` sibling, or the file itself, is still on
+    /// disk. Paired with a glyph rather than colour alone, per the rest of
+    /// this app's indicators.
+    private func deletionFailureNotice(_ files: [URL]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            HStack(spacing: Theme.Space.s) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(Theme.critical)
+                    .accessibilityHidden(true)
+                Text("Some stored files could not be deleted")
+                    .font(Theme.Typography.labelEmphasis)
+                    .foregroundStyle(Theme.critical)
+            }
+            ForEach(files, id: \.path) { file in
+                Text(file.path)
+                    .font(Theme.Typography.micro)
+                    .foregroundStyle(Theme.textQuaternary)
+            }
+            Text("Live-only mode is on. Remove these by hand if you want them gone.")
+                .font(Theme.Typography.help)
+                .foregroundStyle(Theme.textQuaternary)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Block
@@ -162,6 +259,45 @@ struct PrivacySettings: View {
         static let never = """
         Message text, tool output and command strings are never read, stored, or \
         shown.
+        """
+
+        // Live-only mode. `storageBody`, further down in the full disclosure,
+        // names the same path this explanation does -- ~/Library/Application
+        // Support/Claudence/claudence.db is the one file this whole section is
+        // ever about, on or off.
+
+        static let liveOnlyTitle = "Live-only mode"
+
+        static let liveOnlyExplanation = """
+        Claudence writes nothing to \
+        ~/Library/Application Support/Claudence/claudence.db while this is on: \
+        the database runs in memory for the rest of this run. History, project \
+        totals, day-over-day figures and cost estimates are not shown in this \
+        mode, because none of them can be worked out without what the database \
+        holds.
+        """
+
+        static let liveOnlyConfirmTitle = "Turn on live-only mode?"
+
+        /// Named counts rather than "your data": a confirmation that cannot say
+        /// how much it is about to delete is not one a reader can act on.
+        static func liveOnlyConfirmMessage(_ summary: ClaudenceStore.StoredDataSummary) -> String {
+            let sizeSuffix = summary.fileSizeBytes.map { bytes in
+                " (\(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)))"
+            } ?? ""
+            return """
+            Claudence has \(summary.sessions) session\(summary.sessions == 1 ? "" : "s"), \
+            \(summary.usageSamples) usage sample\(summary.usageSamples == 1 ? "" : "s") and \
+            \(summary.rollupDays) day\(summary.rollupDays == 1 ? "" : "s") of rolled-up history\(sizeSuffix) \
+            stored on this Mac. Delete it now, or keep the file untouched and simply stop using \
+            it. Deletion cannot be undone.
+            """
+        }
+
+        /// Used only if the confirmation somehow opens with no summary read yet.
+        static let liveOnlyConfirmFallback = """
+        Delete the stored history now, or keep the file untouched and simply \
+        stop using it. Deletion cannot be undone.
         """
 
         // The full disclosure, behind the button.

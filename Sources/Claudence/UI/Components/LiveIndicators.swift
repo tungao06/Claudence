@@ -39,6 +39,37 @@ extension EnvironmentValues {
     }
 }
 
+/// Whether `Preferences.liveOnlyMode` is on, carried down the view tree the
+/// same way `liveIndicators` is.
+///
+/// Live-only mode points the shared store at memory: nothing survives a quit,
+/// so any surface that can only be computed from stored history has nothing
+/// honest to show. Those surfaces are not rendered as `Usage unavailable` --
+/// the mode is not a degraded state, it is a choice -- they are omitted
+/// outright, and the layout around them closes up. Deciding that is a view's
+/// job, not the adapter's, which is why this is an environment value rather
+/// than a field the adapter leaves nil: a nil in `DashboardData` already means
+/// "the store could not answer," and reusing it here would make an
+/// intentional omission indistinguishable from a failed read.
+///
+/// One environment key rather than a parameter threaded through `DashboardView`,
+/// `StatTilesView` and every card in between, for the same reason
+/// `liveIndicators` is one: a setting that reaches some of its views through a
+/// parameter and others through the environment is the failure this pattern
+/// exists to rule out.
+private struct LiveOnlyModeKey: EnvironmentKey {
+    /// False, so a preview or a view outside the app's scenes renders the full
+    /// dashboard by default rather than silently hiding history.
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var liveOnlyMode: Bool {
+        get { self[LiveOnlyModeKey.self] }
+        set { self[LiveOnlyModeKey.self] = newValue }
+    }
+}
+
 extension Theme {
     /// The animation for a value that has just moved, or nil when it should not
     /// move at all.

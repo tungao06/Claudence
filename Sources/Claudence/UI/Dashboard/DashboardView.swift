@@ -62,6 +62,19 @@ struct DashboardView: View {
     /// The row whose detail is open, when the host supplied no handler.
     @State private var detailSession: AISession?
 
+    /// Whether `Preferences.liveOnlyMode` is on. Read from the environment,
+    /// the same route `liveIndicators` uses: this view has no other reason to
+    /// know a preference exists, and the flag reaches every surface it hides
+    /// through the one mechanism rather than a mix of parameters and reads.
+    ///
+    /// Live-only mode has nothing to write to disk, so nothing here can be
+    /// computed from stored history: the daily and hourly chart, the project
+    /// totals card and the session history table all disappear rather than
+    /// render `Usage unavailable`, because the mode is a deliberate choice and
+    /// not a degraded state. `DashboardAdapter.refreshDashboard` already skips
+    /// asking the store for the figures these surfaces would have shown.
+    @Environment(\.liveOnlyMode) private var liveOnlyMode
+
     init(
         data: DashboardData,
         now: Date = Date(),
@@ -85,8 +98,14 @@ struct DashboardView: View {
                     meterRow
                     sessionsRow
                     StatTilesView(data: data)
-                    projectsCard
-                    historyCard
+                    // Both cards are history end to end -- a chart of days
+                    // gone by and a table of sessions that already ended --
+                    // so live-only mode omits them rather than opening on an
+                    // `Usage unavailable` card with nothing behind it.
+                    if !liveOnlyMode {
+                        projectsCard
+                        historyCard
+                    }
                 }
                 .padding(.horizontal, DashboardMetrics.shellPaddingHorizontal)
                 .padding(.top, DashboardMetrics.shellPaddingVertical)
@@ -283,15 +302,27 @@ struct DashboardView: View {
 
     // MARK: - 1. Power meter, and the series behind it
 
+    @ViewBuilder
     private var meterRow: some View {
-        HStack(alignment: .top, spacing: DashboardMetrics.rowGap) {
+        if liveOnlyMode {
+            // The chart is a history of days gone by, which live-only mode has
+            // nothing to draw: no fixed column beside it for the meter to keep
+            // clear of, so the meter takes the row it would have shared.
             PowerMeterView(
                 data: data,
                 now: now,
                 highlightedWindowName: effectiveSelection(in: pickerWindows)
             )
-            .frame(width: DashboardMetrics.powerMeterColumnWidth)
-            chartCard
+        } else {
+            HStack(alignment: .top, spacing: DashboardMetrics.rowGap) {
+                PowerMeterView(
+                    data: data,
+                    now: now,
+                    highlightedWindowName: effectiveSelection(in: pickerWindows)
+                )
+                .frame(width: DashboardMetrics.powerMeterColumnWidth)
+                chartCard
+            }
         }
     }
 
@@ -388,8 +419,13 @@ struct DashboardView: View {
                     }
                 }
             )
-            TokenBreakdownCard(usage: data.todayUsage)
-                .frame(width: DashboardMetrics.breakdownColumnWidth)
+            // Today's breakdown is a rollup read, so it is hidden rather than
+            // shown empty in live-only mode, and the sessions table takes the
+            // width it leaves.
+            if !liveOnlyMode {
+                TokenBreakdownCard(usage: data.todayUsage)
+                    .frame(width: DashboardMetrics.breakdownColumnWidth)
+            }
         }
     }
 

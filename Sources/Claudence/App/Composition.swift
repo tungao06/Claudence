@@ -12,6 +12,7 @@ enum Composition {
         let watcher: RegistryWatcher
         let preferences: Preferences
         let notifications: NotificationBridge
+        let storeMode: StoreModeController
     }
 
     /// Derived rather than assigned once, because these four preferences can
@@ -35,9 +36,16 @@ enum Composition {
     }
 
     static func makeServices() -> Services {
+        // Built before the store: live-only mode decides whether the store
+        // opens its file or opens in memory, and that decision has to be made
+        // before the store exists rather than applied to it afterwards.
+        let preferences = Preferences()
+
         // Persistence is best effort. A degraded store still lets the app show
-        // live sessions; it only loses history and offset resumption.
-        let store = ClaudenceStore()
+        // live sessions; it only loses history and offset resumption. In
+        // live-only mode there is no file to degrade from: the store opens in
+        // memory on purpose and reports `.healthy`.
+        let store = ClaudenceStore(url: preferences.liveOnlyMode ? nil : ClaudenceStore.defaultDatabaseURL)
 
         let reader = TranscriptReader(cursorStore: store)
         let engine = MonitorEngine(
@@ -55,7 +63,7 @@ enum Composition {
         )
 
         let analytics = AnalyticsService(store: store)
-        let preferences = Preferences()
+        let storeMode = StoreModeController(store: store, preferences: preferences)
         let notifications = NotificationBridge()
         // The master switch and the per-event switches travel together, so a
         // preference that is stored is a preference that is read. A keep-set
@@ -79,7 +87,8 @@ enum Composition {
             model: model,
             watcher: RegistryWatcher(),
             preferences: preferences,
-            notifications: notifications
+            notifications: notifications,
+            storeMode: storeMode
         )
     }
 }

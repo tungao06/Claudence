@@ -22,6 +22,20 @@ import ClaudenceCore
 struct StatTilesView: View {
     let data: DashboardData
 
+    /// Whether `Preferences.liveOnlyMode` is on, read the same way
+    /// `liveIndicators` is: this strip is a leaf several levels under the
+    /// composition root and has no other reason to know a preference exists.
+    ///
+    /// `Tokens today` and `Est. cost today` are both totals over every session
+    /// that ran today, ended ones included, which is a figure live-only mode
+    /// has nothing to reconstruct once a session leaves the live registry; the
+    /// day-over-day delta compounds that by comparing against yesterday, which
+    /// is gone the moment the process quits. All three are omitted rather than
+    /// rendered `Usage unavailable`, and the grid drops to the two tiles nothing
+    /// about live-only mode touches: burn rate and active sessions, both read
+    /// straight off the live registry.
+    @Environment(\.liveOnlyMode) private var liveOnlyMode
+
     /// One tile's tint, ink and border, from `Theme.Tile`.
     ///
     /// A tile's colour is identity, not state: the cost tile is amber whether
@@ -58,16 +72,20 @@ struct StatTilesView: View {
     private var columns: [GridItem] {
         Array(
             repeating: GridItem(.flexible(), spacing: DashboardMetrics.statTileGap, alignment: .top),
-            count: 4
+            count: liveOnlyMode ? 2 : 4
         )
     }
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: DashboardMetrics.statTileGap) {
-            tokensTile
+            if !liveOnlyMode {
+                tokensTile
+            }
             burnTile
             activeTile
-            costTile
+            if !liveOnlyMode {
+                costTile
+            }
         }
     }
 

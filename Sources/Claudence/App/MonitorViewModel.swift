@@ -83,6 +83,13 @@ final class MonitorViewModel {
     /// This paces the one polled source in the application. Session discovery
     /// and token counts stay event driven and are not affected by it.
     var usageRefreshInterval: TimeInterval = Constants.Usage.cacheTTL
+
+    /// Whether `Preferences.liveOnlyMode` is on. Set by the composition root
+    /// from `Preferences`, the same way `usageRefreshInterval` is, rather than
+    /// read through the environment: `DashboardAdapter.refreshDashboard` is not
+    /// a view, and the environment's `liveOnlyMode` is for the views that hide
+    /// surfaces this flag lets the adapter skip computing in the first place.
+    var isLiveOnly: Bool = false
     private var observerToken: UUID?
     private var usageTask: Task<Void, Never>?
 

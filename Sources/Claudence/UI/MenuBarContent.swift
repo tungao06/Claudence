@@ -19,6 +19,9 @@ struct MenuBarContent: View {
     /// part of the tree that depends on a value is invalidated when it moves.
     let preferences: Preferences
 
+    /// Whether persistence is off, so the surfaces that read stored history
+    /// are hidden rather than shown empty. See `EnvironmentValues.liveOnlyMode`.
+    @Environment(\.liveOnlyMode) private var liveOnlyMode
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
@@ -413,24 +416,38 @@ struct MenuBarContent: View {
     /// some sessions are unpriced, the figure is a floor, so the strip says so.
     private var todayStrip: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Popover.todayGap) {
+            // Today's figure is a rollup read. In live-only mode the rollups
+            // hold what this run has written and nothing else, so the word
+            // Today would sit over a number that is not today's. The figure and
+            // its cost go, the Dashboard button stays: the strip is also how
+            // the dashboard is opened.
             HStack(alignment: .firstTextBaseline, spacing: Theme.Popover.todayGap) {
-                Text("Today")
-                    .font(Theme.Typography.body)
-                    .foregroundStyle(Theme.textTertiary)
-                if let usage = model.todayUsage {
-                    Text(Format.tokens(usage.total))
-                        .font(Theme.Typography.stripValue)
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(costLine)
+                if liveOnlyMode {
+                    Text("Live only")
+                        .font(Theme.Typography.body)
+                        .foregroundStyle(Theme.textTertiary)
+                    Text("nothing stored")
                         .font(Theme.Typography.help)
                         .foregroundStyle(Theme.textQuaternary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
                 } else {
-                    // The aggregate behind this figure did not answer. A zero
-                    // here would be a measurement, and the cost beside it would
-                    // be a second one derived from the first.
-                    UnavailableView("Token usage unavailable", compact: true)
+                    Text("Today")
+                        .font(Theme.Typography.body)
+                        .foregroundStyle(Theme.textTertiary)
+                    if let usage = model.todayUsage {
+                        Text(Format.tokens(usage.total))
+                            .font(Theme.Typography.stripValue)
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(costLine)
+                            .font(Theme.Typography.help)
+                            .foregroundStyle(Theme.textQuaternary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    } else {
+                        // The aggregate behind this figure did not answer. A
+                        // zero here would be a measurement, and the cost beside
+                        // it would be a second one derived from the first.
+                        UnavailableView("Token usage unavailable", compact: true)
+                    }
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -453,6 +470,7 @@ struct MenuBarContent: View {
 
     /// The whole today strip, spoken.
     private var spokenToday: String {
+        if liveOnlyMode { return "Live only mode, nothing is stored" }
         guard let usage = model.todayUsage else {
             return "Today, token usage unavailable"
         }

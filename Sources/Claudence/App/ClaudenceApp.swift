@@ -24,6 +24,13 @@ struct ClaudenceApp: App {
                 // environment. They are leaves several levels down and have no
                 // other reason to know a preference exists.
                 .environment(\.liveIndicators, services.preferences.liveIndicators)
+                // Same route as `liveIndicators`. The popover's Today strip
+                // reads the same rollups the dashboard does, so it hides its
+                // figure in this mode and keeps the Dashboard button; one
+                // delivery mechanism means every consumer finds the flag in the
+                // same place rather than growing a second path, which is the
+                // defect 9.8 was about.
+                .environment(\.liveOnlyMode, services.preferences.liveOnlyMode)
                 .task { await start() }
                 // The popover content is mounted for the life of the process,
                 // which makes it the one reliable place to notice a preference
@@ -52,6 +59,18 @@ struct ClaudenceApp: App {
                 .onChange(of: services.preferences.notifyOnSessionNeedsInput) { _, _ in
                     rebuildNotificationFilter()
                 }
+                // `isLiveOnly` gates which analytics `DashboardAdapter` bothers
+                // computing (see `refreshDashboard`), which is a decision the
+                // adapter makes, not a view -- so it travels as a plain flag on
+                // the model rather than through the environment `liveOnlyMode`
+                // reaches views with. Re-applied on every toggle, the same way
+                // `usageRefreshInterval` is, and the dashboard is rebuilt
+                // immediately so a toggle clears stale history rather than
+                // waiting for the next natural refresh.
+                .onChange(of: services.preferences.liveOnlyMode) { _, isLiveOnly in
+                    services.model.isLiveOnly = isLiveOnly
+                    services.model.refreshDashboard()
+                }
         } label: {
             MenuBarLabel(model: services.model, preferences: services.preferences)
         }
@@ -60,6 +79,7 @@ struct ClaudenceApp: App {
         Window("Claudence Dashboard", id: DashboardWindow.id) {
             DashboardHost(model: services.model, preferences: services.preferences)
                 .environment(\.liveIndicators, services.preferences.liveIndicators)
+                .environment(\.liveOnlyMode, services.preferences.liveOnlyMode)
         }
         // The design lays the dashboard out at 1120 wide: four stat tiles in a
         // row, then a 372 pt power-meter column beside the chart. At the old
@@ -68,7 +88,7 @@ struct ClaudenceApp: App {
         // a layout that was correct.
         .defaultSize(width: Theme.Layout.dashboardWidth, height: 780)
 
-        SettingsScene(preferences: services.preferences)
+        SettingsScene(preferences: services.preferences, storeMode: services.storeMode)
     }
 
     private func rebuildNotificationFilter() {
@@ -87,6 +107,7 @@ struct ClaudenceApp: App {
         // Appearance is not applied here: `AppearanceController` owns it, and
         // owns it from launch rather than from the first time this view runs.
         services.model.usageRefreshInterval = services.preferences.usageRefreshInterval.seconds
+        services.model.isLiveOnly = services.preferences.liveOnlyMode
 
         await services.model.start()
 

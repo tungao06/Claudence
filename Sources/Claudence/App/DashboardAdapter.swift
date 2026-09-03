@@ -29,16 +29,25 @@ extension MonitorViewModel {
             return
         }
 
-        let points = analytics.dailySeries(days: days)
-        let summaries = analytics.projectBreakdown()
-        let todayCost = analytics.todayCost()
+        // Live-only mode keeps the store in memory, so `today` figures below
+        // this line still answer honestly for the life of the process. What
+        // the four calls guarded here have in common is that every one of them
+        // feeds a surface `DashboardView` hides outright in that mode -- the
+        // daily and hourly charts, the project totals card, the history table,
+        // and the stat strip's day-over-day delta -- so none of them are asked
+        // for. See `EnvironmentValues.liveOnlyMode`.
+        let points = isLiveOnly ? [] : analytics.dailySeries(days: days)
+        let summaries = isLiveOnly ? [] : analytics.projectBreakdown()
+        let todayCost = isLiveOnly ? nil : analytics.todayCost()
         // The history table offers Today, 7 days and 30 days, so it is given
         // thirty days of stored sessions and filters within them. Passing only
         // the live set, which is what this did until the ranges were audited,
         // left all three ranges holding the same handful of rows: a session
         // that ends leaves the registry, and the table is about the ones that
         // ended.
-        let stored = analytics.recentSessions(since: now.addingTimeInterval(-Self.historyWindow))
+        let stored: [AISession] = isLiveOnly
+            ? []
+            : (analytics.recentSessions(since: now.addingTimeInterval(-Self.historyWindow)) ?? [])
 
         // The five-hour window's own range, so the hourly chart covers the
         // block the meter is measuring rather than an arbitrary five hours
@@ -46,7 +55,9 @@ extension MonitorViewModel {
         // trailing five hours is the honest approximation and the only one
         // available.
         let fiveHour = usageState.windows.first { $0.name == DashboardData.WindowKey.fiveHour }
-        let hourly = analytics.hourlySeries(in: AnalyticsService.fiveHourRange(resetsAt: fiveHour?.resetsAt, now: now))
+        let hourly: [HourPoint] = isLiveOnly
+            ? []
+            : analytics.hourlySeries(in: AnalyticsService.fiveHourRange(resetsAt: fiveHour?.resetsAt, now: now))
 
         dashboard = DashboardData(
             windows: usageState.windows,
@@ -56,19 +67,27 @@ extension MonitorViewModel {
             burnRates: burnSamples(),
             series: points.map(Self.chartPoint),
             seriesOutput: Self.seriesOutput(points),
-            seriesUnavailableReason: points.isEmpty ? "No history recorded yet" : nil,
+            seriesUnavailableReason: isLiveOnly ? nil : (points.isEmpty ? "No history recorded yet" : nil),
             hourlySeries: hourly.map(Self.hourlyPoint),
             hourlySeriesOutput: Self.hourlyOutput(hourly),
-            hourlySeriesUnavailableReason: hourly.contains(where: \.isAvailable)
+            hourlySeriesUnavailableReason: isLiveOnly
                 ? nil
-                : "No usage sampled in this window",
+                : (hourly.contains(where: \.isAvailable) ? nil : "No usage sampled in this window"),
             projects: summaries.map(Self.projectRow),
-            history: Self.history(live: sessions, stored: stored ?? []),
+            history: isLiveOnly ? [] : Self.history(live: sessions, stored: stored),
             // Nil when the store could not answer, so the tile renders
             // `Usage unavailable`. This passed a non-nil value on every path
             // until 2026-09-03, which made `todayUsage`'s optionality
             // unreachable and printed a failed read as a zero.
-            todayUsage: analytics.todayTotal(),
+            //
+            // Nil in live-only mode, and the two surfaces that read it, the
+            // token breakdown card and the popover's Today strip, are hidden
+            // rather than shown as unavailable. The figure comes from
+            // `daily_rollups`, so in that mode it would cover the rows written
+            // since launch and print them under the word Today: a real number
+            // under a false label, which is the shape of fabrication this
+            // codebase refuses even when every digit is arithmetically sound.
+            todayUsage: isLiveOnly ? nil : analytics.todayTotal(),
             todayCost: todayCost?.estimatedDollars,
             unpricedSessionCount: todayCost?.unpricedSessions ?? 0,
             // `sessionsActiveToday()` was passed here and printed as the
@@ -77,7 +96,7 @@ extension MonitorViewModel {
             // did print `2 / 1 today`. The tile divides the live set by itself
             // now; the sessions-that-ran-today count is the history table's
             // Today range, which reads the same rows.
-            todayVersusYesterday: analytics.dayOverDay()?.fractionalChange,
+            todayVersusYesterday: isLiveOnly ? nil : analytics.dayOverDay()?.fractionalChange,
             priceTableStaleDays: Self.priceTableStaleDays(analytics.priceProvenance, now: now)
         )
     }

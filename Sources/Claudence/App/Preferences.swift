@@ -144,6 +144,17 @@ enum UsageRefreshInterval: String, CaseIterable, Identifiable, Sendable {
 /// `Preferences` exposes the value; the polling loop reads it. Nothing here
 /// starts, stops or reschedules a timer.
 ///
+/// ## Live-only mode
+///
+/// `liveOnlyMode` is the one preference read before the services are built:
+/// `Composition.makeServices()` reads it to decide whether `ClaudenceStore`
+/// opens its file or opens in memory, before anything else in the app exists.
+/// Every later change to it is applied through `StoreModeController`, never by
+/// a view writing this flag directly -- the controller is what reopens the
+/// store and, on the way out, removes the file, and a view that only flipped
+/// the stored `Bool` would leave the store pointed at whatever it already had
+/// open.
+///
 /// ## Launch at login
 ///
 /// `launchAtLogin` is the one preference that is not stored here. macOS owns it,
@@ -199,6 +210,7 @@ final class Preferences {
         static let notifyOnUsageThreshold = "com.tungao.claudence.preference.notifyOnUsageThreshold"
         static let notifyOnSessionIdle = "com.tungao.claudence.preference.notifyOnSessionIdle"
         static let notifyOnSessionNeedsInput = "com.tungao.claudence.preference.notifyOnSessionNeedsInput"
+        static let liveOnlyMode = "com.tungao.claudence.preference.liveOnlyMode"
     }
 
     // MARK: Dependencies
@@ -285,6 +297,16 @@ final class Preferences {
         didSet { defaults.set(notifyOnSessionIdle, forKey: Key.notifyOnSessionIdle) }
     }
 
+    /// Whether Claudence persists anything of its own to disk. Default off.
+    ///
+    /// This is only the stored intent. Reading it does not point the store
+    /// anywhere -- see the note on live-only mode above. Written here so
+    /// `StoreModeController` has somewhere durable to record the choice once
+    /// it has actually reopened the store; nothing else should write it.
+    var liveOnlyMode: Bool {
+        didSet { defaults.set(liveOnlyMode, forKey: Key.liveOnlyMode) }
+    }
+
     /// What the menu bar should actually render, once the switch is applied.
     var effectiveMenuBarStyle: MenuBarStyle {
         showMenuBarUsage ? menuBarStyle : .minimal
@@ -328,6 +350,7 @@ final class Preferences {
             Key.notifyOnUsageThreshold: true,
             Key.notifyOnSessionIdle: false,
             Key.notifyOnSessionNeedsInput: true,
+            Key.liveOnlyMode: false,
         ])
 
         self.defaults = defaults
@@ -351,6 +374,7 @@ final class Preferences {
         self.notifyOnUsageThreshold = defaults.bool(forKey: Key.notifyOnUsageThreshold)
         self.notifyOnSessionIdle = defaults.bool(forKey: Key.notifyOnSessionIdle)
         self.notifyOnSessionNeedsInput = defaults.bool(forKey: Key.notifyOnSessionNeedsInput)
+        self.liveOnlyMode = defaults.bool(forKey: Key.liveOnlyMode)
         self.launchAtLoginState = launchAtLogin.readState()
         self.launchAtLoginFailure = nil
     }
