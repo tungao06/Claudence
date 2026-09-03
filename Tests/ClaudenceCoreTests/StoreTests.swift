@@ -349,7 +349,6 @@ func subagentTotalRoundTrip() {
         usage: TokenUsage(freshInput: 12, cacheCreation: 340, cacheRead: 5_600, output: 78, thinking: 9),
         recordsParsed: 41,
         lastActivityAt: active,
-        spawnDepth: 2,
         model: "claude-sonnet-5"
     )
     // Every optional column absent: a subagent whose meta.json was unreadable
@@ -371,7 +370,6 @@ func subagentTotalRoundTrip() {
     #expect(first == labelled)
     #expect(first.agentType == "Explore")
     #expect(first.taskDescription == "map the store layer")
-    #expect(first.spawnDepth == 2)
     #expect(first.model == "claude-sonnet-5")
     #expect(first.recordsParsed == 41)
     #expect(abs(try! #require(first.lastActivityAt).timeIntervalSince(active)) < 0.001)
@@ -384,7 +382,6 @@ func subagentTotalRoundTrip() {
     #expect(second.taskDescription == nil)
     #expect(second.model == nil)
     #expect(second.lastActivityAt == nil)
-    #expect(second.spawnDepth == 1)
 
     // Nothing derived is stored.
     let columns = try! store.connection!.query("PRAGMA table_info(subagent_totals)") { $0.string(1) }
@@ -622,43 +619,6 @@ func rollupsFollowProjectRename() {
     #expect(store.dailyTotals(days: 1).first?.usage.freshInput == 500)
 }
 
-@Test("project totals group by project and count sessions")
-func projectTotalsGroupAndCount() {
-    let temp = TempDatabase()
-    let store = ClaudenceStore(url: temp.url)
-    let now = Date()
-
-    store.upsert(session: makeSession(id: "a1", project: "Alpha", startedAt: now,
-                                      usage: TokenUsage(freshInput: 100, output: 10)))
-    store.upsert(session: makeSession(id: "a2", project: "Alpha", startedAt: now.addingTimeInterval(-60),
-                                      usage: TokenUsage(freshInput: 200, cacheRead: 50, output: 20)))
-    store.upsert(session: makeSession(id: "b1", project: "Beta", startedAt: now,
-                                      usage: TokenUsage(freshInput: 5, output: 1)))
-
-    let totals = store.projectTotals()
-    #expect(totals.count == 2)
-
-    let alpha = try! #require(totals.first { $0.project == "Alpha" })
-    #expect(alpha.sessionCount == 2)
-    #expect(alpha.usage.freshInput == 300)
-    #expect(alpha.usage.cacheRead == 50)
-    #expect(alpha.usage.output == 30)
-    #expect(alpha.usage.total == 380)
-
-    let beta = try! #require(totals.first { $0.project == "Beta" })
-    #expect(beta.sessionCount == 1)
-    #expect(beta.usage.total == 6)
-
-    // Heaviest project first.
-    #expect(totals.first?.project == "Alpha")
-
-    // `since` is an instant, not a day boundary.
-    let recent = store.projectTotals(since: now.addingTimeInterval(-30))
-    let recentAlpha = try! #require(recent.first { $0.project == "Alpha" })
-    #expect(recentAlpha.sessionCount == 1)
-    #expect(recentAlpha.usage.freshInput == 100)
-}
-
 // MARK: - Transactions
 
 @Test("a transaction that throws rolls back every statement in it")
@@ -853,8 +813,8 @@ func concurrentWritesAreSafe() async throws {
     #expect(try database.scalarInt64("SELECT COUNT(*) FROM read_cursors") == Int64(taskCount * perTask))
 
     // Rollups agree with the sessions table: no lost or doubled increments.
-    let projects = store.projectTotals()
-    #expect(projects.reduce(0) { $0 + $1.sessionCount } == taskCount * perTask)
+    let rolledUpSessions = try database.scalarInt64("SELECT SUM(session_count) FROM daily_rollups")
+    #expect(rolledUpSessions == Int64(taskCount * perTask))
     let day = store.dailyTotals(days: 1)
     #expect(day.count == 1)
     #expect(day.first?.usage.freshInput == taskCount * perTask)
@@ -890,7 +850,7 @@ func separateConnectionsShareTheFile() async throws {
         group.addTask {
             for _ in 0..<40 {
                 _ = writerA.allSessions()
-                _ = writerB.projectTotals()
+                _ = writerB.dailyTotals(days: 1)
             }
         }
     }
@@ -899,9 +859,12 @@ func separateConnectionsShareTheFile() async throws {
     #expect(writerB.health == .healthy)
     #expect(writerA.allSessions().count == 80)
 
-    let totals = writerB.projectTotals()
-    #expect(try #require(totals.first { $0.project == "A" }).sessionCount == 40)
-    #expect(try #require(totals.first { $0.project == "B" }).sessionCount == 40)
+    let connectionB = try #require(writerB.connection)
+    let counts = try connectionB.query(
+        "SELECT project_name, session_count FROM daily_rollups ORDER BY project_name"
+    ) { ($0.string(0), $0.int(1)) }
+    #expect(try #require(counts.first { $0.0 == "A" }).1 == 40)
+    #expect(try #require(counts.first { $0.0 == "B" }).1 == 40)
 }
 
 // MARK: - Degraded state

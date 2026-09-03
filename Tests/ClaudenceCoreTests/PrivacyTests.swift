@@ -45,9 +45,13 @@ struct PrivacyTests {
     // MARK: - Subagent field paths
     //
     // Section 3.1, as amended on 2026-09-02, permits the four fields
-    // `SubagentLocator.Meta` decodes from `agent-<id>.meta.json`: `agentType`,
+    // `SubagentLocator.Meta` decoded from `agent-<id>.meta.json`: `agentType`,
     // `description`, `toolUseId` and `spawnDepth`. `description` reaches the
     // domain as `taskDescription` and the database as `task_description`.
+    // `spawnDepth` was dropped on 2026-09-03: it was read, carried through the
+    // tracker, and written to `subagent_totals`, and no view ever rendered it.
+    // Permission to read a `meta.json` field should not outlive its use, so the
+    // field and its entry here went together, leaving three.
     // The sets below spell out every field these two types may carry, so a
     // field added to either fails here and has to be argued into the allowlist
     // rather than arriving with it.
@@ -67,7 +71,6 @@ struct PrivacyTests {
         "model",
         "lastActivityAt",
         "recordsParsed",
-        "spawnDepth",
     ]
 
     static let permittedSubagentTotalPaths: Set<String> = [
@@ -82,7 +85,6 @@ struct PrivacyTests {
         "usage.thinking",
         "recordsParsed",
         "lastActivityAt",
-        "spawnDepth",
         "model",
     ]
 
@@ -115,8 +117,7 @@ struct PrivacyTests {
             currentActivity: Activity(verb: markerVerb, subject: markerSubject),
             model: markerModel,
             lastActivityAt: markedTimestamp,
-            recordsParsed: 7,
-            spawnDepth: 2
+            recordsParsed: 7
         )
     }
 
@@ -397,7 +398,6 @@ struct PrivacyTests {
         #expect(read.model == Self.markerModel)
         #expect(read.usage == Self.markedUsage)
         #expect(read.recordsParsed == 7)
-        #expect(read.spawnDepth == 2)
 
         let dump = Self.deepDescription(of: read)
         for sentinel in Self.allSentinels {

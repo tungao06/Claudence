@@ -28,9 +28,6 @@ public struct SubagentDescriptor: Sendable, Equatable, Identifiable {
     /// The parent's `tool_use` id that created it, so a subagent can be traced
     /// back to the exact call in the parent transcript.
     public let toolUseID: String?
-    /// 1 for a subagent of an interactive session. Deeper values mean a
-    /// subagent spawned another.
-    public let spawnDepth: Int
     public let transcriptPath: String
 
     public init(
@@ -39,7 +36,6 @@ public struct SubagentDescriptor: Sendable, Equatable, Identifiable {
         agentType: String? = nil,
         taskDescription: String? = nil,
         toolUseID: String? = nil,
-        spawnDepth: Int = 1,
         transcriptPath: String
     ) {
         self.id = id
@@ -47,7 +43,6 @@ public struct SubagentDescriptor: Sendable, Equatable, Identifiable {
         self.agentType = agentType
         self.taskDescription = taskDescription
         self.toolUseID = toolUseID
-        self.spawnDepth = spawnDepth
         self.transcriptPath = transcriptPath
     }
 }
@@ -128,7 +123,6 @@ public struct SubagentLocator: Sendable {
                     agentType: meta?.agentType,
                     taskDescription: meta?.description,
                     toolUseID: meta?.toolUseId,
-                    spawnDepth: meta?.spawnDepth ?? 1,
                     transcriptPath: url.path
                 )
             }
@@ -146,7 +140,6 @@ public struct SubagentLocator: Sendable {
         let agentType: String?
         let description: String?
         let toolUseId: String?
-        let spawnDepth: Int?
     }
 
     /// A malformed or absent `meta.json` costs the descriptor its labels, not

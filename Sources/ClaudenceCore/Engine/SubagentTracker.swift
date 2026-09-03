@@ -13,7 +13,6 @@ public struct AISubagent: Sendable, Equatable, Identifiable {
     public var model: String?
     public var lastActivityAt: Date?
     public var recordsParsed: Int
-    public let spawnDepth: Int
 
     public init(
         id: String,
@@ -24,8 +23,7 @@ public struct AISubagent: Sendable, Equatable, Identifiable {
         currentActivity: Activity? = nil,
         model: String? = nil,
         lastActivityAt: Date? = nil,
-        recordsParsed: Int = 0,
-        spawnDepth: Int = 1
+        recordsParsed: Int = 0
     ) {
         self.id = id
         self.parentSessionID = parentSessionID
@@ -36,7 +34,6 @@ public struct AISubagent: Sendable, Equatable, Identifiable {
         self.model = model
         self.lastActivityAt = lastActivityAt
         self.recordsParsed = recordsParsed
-        self.spawnDepth = spawnDepth
     }
 
     /// A subagent has no process of its own. It is finished when its transcript
@@ -68,7 +65,6 @@ public struct SubagentTotal: Sendable, Equatable {
     public var usage: TokenUsage
     public var recordsParsed: Int
     public var lastActivityAt: Date?
-    public var spawnDepth: Int
     public var model: String?
 
     public init(
@@ -79,7 +75,6 @@ public struct SubagentTotal: Sendable, Equatable {
         usage: TokenUsage = .zero,
         recordsParsed: Int = 0,
         lastActivityAt: Date? = nil,
-        spawnDepth: Int = 1,
         model: String? = nil
     ) {
         self.parentSessionID = parentSessionID
@@ -89,7 +84,6 @@ public struct SubagentTotal: Sendable, Equatable {
         self.usage = usage
         self.recordsParsed = recordsParsed
         self.lastActivityAt = lastActivityAt
-        self.spawnDepth = spawnDepth
         self.model = model
     }
 }
@@ -105,7 +99,6 @@ extension SubagentTotal {
             usage: subagent.usage,
             recordsParsed: subagent.recordsParsed,
             lastActivityAt: subagent.lastActivityAt,
-            spawnDepth: subagent.spawnDepth,
             model: subagent.model
         )
     }
@@ -121,8 +114,7 @@ extension SubagentTotal {
             usage: usage,
             model: model,
             lastActivityAt: lastActivityAt,
-            recordsParsed: recordsParsed,
-            spawnDepth: spawnDepth
+            recordsParsed: recordsParsed
         )
     }
 }
@@ -275,8 +267,7 @@ public actor SubagentTracker {
                 currentActivity: previous?.currentActivity,
                 model: previous?.model,
                 lastActivityAt: previous?.lastActivityAt,
-                recordsParsed: previous?.recordsParsed ?? 0,
-                spawnDepth: descriptor.spawnDepth
+                recordsParsed: previous?.recordsParsed ?? 0
             )
             // A delta that parsed nothing and carried nothing leaves the total
             // exactly where it was, so writing it back would cost a statement

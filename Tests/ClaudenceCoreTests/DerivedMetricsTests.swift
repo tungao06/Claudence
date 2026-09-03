@@ -136,13 +136,10 @@ func dayOverDayComparesTwoDays() throws {
 
     #expect(delta.today == TokenUsage(freshInput: 1_100, output: 80))
     #expect(delta.yesterday == TokenUsage(freshInput: 1_000))
-    #expect(delta.hasComparison)
 
     // (1180 - 1000) / 1000
     let change = try #require(delta.fractionalChange)
     #expect(abs(change - 0.18) < 0.000_001)
-    let percent = try #require(delta.percentChange)
-    #expect(abs(percent - 18.0) < 0.000_001)
 }
 
 @Test("a drop is a negative change, and equal days are exactly zero")
@@ -176,8 +173,6 @@ func dayOverDayZeroYesterdayIsUndefined() throws {
     #expect(delta.today.total == 5_000)
     #expect(delta.yesterday == TokenUsage.zero)
     #expect(delta.fractionalChange == nil)
-    #expect(delta.percentChange == nil)
-    #expect(delta.hasComparison == false)
 }
 
 @Test("an empty store answers with two real zeros rather than nothing")
@@ -197,7 +192,7 @@ func dayOverDayOnEmptyStore() throws {
 @Test("the two chart bands are exactly billableInput and output, and they sum to total")
 func dailyPointBandsSumToTotal() throws {
     let usage = TokenUsage(freshInput: 11, cacheCreation: 22, cacheRead: 33, output: 44, thinking: 7)
-    let point = DailyPoint(day: "2026-09-02", date: Date(), usage: usage, cost: .zero)
+    let point = DailyPoint(day: "2026-09-02", date: Date(), usage: usage, cost: CostEstimate())
 
     let input = try #require(point.billableInput)
     let output = try #require(point.output)
@@ -220,7 +215,7 @@ func dailyPointBandsAreNilOnAGap() {
     #expect(gap.output == nil)
     #expect(gap.total == nil)
 
-    let empty = DailyPoint(day: "2026-09-01", date: Date(), usage: .zero, cost: .zero)
+    let empty = DailyPoint(day: "2026-09-01", date: Date(), usage: .zero, cost: CostEstimate())
     #expect(empty.billableInput == 0)
     #expect(empty.output == 0)
     #expect(empty.total == 0)
@@ -738,14 +733,11 @@ func dayOverDayWithNothingTodayIsUndefined() {
         yesterday: TokenUsage(freshInput: 855_975_471)
     )
     #expect(fresh.fractionalChange == nil)
-    #expect(fresh.percentChange == nil)
-    #expect(fresh.hasComparison == false)
 
     // Both sides present is still a comparison, including a real fall.
     let real = DayOverDayDelta(
         today: TokenUsage(freshInput: 1),
         yesterday: TokenUsage(freshInput: 4)
     )
-    #expect(real.hasComparison)
     #expect(real.fractionalChange == -0.75)
 }

@@ -315,7 +315,6 @@ struct SubagentPersistenceTests {
             usage: TokenUsage(freshInput: 1_000, cacheRead: 4_000, output: 200),
             recordsParsed: 1,
             lastActivityAt: Date(timeIntervalSince1970: 1_772_000_000),
-            spawnDepth: 1,
             model: "claude-sonnet-5"
         )
         let store = FakeTotalStore(seed: [persisted])
@@ -560,7 +559,6 @@ struct SubagentPersistenceTests {
             usage: TokenUsage(freshInput: 1_000, cacheRead: 4_000, output: 200),
             recordsParsed: 1,
             lastActivityAt: Date(timeIntervalSince1970: 1_772_000_000),
-            spawnDepth: 1,
             model: "claude-sonnet-5"
         )
         inner.upsertSubagentTotal(persisted)

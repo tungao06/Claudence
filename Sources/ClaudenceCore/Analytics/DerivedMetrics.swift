@@ -44,12 +44,6 @@ public struct DayOverDayDelta: Sendable, Equatable {
         guard base > 0, today.total > 0 else { return nil }
         return Double(today.total - base) / Double(base)
     }
-
-    /// The same figure as a percentage, for a view that formats percentages.
-    public var percentChange: Double? { fractionalChange.map { $0 * 100 } }
-
-    /// Whether a comparison can be drawn at all.
-    public var hasComparison: Bool { yesterday.total > 0 && today.total > 0 }
 }
 
 // MARK: - Share of the window

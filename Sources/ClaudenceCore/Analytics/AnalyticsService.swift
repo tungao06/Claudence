@@ -285,8 +285,8 @@ public struct AnalyticsService: Sendable {
     /// Per-project totals, heaviest first by `TokenUsage.total`, ties broken by
     /// name so the order is stable between refreshes.
     ///
-    /// - Parameter since: keeps sessions that *started* at or after this instant,
-    ///   matching `ClaudenceStore.projectTotals(since:)`. Nil covers everything.
+    /// - Parameter since: keeps sessions that *started* at or after this instant.
+    ///   Nil covers everything.
     ///
     /// Built from the session rows, because the summary needs each session's
     /// model, start and last activity for cost, duration and recency, and

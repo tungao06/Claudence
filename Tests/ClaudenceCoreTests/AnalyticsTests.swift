@@ -156,20 +156,12 @@ func partialPricingIsHonest() throws {
     ]
 
     let estimate = estimator.estimate(sessions: sessions)
-    #expect(estimate.totalSessions == 4)
     #expect(estimate.pricedSessions == 2)
     #expect(estimate.unpricedSessions == 2)
-    #expect(estimate.isComplete == false)
-    #expect(estimate.unpricedModels == ["claude-imaginary-9"])
-    #expect(estimate.gapDescription == "2 of 4 sessions unpriced")
 
     // $5.00 for the Opus 5 fresh input plus $10.00 for the Sonnet 5 output.
     let dollars = try #require(estimate.estimatedDollars)
     #expect(abs(dollars - 15.00) < 0.000_001)
-
-    // The unpriced sessions are still accounted for, not dropped.
-    #expect(estimate.unpricedUsage == TokenUsage(freshInput: 800, output: 700))
-    #expect(estimate.unpricedUsage.total == 1_500)
 }
 
 @Test("nothing priceable yields nil dollars, while nothing at all yields a complete zero")
@@ -183,8 +175,7 @@ func nothingPriceableYieldsNil() {
 
     let empty = estimator.estimate(sessions: [])
     #expect(empty.estimatedDollars == 0)
-    #expect(empty.isComplete)
-    #expect(empty.gapDescription == nil)
+    #expect(empty.unpricedSessions == 0)
 }
 
 // MARK: - Daily series
@@ -215,7 +206,8 @@ func dailySeriesZeroFillsGaps() throws {
     #expect(series[0].usage == TokenUsage(freshInput: 1_000, output: 2_000))
     // The middle day has no data at all: a real zero, present in the series.
     #expect(series[1].usage == TokenUsage.zero)
-    #expect(series[1].cost?.totalSessions == 0)
+    #expect(series[1].cost?.pricedSessions == 0)
+    #expect(series[1].cost?.unpricedSessions == 0)
     #expect(series[2].usage == TokenUsage(freshInput: 3_000, output: 4_000))
 
     // $0.005 fresh + $0.05 output on the first day.
@@ -271,12 +263,10 @@ func projectBreakdownGroupsAndSorts() throws {
 
     // Alpha is half unpriced, and says so rather than under-reporting silently.
     #expect(breakdown[0].cost.unpricedSessions == 1)
-    #expect(breakdown[0].cost.gapDescription == "1 of 2 sessions unpriced")
     let alpha = try #require(breakdown[0].cost.estimatedDollars)
     #expect(abs(alpha - 5.00) < 0.000_001)
-    #expect(breakdown[0].cost.unpricedUsage.total == 1_000_000)
 
-    #expect(breakdown[1].cost.isComplete)
+    #expect(breakdown[1].cost.unpricedSessions == 0)
 
     // 600s and 1200s elapsed.
     #expect(abs(breakdown[0].averageSessionDuration - 900) < 1)
@@ -348,7 +338,7 @@ func emptyStoreYieldsEmptyResults() {
     #expect(service.projectBreakdown().isEmpty)
     #expect(service.projectBreakdown(since: Date()).isEmpty)
     #expect(service.todayTotal() == TokenUsage.zero)
-    #expect(service.todayCost() == CostEstimate.zero)
+    #expect(service.todayCost() == CostEstimate())
 }
 
 // MARK: - Today
@@ -375,8 +365,8 @@ func todayTotalCountsOnlyToday() throws {
     #expect(today.total == 105)
 
     let cost = try #require(service.todayCost())
-    #expect(cost.totalSessions == 2)
-    #expect(cost.isComplete)
+    #expect(cost.pricedSessions + cost.unpricedSessions == 2)
+    #expect(cost.unpricedSessions == 0)
 }
 
 @Test("today reads stay unavailable after a prior store failure, never zero")

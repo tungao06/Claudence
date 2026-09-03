@@ -127,7 +127,7 @@ func todayCostCountsTheCarryOverSession() throws {
 
     let service = AnalyticsService(store: store, calendar: countingUTC, now: { now })
     let cost = try #require(service.todayCost())
-    #expect(cost.totalSessions == 1)
+    #expect(cost.pricedSessions + cost.unpricedSessions == 1)
     #expect(try #require(cost.estimatedDollars) > 0)
 }
 
@@ -154,7 +154,7 @@ func todayCostAndSessionCountAgree() throws {
     // dashboard disagreeing: the count included the overnight session and the
     // cost did not.
     #expect(count == 2)
-    #expect(cost.totalSessions == count)
+    #expect(cost.pricedSessions + cost.unpricedSessions == count)
 }
 
 @Test("a session that only started today, with no later activity, is today's")
@@ -167,5 +167,6 @@ func aSessionStartedTodayCountsToday() throws {
 
     let service = AnalyticsService(store: store, calendar: countingUTC, now: { now })
     #expect(service.sessionsActiveToday() == 1)
-    #expect(try #require(service.todayCost()).totalSessions == 1)
+    let cost = try #require(service.todayCost())
+    #expect(cost.pricedSessions + cost.unpricedSessions == 1)
 }

@@ -788,41 +788,6 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
         }
     }
 
-    /// Token totals and session counts per project, heaviest first.
-    ///
-    /// Computed from `sessions` rather than `daily_rollups` because `since` is an
-    /// arbitrary instant while the rollups are only day-granular; reading the
-    /// rollups would silently round the window to a day boundary and report a
-    /// number the user did not ask for.
-    public func projectTotals(since: Date? = nil) -> [(project: String, usage: TokenUsage, sessionCount: Int)] {
-        perform("read project totals", default: []) { database in
-            let sql = """
-                SELECT project_name,
-                       SUM(fresh_input), SUM(cache_creation), SUM(cache_read),
-                       SUM(output), SUM(thinking), COUNT(*)
-                  FROM sessions
-                 \(since == nil ? "" : "WHERE started_at >= ?")
-                 GROUP BY project_name
-                 ORDER BY (SUM(fresh_input) + SUM(cache_creation) + SUM(cache_read) + SUM(output)) DESC,
-                          project_name ASC
-                """
-            let parameters: [SQLiteValue] = since.map { [.real($0.timeIntervalSince1970)] } ?? []
-            return try database.query(sql, parameters) { row in
-                (
-                    project: row.string(0),
-                    usage: TokenUsage(
-                        freshInput: row.int(1),
-                        cacheCreation: row.int(2),
-                        cacheRead: row.int(3),
-                        output: row.int(4),
-                        thinking: row.int(5)
-                    ),
-                    sessionCount: row.int(6)
-                )
-            }
-        }
-    }
-
     /// Rebuilds `daily_rollups` from `sessions` and `usage_samples`.
     ///
     /// ## What it repairs
@@ -1132,7 +1097,7 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
             try database.query(
                 """
                 SELECT parent_session_id, subagent_id, agent_type, task_description,
-                       spawn_depth, model, last_activity_at, records_parsed,
+                       model, last_activity_at, records_parsed,
                        fresh_input, cache_creation, cache_read, output, thinking
                   FROM subagent_totals
                  WHERE parent_session_id = ?
@@ -1146,16 +1111,15 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                     agentType: row.stringOptional(2),
                     taskDescription: row.stringOptional(3),
                     usage: TokenUsage(
-                        freshInput: row.int(8),
-                        cacheCreation: row.int(9),
-                        cacheRead: row.int(10),
-                        output: row.int(11),
-                        thinking: row.int(12)
+                        freshInput: row.int(7),
+                        cacheCreation: row.int(8),
+                        cacheRead: row.int(9),
+                        output: row.int(10),
+                        thinking: row.int(11)
                     ),
-                    recordsParsed: row.int(7),
-                    lastActivityAt: row.doubleOptional(6).map { Date(timeIntervalSince1970: $0) },
-                    spawnDepth: row.int(4),
-                    model: row.stringOptional(5)
+                    recordsParsed: row.int(6),
+                    lastActivityAt: row.doubleOptional(5).map { Date(timeIntervalSince1970: $0) },
+                    model: row.stringOptional(4)
                 )
             }
         }
@@ -1167,19 +1131,23 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
     /// and this row is only its durable copy. `COALESCE` on the label columns
     /// keeps a description already on disk when a later pass has none, because
     /// a missing `meta.json` costs a subagent its labels, never its tokens.
+    ///
+    /// `subagent_totals` still has a `spawn_depth` column: nothing in this
+    /// application ever rendered it, so 9.9 stopped reading and writing it
+    /// rather than migrating the column away. A schema change to drop one
+    /// unread integer column was judged disproportionate to what it buys.
     public func upsertSubagentTotal(_ total: SubagentTotal) {
         perform("upsert subagent total") { database in
             try database.execute(
                 """
                 INSERT INTO subagent_totals (
                     parent_session_id, subagent_id, agent_type, task_description,
-                    spawn_depth, model, last_activity_at, records_parsed,
+                    model, last_activity_at, records_parsed,
                     fresh_input, cache_creation, cache_read, output, thinking
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(parent_session_id, subagent_id) DO UPDATE SET
                     agent_type = COALESCE(excluded.agent_type, subagent_totals.agent_type),
                     task_description = COALESCE(excluded.task_description, subagent_totals.task_description),
-                    spawn_depth = excluded.spawn_depth,
                     model = COALESCE(excluded.model, subagent_totals.model),
                     last_activity_at = excluded.last_activity_at,
                     records_parsed = excluded.records_parsed,
@@ -1194,7 +1162,6 @@ public final class ClaudenceStore: CursorStoring, @unchecked Sendable {
                     .text(total.subagentID),
                     SQLiteValue(total.agentType),
                     SQLiteValue(total.taskDescription),
-                    .integer(Int64(total.spawnDepth)),
                     SQLiteValue(total.model),
                     SQLiteValue(total.lastActivityAt?.timeIntervalSince1970),
                     .integer(Int64(total.recordsParsed)),

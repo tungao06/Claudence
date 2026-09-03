@@ -439,9 +439,6 @@ private final class ReadFailingStore: ClaudenceStoring, @unchecked Sendable {
         guard !failing else { return [] }
         return inner.dailyTotals(days: days)
     }
-    func projectTotals(since: Date?) -> [(project: String, usage: TokenUsage, sessionCount: Int)] {
-        inner.projectTotals(since: since)
-    }
     func recomputeRollups() {
         lock.lock()
         _recomputeCalls += 1
@@ -573,10 +570,6 @@ private final class UnavailableStore: ClaudenceStoring, @unchecked Sendable {
     func markEnded(sessionID: String, at date: Date) { countUnanswered() }
     func recordUsageSample(sessionID: String, usage: TokenUsage, at date: Date) { countUnanswered() }
     func dailyTotals(days: Int) -> [(day: String, usage: TokenUsage)] { countUnanswered(); return [] }
-    func projectTotals(since: Date?) -> [(project: String, usage: TokenUsage, sessionCount: Int)] {
-        countUnanswered()
-        return []
-    }
     func recomputeRollups() { countUnanswered() }
     func compactUsageSamples(olderThan cutoff: Date) -> Int {
         countUnanswered()

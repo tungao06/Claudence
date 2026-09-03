@@ -8,7 +8,10 @@ import Foundation
 /// a field does not blind the app. Verified against Claude Code 2.1.257.
 ///
 /// Observed but deliberately not modelled: `peerProtocol`, `peerFeatures`,
-/// `nameSince`. They are ignored by `Codable` and cost nothing.
+/// `nameSince`, `statusUpdatedAt`, `nameSource`, `entrypoint`, `pidDomain`,
+/// `messagingSocketPath`, `jobId`, `bridgeSessionId`. They are ignored by
+/// `Codable` and cost nothing. The last seven were modelled once; nothing ever
+/// read them, and they were dropped in the 9.9 subtraction pass.
 public struct RegistryRecord: Sendable, Codable, Equatable {
 
     // MARK: Required
@@ -33,22 +36,10 @@ public struct RegistryRecord: Sendable, Codable, Equatable {
     public let status: String?
     /// Last touch of the registry entry, epoch **milliseconds**.
     public let updatedAt: Double?
-    /// Last status transition, epoch **milliseconds**.
-    public let statusUpdatedAt: Double?
     /// Human label, e.g. `claudence-06`.
     public let name: String?
-    /// How `name` was chosen. Observed: `derived`, `auto`.
-    public let nameSource: String?
     /// Claude Code version that wrote the file.
     public let version: String?
-    /// Observed: `cli`.
-    public let entrypoint: String?
-    /// Observed: `darwin`. Namespaces `pid` across pid domains.
-    public let pidDomain: String?
-    public let messagingSocketPath: String?
-    /// Present only on `kind == "bg"` records.
-    public let jobId: String?
-    public let bridgeSessionId: String?
 
     public init(
         pid: Int32,
@@ -59,15 +50,8 @@ public struct RegistryRecord: Sendable, Codable, Equatable {
         kind: String? = nil,
         status: String? = nil,
         updatedAt: Double? = nil,
-        statusUpdatedAt: Double? = nil,
         name: String? = nil,
-        nameSource: String? = nil,
-        version: String? = nil,
-        entrypoint: String? = nil,
-        pidDomain: String? = nil,
-        messagingSocketPath: String? = nil,
-        jobId: String? = nil,
-        bridgeSessionId: String? = nil
+        version: String? = nil
     ) {
         self.pid = pid
         self.sessionId = sessionId
@@ -77,15 +61,8 @@ public struct RegistryRecord: Sendable, Codable, Equatable {
         self.kind = kind
         self.status = status
         self.updatedAt = updatedAt
-        self.statusUpdatedAt = statusUpdatedAt
         self.name = name
-        self.nameSource = nameSource
         self.version = version
-        self.entrypoint = entrypoint
-        self.pidDomain = pidDomain
-        self.messagingSocketPath = messagingSocketPath
-        self.jobId = jobId
-        self.bridgeSessionId = bridgeSessionId
     }
 
     // MARK: Derived
@@ -116,8 +93,8 @@ public struct RegistryRecord: Sendable, Codable, Equatable {
 // MARK: - Epoch milliseconds
 
 extension Date {
-    /// `startedAt`, `updatedAt` and `statusUpdatedAt` are epoch milliseconds,
-    /// not seconds. Confirmed against real files on Claude Code 2.1.257.
+    /// `startedAt` and `updatedAt` are epoch milliseconds, not seconds.
+    /// Confirmed against real files on Claude Code 2.1.257.
     public init(epochMilliseconds ms: Double) {
         self.init(timeIntervalSince1970: ms / 1000)
     }

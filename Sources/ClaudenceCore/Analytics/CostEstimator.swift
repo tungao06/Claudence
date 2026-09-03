@@ -4,46 +4,29 @@ import Foundation
 
 /// The result of pricing a set of sessions.
 ///
-/// Carries the dollar figure **and** the part of the usage it could not price,
-/// so a caller can render "estimated $4.12, 2 of 5 sessions unpriced" instead of
-/// quietly under-reporting. Spec section 9.2: cost is estimated only, always
-/// labelled, and a model absent from the table yields "Cost unavailable", never
-/// zero and never an average.
+/// Carries the dollar figure **and** the count of what it could not price, so a
+/// caller can render "estimated $4.12, 2 sessions unpriced" instead of quietly
+/// under-reporting. Spec section 9.2: cost is estimated only, always labelled,
+/// and a model absent from the table yields "Cost unavailable", never zero and
+/// never an average.
 public struct CostEstimate: Sendable, Equatable {
     /// Dollars for the portion that could be priced. This is a lower bound
     /// whenever `unpricedSessions > 0`.
     public let pricedDollars: Double
     /// Sessions whose model was in the price table.
     public let pricedSessions: Int
-    /// Sessions whose model was missing or unknown. Their tokens are still
-    /// reported in `unpricedUsage`; they are never dropped.
+    /// Sessions whose model was missing or unknown.
     public let unpricedSessions: Int
-    /// Tokens belonging to the unpriced sessions.
-    public let unpricedUsage: TokenUsage
-    /// Distinct model ids that could not be priced, sorted. Sessions with no
-    /// model recorded at all contribute to `unpricedSessions` but not here.
-    public let unpricedModels: [String]
 
     public init(
         pricedDollars: Double = 0,
         pricedSessions: Int = 0,
-        unpricedSessions: Int = 0,
-        unpricedUsage: TokenUsage = .zero,
-        unpricedModels: [String] = []
+        unpricedSessions: Int = 0
     ) {
         self.pricedDollars = pricedDollars
         self.pricedSessions = pricedSessions
         self.unpricedSessions = unpricedSessions
-        self.unpricedUsage = unpricedUsage
-        self.unpricedModels = unpricedModels
     }
-
-    public static let zero = CostEstimate()
-
-    public var totalSessions: Int { pricedSessions + unpricedSessions }
-
-    /// Whether every session in the input could be priced.
-    public var isComplete: Bool { unpricedSessions == 0 }
 
     /// The figure to display, or nil when nothing at all could be priced.
     ///
@@ -53,23 +36,6 @@ public struct CostEstimate: Sendable, Equatable {
     public var estimatedDollars: Double? {
         if pricedSessions == 0 && unpricedSessions > 0 { return nil }
         return pricedDollars
-    }
-
-    /// A caveat the UI can render next to the figure, or nil when there is
-    /// nothing to disclose.
-    public var gapDescription: String? {
-        guard unpricedSessions > 0 else { return nil }
-        return "\(unpricedSessions) of \(totalSessions) sessions unpriced"
-    }
-
-    public static func + (lhs: CostEstimate, rhs: CostEstimate) -> CostEstimate {
-        CostEstimate(
-            pricedDollars: lhs.pricedDollars + rhs.pricedDollars,
-            pricedSessions: lhs.pricedSessions + rhs.pricedSessions,
-            unpricedSessions: lhs.unpricedSessions + rhs.unpricedSessions,
-            unpricedUsage: lhs.unpricedUsage + rhs.unpricedUsage,
-            unpricedModels: Array(Set(lhs.unpricedModels).union(rhs.unpricedModels)).sorted()
-        )
     }
 }
 
@@ -102,8 +68,6 @@ public struct CostEstimator: Sendable {
         var dollars = 0.0
         var priced = 0
         var unpriced = 0
-        var unpricedUsage = TokenUsage.zero
-        var unpricedModels = Set<String>()
 
         // `combinedUsage`, not `usage`: a subagent's tokens are billed to the
         // same account as its parent's, and measured here they are around half
@@ -119,17 +83,13 @@ public struct CostEstimator: Sendable {
                 priced += 1
             } else {
                 unpriced += 1
-                unpricedUsage += session.combinedUsage
-                if let model = session.model, !model.isEmpty { unpricedModels.insert(model) }
             }
         }
 
         return CostEstimate(
             pricedDollars: dollars,
             pricedSessions: priced,
-            unpricedSessions: unpriced,
-            unpricedUsage: unpricedUsage,
-            unpricedModels: unpricedModels.sorted()
+            unpricedSessions: unpriced
         )
     }
 }

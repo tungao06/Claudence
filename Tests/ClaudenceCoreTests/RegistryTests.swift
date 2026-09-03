@@ -120,7 +120,7 @@ struct RegistryDecodingTests {
         #expect(decoded.name == "demo")
     }
 
-    @Test("A bg record decodes and carries jobId")
+    @Test("A bg record decodes and is not interactive")
     func decodesBackgroundRecord() throws {
         let decoded = try JSONDecoder().decode(
             RegistryRecord.self,
@@ -128,7 +128,6 @@ struct RegistryDecodingTests {
         )
         #expect(decoded.kind == "bg")
         #expect(decoded.isInteractive == false)
-        #expect(decoded.jobId == "6e3144bd")
         #expect(decoded.status == "idle")
     }
 

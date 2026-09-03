@@ -647,5 +647,4 @@ public protocol ClaudenceStoring: CursorStoring, StoreOutcomeReporting {
     /// the engine owns when to ask. See `ClaudenceStore.recomputeRollups`.
     func recomputeRollups()
     func dailyTotals(days: Int) -> [(day: String, usage: TokenUsage)]
-    func projectTotals(since: Date?) -> [(project: String, usage: TokenUsage, sessionCount: Int)]
 }
