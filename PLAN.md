@@ -251,11 +251,27 @@ Permission-required notifications ship only if M1 proved that state derivable.
 - [x] VoiceOver labels on every indicator. Each one is a spoken sentence built beside the drawn
       element rather than a repetition of it, and the elements that draw a severity speak the word
       as well as the colour.
-- [ ] Keyboard navigation. Partial, and recorded as partial rather than checked off: the quit item,
-      the settings dialogs' default actions and the detail sheet's escape are bound, and
-      `UsageChart` is focusable and selects a point when focus arrives. What is missing is moving
-      between points from the keyboard once it has focus, and a focus order through the popover's
-      session list. A friend who navigates by keyboard cannot drive this application yet.
+- [x] Keyboard navigation. Both session lists take arrow keys, as one tab stop each with a
+      selection inside them, which is what a `List` or a `Table` does on macOS; Return opens the
+      selected session, Escape puts the cursor away, and the dashboard's list scrolls to keep the
+      cursor visible. `UsageChart` already moved between points on the arrow keys. The popover
+      gained the three shortcuts it has no menu bar menu to hang commands off: `⌘R` refresh,
+      `⌘D` dashboard, `⌘,` Settings, beside the `⌘Q` that was already there and the detail
+      sheet's escape.
+
+      One thing no application can do for the user, recorded because it will otherwise be
+      rediscovered as a bug: whether Tab reaches a focusable view at all is the machine's
+      *Keyboard navigation* setting, in System Settings > Keyboard. That is why the popover puts
+      focus on the session list by default -- there is no text field competing for it -- so the
+      arrow keys work for someone who never found that setting.
+
+      Still not reachable without that setting on: the individual controls inside a row, the
+      dashboard's history range picker, and the settings window's own controls. Those are
+      ordinary macOS behaviour rather than a gap in this application, and the shortcuts above are
+      the reason the common paths do not depend on it.
+
+      The selection arithmetic is `ListKeyboardSelection` in Core, with tests, because the views
+      are in the executable target that the test target does not depend on.
 - [x] Launch at login via `SMAppService`
 - [x] Settings, including the plain-language privacy disclosure
 - [x] Empty states: Claude Code absent, zero sessions, Keychain denied, network down
