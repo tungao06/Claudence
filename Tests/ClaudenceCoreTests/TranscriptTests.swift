@@ -512,6 +512,73 @@ struct TranscriptTests {
         """)
         #expect(worst < 0.050)
     }
+
+    @Test("Re-scanning the largest transcript actually seen on this machine (19.9 MB) still stays under 50 ms")
+    func rescanIsCheapAtTheRealWorstCaseSize() {
+        // 9.12: the 12 MB fixture above was picked before anyone measured the
+        // real corpus. `find ~/.claude/projects -name '*.jsonl' | xargs ls -la`
+        // on this machine turned up a 19.9 MB transcript, so that is the number
+        // the budget has to hold against, not the fixture's own.
+        let fixture = TranscriptFixture()
+        let store = TranscriptMemoryCursorStore()
+        let reader = fixture.makeReader(store: store)
+
+        let filler = String(repeating: "lorem ipsum dolor sit amet ", count: 150)
+        var bytes = 0
+        var batch: [String] = []
+        let target = 20 * 1024 * 1024 - Int(0.1 * 1024 * 1024)  // ~19.9 MB
+        while bytes < target {
+            let record = fixture.assistantRecord(
+                input: 1, cacheCreation: 2, cacheRead: 3, output: 4, thinking: 1,
+                content: """
+                [{"type":"text","text":"\(filler)"},\
+                \(TranscriptFixture.toolUse("Read", filePath: "/repo/Sources/App/Main.swift"))]
+                """
+            )
+            batch.append(record)
+            bytes += record.utf8.count + 1
+            if batch.count == 200 {
+                fixture.appendLines(batch)
+                batch.removeAll(keepingCapacity: true)
+            }
+        }
+        fixture.appendLines(batch)
+        #expect(fixture.size > UInt64(target))
+
+        let coldStart = Date()
+        let cold = fixture.read(with: reader)
+        let coldElapsed = Date().timeIntervalSince(coldStart)
+        #expect(cold.recordsParsed > 0)
+
+        // Cold parse cost is not the budget under test -- it happens once, in
+        // `HistoryImporter`, off any hot path -- but it is worth a number
+        // rather than a shrug, since it is new work this milestone adds.
+        print("""
+        [perf] 19.9 MB cold import-style parse: \(cold.recordsParsed) records in \
+        \(Int(coldElapsed * 1000)) ms
+        """)
+
+        // The budget this line actually enforces: once a transcript has been
+        // read to the end, noticing that nothing new arrived costs one `stat`
+        // and never opens the file. That is independent of file size by
+        // construction, so the real 19.9 MB file has to hold the same 50 ms
+        // line the 12 MB fixture does -- reported honestly below rather than
+        // widened to fit if it did not.
+        var worst: TimeInterval = 0
+        for _ in 0..<5 {
+            let start = Date()
+            let delta = fixture.read(with: reader)
+            worst = max(worst, Date().timeIntervalSince(start))
+            #expect(delta == .empty)
+        }
+
+        print("""
+        [perf] 19.9 MB transcript \(fixture.size) bytes, \(cold.recordsParsed) records: \
+        idle re-scan \(String(format: "%.3f", worst * 1000)) ms (budget 50 ms, \
+        \(worst < 0.050 ? "within budget" : "OVER BUDGET"))
+        """)
+        #expect(worst < 0.050)
+    }
 }
 
 // MARK: - The cursor read itself

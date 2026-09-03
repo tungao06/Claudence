@@ -28,18 +28,28 @@ public struct TranscriptReader: TranscriptReading {
     private let locator: TranscriptLocator
     private let cursorStore: any CursorStoring
     private let chunkSize: Int
+    /// Only used to bucket `TranscriptDelta.usageByDay`. Injected so a test
+    /// pins the day boundary the same way `ClaudenceStore` lets one pin its own.
+    private let calendar: Calendar
 
     public init(
         cursorStore: any CursorStoring,
-        locator: TranscriptLocator = TranscriptLocator()
+        locator: TranscriptLocator = TranscriptLocator(),
+        calendar: Calendar = .current
     ) {
-        self.init(cursorStore: cursorStore, locator: locator, chunkSize: TranscriptReader.defaultChunkSize)
+        self.init(
+            cursorStore: cursorStore,
+            locator: locator,
+            chunkSize: TranscriptReader.defaultChunkSize,
+            calendar: calendar
+        )
     }
 
-    init(cursorStore: any CursorStoring, locator: TranscriptLocator, chunkSize: Int) {
+    init(cursorStore: any CursorStoring, locator: TranscriptLocator, chunkSize: Int, calendar: Calendar = .current) {
         self.cursorStore = cursorStore
         self.locator = locator
         self.chunkSize = max(4_096, chunkSize)
+        self.calendar = calendar
     }
 
     // MARK: - TranscriptReading
@@ -75,7 +85,7 @@ public struct TranscriptReader: TranscriptReading {
             return .empty
         }
 
-        let builder = DeltaBuilder()
+        let builder = DeltaBuilder(calendar: calendar)
         let consumed = scan(url: url, from: start, into: builder)
 
         persist(ReadCursor(path: url.path, inode: status.inode, byteOffset: consumed),
@@ -108,7 +118,7 @@ public struct TranscriptReader: TranscriptReading {
             return .empty
         }
 
-        let builder = DeltaBuilder()
+        let builder = DeltaBuilder(calendar: calendar)
         let consumed = scan(url: URL(fileURLWithPath: path), from: start, into: builder)
 
         persist(ReadCursor(path: path, inode: status.inode, byteOffset: consumed),
@@ -186,6 +196,7 @@ final class DeltaBuilder {
     private var activity: Activity?
     private var model: String?
     private var timestamp: Date?
+    private var earliestTimestamp: Date?
     private var parsed = 0
     private var skipped = 0
     private var toolCounts: [String: Int] = [:]
@@ -195,6 +206,23 @@ final class DeltaBuilder {
     /// The newest record's own usage block, kept apart from the running sum.
     private var lastRequestUsage: TokenUsage?
     private var gitBranch: String?
+    private var workingDirectory: String?
+    private var usageByDay: [String: TokenUsage] = [:]
+
+    private let calendar: Calendar
+    /// The `[dayStart, dayEnd)` interval `cachedDay` is valid for. A record
+    /// whose timestamp falls inside it reuses the string; one that does not is
+    /// the only case that pays for `ClaudenceStore.dayString` again. Real
+    /// transcripts hold long runs of records from the same local day, so this
+    /// turns "one calendar computation per record" into "one per day actually
+    /// crossed" on the hot re-scan path `PerformanceTests` times.
+    private var cachedDayStart: Date?
+    private var cachedDayEnd: Date?
+    private var cachedDay: String?
+
+    init(calendar: Calendar = .current) {
+        self.calendar = calendar
+    }
 
     /// Bounded so a long-running session cannot grow these without limit. The
     /// interface only ever shows a handful.
@@ -207,6 +235,7 @@ final class DeltaBuilder {
     func absorb(_ record: TranscriptRecord) {
         parsed += 1
 
+        let date = record.date
         if let usageBlock = record.message?.usage {
             let block = usageBlock.tokenUsage
             usage += block
@@ -214,12 +243,19 @@ final class DeltaBuilder {
             // newest. This overwrite is the point: the context window needs the
             // size of one request, never the sum of every request.
             lastRequestUsage = block
+            // Attributed to this record's own timestamp, not the delta's
+            // latest: an exact per-record split is what `HistoryImporter` needs
+            // to file a session's spend on every day it actually touched.
+            if let date {
+                usageByDay[dayString(for: date), default: .zero] += block
+            }
         }
         if let model = record.message?.model, !model.isEmpty {
             self.model = model
         }
-        if let date = record.date {
+        if let date {
             timestamp = date
+            earliestTimestamp = earliestTimestamp.map { min($0, date) } ?? date
         }
         if let tier = record.message?.usage?.serviceTier, !tier.isEmpty {
             serviceTier = tier
@@ -228,6 +264,9 @@ final class DeltaBuilder {
         // mid-run should read as being on the branch it is on now.
         if let branch = record.gitBranch, !branch.isEmpty {
             gitBranch = branch
+        }
+        if let cwd = record.cwd, !cwd.isEmpty {
+            workingDirectory = cwd
         }
         // The activity of a delta is the LAST tool_use in the newly read
         // records, so later blocks overwrite earlier ones.
@@ -259,6 +298,23 @@ final class DeltaBuilder {
 
     func skip() { skipped += 1 }
 
+    /// `ClaudenceStore.dayString`, cached against `[cachedDayStart,
+    /// cachedDayEnd)` so a run of records from the same local day costs one
+    /// calendar computation, not one per record.
+    private func dayString(for date: Date) -> String {
+        if let start = cachedDayStart, let end = cachedDayEnd, let cached = cachedDay,
+           date >= start, date < end {
+            return cached
+        }
+        let start = calendar.startOfDay(for: date)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        let day = ClaudenceStore.dayString(for: date, calendar: calendar)
+        cachedDayStart = start
+        cachedDayEnd = end
+        cachedDay = day
+        return day
+    }
+
     var delta: TranscriptDelta {
         TranscriptDelta(
             usage: usage,
@@ -272,7 +328,10 @@ final class DeltaBuilder {
             activityTrail: trail,
             serviceTier: serviceTier,
             lastRequestUsage: lastRequestUsage,
-            gitBranch: gitBranch
+            gitBranch: gitBranch,
+            workingDirectory: workingDirectory,
+            usageByDay: usageByDay,
+            earliestTimestamp: earliestTimestamp
         )
     }
 }

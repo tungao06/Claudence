@@ -93,6 +93,30 @@ public struct TranscriptDelta: Sendable, Equatable {
     /// design shows `path · branch`. A branch name is a label the tool wrote,
     /// not content a person or a model produced.
     public var gitBranch: String?
+    /// `cwd` from the most recent record carrying one.
+    ///
+    /// Already on the allowlist and already decoded by `TranscriptRecord`, and
+    /// discarded here the same way `gitBranch` used to be. The live path never
+    /// needed it: a session's working directory comes from the registry while
+    /// it is running. `HistoryImporter` has no registry to ask -- a historical
+    /// session's PID is dead -- so the transcript itself is the only place
+    /// left to read it from.
+    public var workingDirectory: String?
+    /// Billable usage bucketed by the local day each record's own timestamp
+    /// falls on, using `ClaudenceStore.dayString`.
+    ///
+    /// Every assistant record carries its own `message.usage`, not a running
+    /// total, so this is an exact split rather than the approximation
+    /// `ClaudenceStore.recomputeRollups` has to make from samples taken after
+    /// the fact. `HistoryImporter` uses it to write one cumulative
+    /// `usage_samples` row per day a session actually spent tokens on, so a
+    /// session that ran past midnight lands on every day it touched instead of
+    /// only the one it started on.
+    public var usageByDay: [String: TokenUsage]
+    /// The earliest record's own timestamp in this delta, kept apart from
+    /// `latestTimestamp` because a first import has no registry `startedAt` to
+    /// fall back on and needs the transcript's own first moment instead.
+    public var earliestTimestamp: Date?
     /// Whether this delta is a reading or a refusal to take one. See
     /// `TranscriptReadOutcome`.
     public var outcome: TranscriptReadOutcome
@@ -110,6 +134,9 @@ public struct TranscriptDelta: Sendable, Equatable {
         serviceTier: String? = nil,
         lastRequestUsage: TokenUsage? = nil,
         gitBranch: String? = nil,
+        workingDirectory: String? = nil,
+        usageByDay: [String: TokenUsage] = [:],
+        earliestTimestamp: Date? = nil,
         outcome: TranscriptReadOutcome = .read
     ) {
         self.usage = usage
@@ -124,6 +151,9 @@ public struct TranscriptDelta: Sendable, Equatable {
         self.serviceTier = serviceTier
         self.lastRequestUsage = lastRequestUsage
         self.gitBranch = gitBranch
+        self.workingDirectory = workingDirectory
+        self.usageByDay = usageByDay
+        self.earliestTimestamp = earliestTimestamp
         self.outcome = outcome
     }
 
